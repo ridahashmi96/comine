@@ -5,10 +5,8 @@
 # For more details, see
 #   http://developer.android.com/guide/developing/tools/proguard.html
 
-# ================= Size Optimization =================
--optimizationpasses 5
--allowaccessmodification
--repackageclasses ''
+# ================= Shrink Settings =================
+-dontoptimize
 
 # Remove logging in release for smaller size
 -assumenosideeffects class android.util.Log {

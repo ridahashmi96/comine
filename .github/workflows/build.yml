@@ -42,7 +42,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android,armv7-linux-androideabi
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
 
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2.5" --locked
@@ -73,16 +73,15 @@ jobs:
           keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
           EOF
 
-      - name: Build Android APK (arm64)
+      - name: Read Android version
+        id: android_version
         run: |
-          cd src-tauri
-          cargo tauri android build --target aarch64
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          VERSION_NAME=$(grep '^tauri.android.versionName=' src-tauri/gen/android/app/tauri.properties | cut -d'=' -f2)
+          VERSION_CODE=$(grep '^tauri.android.versionCode=' src-tauri/gen/android/app/tauri.properties | cut -d'=' -f2)
+          echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
+          echo "version_code=$VERSION_CODE" >> $GITHUB_OUTPUT
 
-      - name: Build Android APK (universal)
-        if: ${{ github.event_name != 'pull_request' }}
+      - name: Build Android (release)
         run: |
           cd src-tauri
           cargo tauri android build
@@ -90,12 +89,33 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-      - name: Upload Android artifacts
+      - name: Upload Android APK (arm64-v8a)
         uses: actions/upload-artifact@v4
         with:
-          name: android-build
-          path: |
-            src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          name: comine-android-${{ steps.android_version.outputs.version_name }}-arm64-v8a
+          if-no-files-found: warn
+          path: src-tauri/gen/android/app/build/outputs/apk/release/*arm64-v8a*.apk
+
+      - name: Upload Android APK (armeabi-v7a)
+        uses: actions/upload-artifact@v4
+        with:
+          name: comine-android-${{ steps.android_version.outputs.version_name }}-armeabi-v7a
+          if-no-files-found: warn
+          path: src-tauri/gen/android/app/build/outputs/apk/release/*armeabi-v7a*.apk
+
+      - name: Upload Android APK (x86_64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: comine-android-${{ steps.android_version.outputs.version_name }}-x86_64
+          if-no-files-found: warn
+          path: src-tauri/gen/android/app/build/outputs/apk/release/*x86_64*.apk
+
+      - name: Upload Android AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: comine-android-${{ steps.android_version.outputs.version_name }}-bundle-aab
+          if-no-files-found: warn
+          path: src-tauri/gen/android/app/build/outputs/bundle/release/*.aab
 
   build-linux:
     runs-on: ubuntu-22.04
