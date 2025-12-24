@@ -13,6 +13,104 @@ env:
 jobs:
   build-android:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64
+            rust_target: aarch64-linux-android
+            artifact_name: arm64-v8a
+          - target: armv7
+            rust_target: armv7-linux-androideabi
+            artifact_name: armeabi-v7a
+          - target: x86_64
+            rust_target: x86_64-linux-android
+            artifact_name: x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: |
+          sdkmanager --install "ndk;27.0.11718014"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.0.11718014" >> $GITHUB_ENV
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2.5" --locked
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: android-${{ matrix.target }}
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      - name: Build frontend
+        run: pnpm build
+
+      - name: Decode Keystore
+        if: ${{ github.event_name != 'pull_request' }}
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > src-tauri/gen/android/app/release.keystore
+
+      - name: Create keystore properties
+        if: ${{ github.event_name != 'pull_request' }}
+        run: |
+          cat > src-tauri/gen/android/app/keystore.properties << EOF
+          storeFile=release.keystore
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          EOF
+
+      - name: Read Android version
+        id: android_version
+        run: |
+          VERSION_NAME=$(grep '^tauri.android.versionName=' src-tauri/gen/android/app/tauri.properties | cut -d'=' -f2)
+          echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
+
+      - name: Build Android APK (${{ matrix.artifact_name }})
+        run: |
+          cd src-tauri
+          cargo tauri android build --target ${{ matrix.target }}
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Upload Android APK (${{ matrix.artifact_name }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: comine-android-${{ steps.android_version.outputs.version_name }}-${{ matrix.artifact_name }}
+          if-no-files-found: warn
+          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+
+  build-android-aab:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'pull_request' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -51,6 +149,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          shared-key: android-aab
 
       - name: Install frontend dependencies
         run: pnpm install
@@ -59,12 +158,10 @@ jobs:
         run: pnpm build
 
       - name: Decode Keystore
-        if: ${{ github.event_name != 'pull_request' }}
         run: |
           echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > src-tauri/gen/android/app/release.keystore
 
       - name: Create keystore properties
-        if: ${{ github.event_name != 'pull_request' }}
         run: |
           cat > src-tauri/gen/android/app/keystore.properties << EOF
           storeFile=release.keystore
@@ -77,11 +174,9 @@ jobs:
         id: android_version
         run: |
           VERSION_NAME=$(grep '^tauri.android.versionName=' src-tauri/gen/android/app/tauri.properties | cut -d'=' -f2)
-          VERSION_CODE=$(grep '^tauri.android.versionCode=' src-tauri/gen/android/app/tauri.properties | cut -d'=' -f2)
           echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
-          echo "version_code=$VERSION_CODE" >> $GITHUB_OUTPUT
 
-      - name: Build Android (release)
+      - name: Build Android AAB (universal)
         run: |
           cd src-tauri
           cargo tauri android build
@@ -89,33 +184,12 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-      - name: Upload Android APK (arm64-v8a)
-        uses: actions/upload-artifact@v4
-        with:
-          name: comine-android-${{ steps.android_version.outputs.version_name }}-arm64-v8a
-          if-no-files-found: warn
-          path: src-tauri/gen/android/app/build/outputs/apk/release/*arm64-v8a*.apk
-
-      - name: Upload Android APK (armeabi-v7a)
-        uses: actions/upload-artifact@v4
-        with:
-          name: comine-android-${{ steps.android_version.outputs.version_name }}-armeabi-v7a
-          if-no-files-found: warn
-          path: src-tauri/gen/android/app/build/outputs/apk/release/*armeabi-v7a*.apk
-
-      - name: Upload Android APK (x86_64)
-        uses: actions/upload-artifact@v4
-        with:
-          name: comine-android-${{ steps.android_version.outputs.version_name }}-x86_64
-          if-no-files-found: warn
-          path: src-tauri/gen/android/app/build/outputs/apk/release/*x86_64*.apk
-
       - name: Upload Android AAB
         uses: actions/upload-artifact@v4
         with:
           name: comine-android-${{ steps.android_version.outputs.version_name }}-bundle-aab
           if-no-files-found: warn
-          path: src-tauri/gen/android/app/build/outputs/bundle/release/*.aab
+          path: src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
 
   build-linux:
     runs-on: ubuntu-22.04
