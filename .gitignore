@@ -1,0 +1,35 @@
+.DS_Store
+node_modules
+/build
+/.svelte-kit
+/package
+.env
+.env.*
+!.env.example
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# Sensitive files
+keystore_base64.txt
+*.keystore
+*.jks
+keystore.properties
+
+# Development context
+PROJECT_CONTEXT.md
+CONTEXT.md
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# Rust build artifacts
+src-tauri/target/
+
+# Android build artifacts
+src-tauri/gen/android/app/build/
+src-tauri/gen/android/.gradle/
+
+# Logs
+*.log

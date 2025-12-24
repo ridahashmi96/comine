@@ -1,0 +1,386 @@
+<script lang="ts">
+  import { t } from '$lib/i18n';
+  import { openUrl } from '@tauri-apps/plugin-opener';
+  import Icon from '$lib/components/Icon.svelte';
+  import { tooltip } from '$lib/actions/tooltip';
+  import Divider from '$lib/components/Divider.svelte';
+  import { onMount } from 'svelte';
+
+  let isAtBottom = $state(false);
+
+  onMount(() => {
+    // Find the scroll container (parent with overflow)
+    // Use local reference to avoid stale closures across navigations
+    let container: HTMLElement | null = document.querySelector('.scroll-area') || document.querySelector('main');
+    
+    if (container) {
+      const checkScroll = () => {
+        if (!container) return; // Guard against stale reference
+        const { scrollTop, scrollHeight, clientHeight } = container;
+        isAtBottom = scrollTop + clientHeight >= scrollHeight - 10;
+      };
+      container.addEventListener('scroll', checkScroll);
+      checkScroll(); // Check initial state
+      
+      return () => {
+        if (container) {
+          container.removeEventListener('scroll', checkScroll);
+          container = null; // Clear reference on cleanup
+        }
+        isAtBottom = false; // Reset state on unmount
+      };
+    }
+  });
+
+  const APP_VERSION = '1.0.0';
+  // @ts-ignore - defined by vite
+  const BUILD_TYPE = typeof __DEV__ !== 'undefined' && __DEV__ ? 'Development' : 'Release';
+  // @ts-ignore - defined by vite
+  const COMMIT_HASH = typeof __COMMIT_HASH__ !== 'undefined' ? __COMMIT_HASH__ : 'unknown';
+  // @ts-ignore - defined by vite
+  const BUILD_DATE = typeof __BUILD_DATE__ !== 'undefined' ? __BUILD_DATE__ : 'unknown';
+  
+  let versionCopied = $state(false);
+
+  async function copyVersion() {
+    try {
+      const hash = typeof COMMIT_HASH === 'string' ? COMMIT_HASH.slice(0, 7) : 'unknown';
+      const info = `Comine v${APP_VERSION} (${hash}) - ${BUILD_TYPE}`;
+      await navigator.clipboard.writeText(info);
+      versionCopied = true;
+      setTimeout(() => versionCopied = false, 2000);
+    } catch (err) {
+      console.error('Failed to copy version:', err);
+    }
+  }
+
+  async function openLink(url: string) {
+    try {
+      await openUrl(url);
+    } catch (err) {
+      console.error('Failed to open URL:', err);
+      window.open(url, '_blank');
+    }
+  }
+</script>
+
+<div class="page">
+  <div class="page-header">
+    <h1>{$t('info.title')}</h1>
+    <p class="subtitle">{$t('info.subtitle')}</p>
+  </div>
+
+  <Divider my={20} />
+
+  <div class="info-content">
+    <!-- Version & Build -->
+    <section class="info-section">
+      <div class="setting-item">
+        <span class="setting-label">{$t('info.version')}</span>
+        <button class="version-btn" onclick={copyVersion} use:tooltip={$t('info.clickToCopy')}>
+          <span>v{APP_VERSION}</span>
+          <Icon name={versionCopied ? 'check' : 'copy'} size={14} />
+        </button>
+      </div>
+      <div class="setting-item">
+        <span class="setting-label">{$t('info.build')}</span>
+        <span class="setting-value mono">{BUILD_TYPE}</span>
+      </div>
+      <div class="setting-item">
+        <span class="setting-label">{$t('info.commit')}</span>
+        <span class="setting-value mono">{typeof COMMIT_HASH === 'string' ? COMMIT_HASH.slice(0, 7) : 'unknown'}</span>
+      </div>
+      <div class="setting-item">
+        <span class="setting-label">{$t('info.buildDate')}</span>
+        <span class="setting-value mono">{BUILD_DATE}</span>
+      </div>
+      <p class="setting-description">{$t('app.description')}</p>
+    </section>
+
+    <!-- Links -->
+    <section class="info-section">
+      <h2 class="section-title">{$t('info.links')}</h2>
+      <button class="setting-item clickable" onclick={() => openLink('https://comine.app')}>
+        <span class="setting-label">{$t('info.website')}</span>
+        <span class="setting-value link">comine.app</span>
+      </button>
+      <button class="setting-item clickable" onclick={() => openLink('https://github.com/nichind/comine')}>
+        <span class="setting-label">GitHub</span>
+        <span class="setting-value link">nichind/comine</span>
+      </button>
+      <button class="setting-item clickable" onclick={() => openLink('https://discord.gg/8sfk33Kr2A')}>
+        <span class="setting-label">Discord</span>
+        <span class="setting-value link">{$t('info.joinCommunity')}</span>
+      </button>
+      <button class="setting-item clickable" onclick={() => openLink('https://t.me/comineapp')}>
+        <span class="setting-label">Telegram</span>
+        <span class="setting-value link">{$t('info.joinCommunity')}</span>
+      </button>
+    </section>
+
+    <!-- Developer -->
+    <section class="info-section">
+      <h2 class="section-title">{$t('info.developer')}</h2>
+      <div class="dev-row">
+        <button class="dev-icon" onclick={() => openLink('https://nichind.dev')}>
+          <img src="https://nichind.dev/icon.svg" alt="nichind" />
+        </button>
+        <div class="dev-info">
+          <button class="dev-name" onclick={() => openLink('https://nichind.dev')}>nichind</button>
+          <span class="dev-role">{$t('info.madeWith')}</span>
+        </div>
+        <div class="dev-links">
+          <button class="icon-btn" onclick={() => openLink('https://nichind.dev')} use:tooltip={"nichind.dev"}>
+            <Icon name="globe" size={16} />
+          </button>
+          <button class="icon-btn" onclick={() => openLink('https://github.com/nichind')} use:tooltip={"GitHub"}>
+            <Icon name="github" size={16} />
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Licenses -->
+    <section class="info-section">
+      <h2 class="section-title">{$t('info.legal')}</h2>
+      <button class="setting-item clickable" onclick={() => openLink('https://github.com/nichind/comine/blob/main/LICENSE')}>
+        <span class="setting-label">{$t('info.license')}</span>
+        <span class="setting-value link">GPL-3.0</span>
+      </button>
+    </section>
+  </div>
+</div>
+
+<!-- Mascot (fixed position, no portal) -->
+<button class="mascot-container" class:visible={isAtBottom} onclick={() => openLink('https://x.com/Nemurioverdose_')} use:tooltip={$t('info.mascotCredit')}>
+  <img src="https://nichind.dev/assets/img/peek.webp" alt="Mascot" class="mascot-img" />
+</button>
+
+<style>
+  .page {
+    padding: 0 8px 16px 16px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  h1 {
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+
+  .subtitle {
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 14px;
+  }
+
+  .info-content {
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+  }
+
+  .info-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .section-title {
+    font-size: 17px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.9);
+    margin-bottom: 4px;
+  }
+
+  .setting-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-left: 4px;
+    width: 100%;
+    background: none;
+    border: none;
+    text-align: left;
+  }
+
+  button.setting-item.clickable {
+    cursor: pointer;
+    border-radius: 6px;
+    margin-left: -8px;
+    padding: 8px;
+    padding-right: 12px;
+    transition: background 0.15s;
+    width: calc(100% + 8px);
+  }
+
+  button.setting-item.clickable:hover {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .setting-label {
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.85);
+  }
+
+  .setting-value {
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  .setting-value.mono {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+  }
+
+  .setting-value.link {
+    color: var(--accent, #6366F1);
+  }
+
+  .setting-description {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.5);
+    padding-left: 4px;
+    margin: 4px 0 0 0;
+  }
+
+  .version-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 4px;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 13px;
+    font-family: 'JetBrains Mono', monospace;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .version-btn:hover {
+    border-color: rgba(255, 255, 255, 0.3);
+    color: white;
+  }
+
+  .version-btn :global(svg) {
+    opacity: 0.5;
+  }
+
+  /* Developer row */
+  .dev-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding-left: 4px;
+  }
+
+  .dev-icon {
+    width: 32px;
+    height: 32px;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    transition: transform 0.15s;
+  }
+
+  .dev-icon:hover {
+    transform: scale(1.1);
+  }
+
+  .dev-icon img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  .dev-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .dev-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--accent, #6366F1);
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .dev-name:hover {
+    text-decoration: underline;
+  }
+
+  .dev-role {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  .dev-links {
+    display: flex;
+    gap: 4px;
+  }
+
+  .icon-btn {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: rgba(255, 255, 255, 0.5);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .icon-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: white;
+  }
+
+  /* Mascot (fixed position within component) */
+  .mascot-container {
+    display: none !important;
+    position: fixed;
+    bottom: 0;
+    right: 0;
+    z-index: 9999;
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+    opacity: 0;
+    transform: translateX(100%);
+    transition: opacity 0.3s ease, transform 0.3s ease;
+    pointer-events: none;
+  }
+
+  .mascot-container.visible {
+    opacity: 1;
+    transform: translateX(0);
+    pointer-events: auto;
+  }
+
+  .mascot-img {
+    height: 200px;
+    width: auto;
+    object-fit: contain;
+    display: block;
+  }
+
+  @media (max-width: 640px) {
+    .mascot-img {
+      height: 120px;
+    }
+  }
+</style>
