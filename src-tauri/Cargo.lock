@@ -811,6 +811,7 @@ dependencies = [
  "tauri-plugin-store",
  "tauri-utils",
  "tokio",
+ "url",
  "urlencoding",
  "zip",
 ]

@@ -223,12 +223,13 @@
     }
   }
   
-  function getTypeIcon(type: string): 'video' | 'music' | 'image' {
+  function getTypeIcon(type: string): 'video' | 'music' | 'image' | 'file_text' | 'download' {
     switch (type) {
       case 'video': return 'video';
       case 'audio': return 'music';
       case 'image': return 'image';
-      default: return 'video';
+      case 'file': return 'file_text';
+      default: return 'download';
     }
   }
   
@@ -309,6 +310,13 @@
         onclick={() => setFilter('image')}
       >
         {$t('downloads.filters.image')}
+      </Chip>
+      <Chip 
+        selected={activeFilter === 'file'}
+        icon="file_text"
+        onclick={() => setFilter('file')}
+      >
+        {$t('downloads.filters.file')}
       </Chip>
     </div>
     
@@ -456,7 +464,7 @@
                         <img src={download.thumbnail} alt="" onload={() => extractItemColor(download.id, download.thumbnail)} />
                       {:else}
                         <div class="thumb-placeholder">
-                          <Icon name="download" size={20} />
+                          <Icon name={getTypeIcon(download.type)} size={20} />
                         </div>
                       {/if}
                       {#if download.status === 'downloading' || download.status === 'processing' || download.status === 'fetching-info'}
@@ -553,7 +561,7 @@
                 <img src={download.thumbnail} alt="" onload={() => extractItemColor(download.id, download.thumbnail)} />
               {:else}
                 <div class="thumb-placeholder">
-                  <Icon name="download" size={20} />
+                  <Icon name={getTypeIcon(download.type)} size={20} />
                 </div>
               {/if}
               <!-- Spinner overlay (only for active downloads) -->

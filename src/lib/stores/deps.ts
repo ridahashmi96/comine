@@ -2,6 +2,7 @@ import { writable, get } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { logs } from './logs';
+import { getProxyConfig } from './settings';
 
 export interface DependencyStatus {
   installed: boolean;
@@ -154,7 +155,11 @@ function createDepsStore() {
     });
     
     try {
-      const result = await invoke(config.installCommand, version ? { version } : {});
+      const proxyConfig = getProxyConfig();
+      const result = await invoke(config.installCommand, { 
+        ...(version ? { version } : {}),
+        proxyConfig: proxyConfig
+      });
       logs.info('deps', `${dep} installed successfully: ${result}`);
       const status = await invoke<DependencyStatus>(config.checkCommand);
       

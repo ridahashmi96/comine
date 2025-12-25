@@ -1,4 +1,5 @@
 mod deps;
+mod proxy;
 
 #[cfg(not(target_os = "android"))]
 use std::process::Stdio;
@@ -68,7 +69,7 @@ use log::info;
 /// Get the command to run yt-dlp on the current platform
 /// On Android, downloads are handled via the JavaScript bridge to youtubedl-android
 #[cfg(not(target_os = "android"))]
-fn get_ytdlp_command(app: &AppHandle) -> Result<(String, Vec<String>, Vec<(String, String)>, Option<String>), String> {
+fn get_ytdlp_command(app: &AppHandle, proxy_url: Option<&str>) -> Result<(String, Vec<String>, Vec<(String, String)>, Option<String>), String> {
     let ytdlp_path = deps::get_ytdlp_path(app)?;
     if !ytdlp_path.exists() {
         return Err("yt-dlp is not installed. Please install it first.".to_string());
@@ -97,35 +98,48 @@ fn get_ytdlp_command(app: &AppHandle) -> Result<(String, Vec<String>, Vec<(Strin
         env_vars.push(("PATH".to_string(), new_path));
     }
     
-    // Pass through system proxy
-    let proxy_vars = [
-        "HTTP_PROXY", "http_proxy",
-        "HTTPS_PROXY", "https_proxy",
-        "ALL_PROXY", "all_proxy",
-        "NO_PROXY", "no_proxy",
-    ];
-    
-    #[allow(unused_variables, unused_mut)]
-    let mut found_proxy = false;
-    for var in proxy_vars {
-        if let Ok(value) = std::env::var(var) {
-            if !value.is_empty() {
-                info!("Passing through proxy env var: {}={}", var, value);
-                env_vars.push((var.to_string(), value));
-                #[allow(unused_assignments)]
-                { found_proxy = true; }
+    // Set proxy environment variables if proxy URL is provided
+    if let Some(proxy) = proxy_url {
+        if !proxy.is_empty() {
+            info!("Setting proxy environment variables for yt-dlp: {}", proxy);
+            env_vars.push(("HTTP_PROXY".to_string(), proxy.to_string()));
+            env_vars.push(("HTTPS_PROXY".to_string(), proxy.to_string()));
+            env_vars.push(("http_proxy".to_string(), proxy.to_string()));
+            env_vars.push(("https_proxy".to_string(), proxy.to_string()));
+            env_vars.push(("ALL_PROXY".to_string(), proxy.to_string()));
+            env_vars.push(("all_proxy".to_string(), proxy.to_string()));
+        }
+    } else {
+        // No explicit proxy provided - check system proxy environment variables
+        let proxy_vars = [
+            "HTTP_PROXY", "http_proxy",
+            "HTTPS_PROXY", "https_proxy",
+            "ALL_PROXY", "all_proxy",
+            "NO_PROXY", "no_proxy",
+        ];
+        
+        #[allow(unused_variables, unused_mut)]
+        let mut found_proxy = false;
+        for var in proxy_vars {
+            if let Ok(value) = std::env::var(var) {
+                if !value.is_empty() {
+                    info!("Passing through proxy env var: {}={}", var, value);
+                    env_vars.push((var.to_string(), value));
+                    #[allow(unused_assignments)]
+                    { found_proxy = true; }
+                }
             }
         }
-    }
-    
-    #[cfg(target_os = "linux")]
-    if !found_proxy {
-        if let Some(proxy_url) = detect_linux_system_proxy() {
-            info!("Detected Linux system proxy: {}", proxy_url);
-            env_vars.push(("http_proxy".to_string(), proxy_url.clone()));
-            env_vars.push(("https_proxy".to_string(), proxy_url.clone()));
-            env_vars.push(("HTTP_PROXY".to_string(), proxy_url.clone()));
-            env_vars.push(("HTTPS_PROXY".to_string(), proxy_url));
+        
+        #[cfg(target_os = "linux")]
+        if !found_proxy {
+            if let Some(proxy_url) = detect_linux_system_proxy() {
+                info!("Detected Linux system proxy: {}", proxy_url);
+                env_vars.push(("http_proxy".to_string(), proxy_url.clone()));
+                env_vars.push(("https_proxy".to_string(), proxy_url.clone()));
+                env_vars.push(("HTTP_PROXY".to_string(), proxy_url.clone()));
+                env_vars.push(("HTTPS_PROXY".to_string(), proxy_url));
+            }
         }
     }
     
@@ -233,6 +247,7 @@ async fn download_video(
     embed_thumbnail: Option<bool>,
     cropped_thumbnail_data: Option<String>, // Base64 data URI for YTM cropped thumbnail
     playlist_title: Option<String>, // Playlist title for creating subfolder
+    proxy_config: Option<proxy::ProxyConfig>, // Proxy configuration from settings
     window: tauri::Window
 ) -> Result<String, String> {
     info!("Starting download for URL: {}", url);
@@ -246,7 +261,19 @@ async fn download_video(
     
     #[cfg(not(target_os = "android"))]
     {
-        let (command, prefix_args, env_vars, quickjs_path) = get_ytdlp_command(&app)?;
+        // Resolve proxy URL from config
+        let resolved_proxy = proxy_config.as_ref().map(|c| proxy::resolve_proxy(c));
+        let proxy_url = resolved_proxy.as_ref().and_then(|r| {
+            if r.url.is_empty() { None } else { Some(r.url.as_str()) }
+        });
+        
+        if let Some(ref proxy) = resolved_proxy {
+            if !proxy.url.is_empty() {
+                info!("Using proxy for download: {} ({})", proxy.url, proxy.source);
+            }
+        }
+        
+        let (command, prefix_args, env_vars, quickjs_path) = get_ytdlp_command(&app, proxy_url)?;
         
         debug!("Using command: {} with prefix args: {:?}", command, prefix_args);
         
@@ -314,6 +341,12 @@ async fn download_video(
             "after_move:>>>FILEPATH:%(filepath)s".to_string(),
             "--verbose".to_string(),
         ]);
+        
+        // Add explicit --proxy argument if proxy is configured
+        if let Some(proxy) = proxy_url {
+            args.extend(["--proxy".to_string(), proxy.to_string()]);
+            info!("Using --proxy argument: {}", proxy);
+        }
         
         if let Some(ref qjs_path) = quickjs_path {
             args.extend([
@@ -876,7 +909,8 @@ async fn get_playlist_info(
     offset: Option<usize>,
     limit: Option<usize>,
     cookies_from_browser: Option<String>, 
-    custom_cookies: Option<String>
+    custom_cookies: Option<String>,
+    proxy_config: Option<proxy::ProxyConfig>
 ) -> Result<PlaylistInfo, String> {
     let offset = offset.unwrap_or(0);
     let limit = limit.unwrap_or(50);
@@ -921,7 +955,13 @@ async fn get_playlist_info(
             }
         }
         
-        let (command, prefix_args, env_vars, quickjs_path) = get_ytdlp_command(&app)?;
+        // Resolve proxy configuration
+        let resolved_proxy = proxy_config.as_ref().map(|c| proxy::resolve_proxy(c));
+        let proxy_url = resolved_proxy.as_ref().and_then(|p| {
+            if p.url.is_empty() { None } else { Some(p.url.as_str()) }
+        });
+        
+        let (command, prefix_args, env_vars, quickjs_path) = get_ytdlp_command(&app, proxy_url)?;
         
         let mut args: Vec<String> = prefix_args;
         args.extend([
@@ -931,6 +971,12 @@ async fn get_playlist_info(
             "--flat-playlist".to_string(),
             "--no-download".to_string(),
         ]);
+        
+        // Add explicit --proxy argument if proxy is configured
+        if let Some(proxy) = proxy_url {
+            args.extend(["--proxy".to_string(), proxy.to_string()]);
+            info!("Using --proxy argument for playlist info: {}", proxy);
+        }
         
         // Add QuickJS runtime path if available
         if let Some(ref qjs_path) = quickjs_path {
@@ -1204,7 +1250,13 @@ async fn get_playlist_info(
 
 #[tauri::command]
 #[allow(unused_variables)]
-async fn get_video_info(app: AppHandle, url: String, cookies_from_browser: Option<String>, custom_cookies: Option<String>) -> Result<VideoInfo, String> {
+async fn get_video_info(
+    app: AppHandle, 
+    url: String, 
+    cookies_from_browser: Option<String>, 
+    custom_cookies: Option<String>,
+    proxy_config: Option<proxy::ProxyConfig>
+) -> Result<VideoInfo, String> {
     info!("Getting video info for URL: {}", url);
     
     #[cfg(target_os = "android")]
@@ -1223,7 +1275,13 @@ async fn get_video_info(app: AppHandle, url: String, cookies_from_browser: Optio
             }
         }
         
-        let (command, prefix_args, env_vars, quickjs_path) = get_ytdlp_command(&app)?;
+        // Resolve proxy configuration
+        let resolved_proxy = proxy_config.as_ref().map(|c| proxy::resolve_proxy(c));
+        let proxy_url = resolved_proxy.as_ref().and_then(|p| {
+            if p.url.is_empty() { None } else { Some(p.url.as_str()) }
+        });
+        
+        let (command, prefix_args, env_vars, quickjs_path) = get_ytdlp_command(&app, proxy_url)?;
         
         let mut args: Vec<String> = prefix_args;
         // Use separate --print calls for faster metadata extraction (skips format parsing)
@@ -1241,6 +1299,12 @@ async fn get_video_info(app: AppHandle, url: String, cookies_from_browser: Optio
             "--no-download".to_string(),
             "--no-playlist".to_string(),
         ]);
+        
+        // Add explicit --proxy argument if proxy is configured
+        if let Some(proxy) = proxy_url {
+            args.extend(["--proxy".to_string(), proxy.to_string()]);
+            info!("Using --proxy argument for video info: {}", proxy);
+        }
         
         // Add QuickJS runtime path if available
         if let Some(ref qjs_path) = quickjs_path {
@@ -2335,6 +2399,401 @@ async fn notification_action(
     Ok(())
 }
 
+// ==================== Proxy Commands ====================
+
+/// Resolve proxy based on configuration from frontend
+/// Returns the effective proxy URL, source, and description
+#[tauri::command]
+async fn resolve_proxy_config(config: proxy::ProxyConfig) -> Result<proxy::ResolvedProxy, String> {
+    info!("Resolving proxy config: mode={}, custom_url={}, fallback={}", 
+          config.mode, config.custom_url, config.fallback);
+    Ok(proxy::resolve_proxy(&config))
+}
+
+/// Validate a proxy URL syntax
+#[tauri::command]
+async fn validate_proxy_url(url: String) -> Result<(), String> {
+    proxy::validate_proxy_url(&url)
+}
+
+/// Detect system proxy (for displaying to user)
+#[tauri::command]
+async fn detect_system_proxy() -> Result<proxy::ResolvedProxy, String> {
+    Ok(proxy::detect_system_proxy())
+}
+
+/// Check current public IP (to verify proxy is working)
+#[tauri::command]
+async fn check_ip(proxy_config: Option<proxy::ProxyConfig>) -> Result<IpCheckResult, String> {
+    let config = proxy_config.unwrap_or_default();
+    let resolved = proxy::resolve_proxy(&config);
+    
+    let mut builder = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .connect_timeout(std::time::Duration::from_secs(5));
+    
+    if !resolved.url.is_empty() {
+        let proxy = reqwest::Proxy::all(&resolved.url)
+            .map_err(|e| format!("Invalid proxy: {}", e))?;
+        builder = builder.proxy(proxy);
+    } else {
+        builder = builder.no_proxy();
+    }
+    
+    let client = builder.build()
+        .map_err(|e| format!("Failed to create client: {}", e))?;
+    
+    // Use ipify API (simple, returns just IP)
+    let response = client.get("https://api.ipify.org?format=json")
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+    
+    if !response.status().is_success() {
+        return Err(format!("HTTP error: {}", response.status()));
+    }
+    
+    let data: serde_json::Value = response.json().await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+    
+    let ip = data["ip"].as_str()
+        .ok_or("No IP in response")?
+        .to_string();
+    
+    Ok(IpCheckResult {
+        ip,
+        proxy_used: !resolved.url.is_empty(),
+        proxy_source: resolved.source,
+    })
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct IpCheckResult {
+    ip: String,
+    proxy_used: bool,
+    proxy_source: String,
+}
+
+// ==================== File Download Commands ====================
+
+/// Download a file directly (for download manager functionality)
+/// Returns the file path on success
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+async fn download_file(
+    app: AppHandle,
+    window: tauri::Window,
+    url: String,
+    filename: String,
+    download_path: String,
+    proxy_config: Option<proxy::ProxyConfig>,
+    connections: Option<u32>,
+    speed_limit: Option<u64>,
+) -> Result<String, String> {
+    info!("Starting file download: {} -> {}", url, filename);
+    
+    // Determine download path
+    let base_path = if download_path.is_empty() {
+        dirs::download_dir()
+            .or_else(dirs::home_dir)
+            .ok_or("Could not determine download directory")?
+    } else {
+        std::path::PathBuf::from(&download_path)
+    };
+    
+    // Sanitize filename
+    let safe_filename = filename
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' || c == ' ' { c } else { '_' })
+        .collect::<String>();
+    
+    let dest_path = base_path.join(&safe_filename);
+    
+    // Ensure parent directory exists
+    if let Some(parent) = dest_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create directory: {}", e))?;
+    }
+    
+    // Check if aria2c is available
+    let aria2_path = deps::get_aria2_path(&app)?;
+    let use_aria2 = aria2_path.exists();
+    
+    if use_aria2 {
+        // Use aria2c for multi-connection download
+        let connections = connections.unwrap_or(16).min(16).max(1);
+        
+        let mut cmd = tokio::process::Command::new(&aria2_path);
+        
+        #[cfg(target_os = "windows")]
+        cmd.hide_console();
+        
+        cmd.arg(&url)
+           .arg("-d").arg(base_path.to_string_lossy().to_string())
+           .arg("-o").arg(&safe_filename)
+           .arg("-x").arg(connections.to_string()) // max connections
+           .arg("-s").arg(connections.to_string()) // splits
+           .arg("-k").arg("1M") // min split size
+           .arg("--continue=true") // resume support
+           .arg("--auto-file-renaming=false")
+           .arg("--allow-overwrite=true")
+           .arg("--console-log-level=warn");
+        
+        // Add speed limit if specified
+        if let Some(limit) = speed_limit {
+            if limit > 0 {
+                cmd.arg("--max-download-limit").arg(format!("{}K", limit / 1024));
+            }
+        }
+        
+        // Add proxy if configured
+        if let Some(ref config) = proxy_config {
+            let resolved = proxy::resolve_proxy(config);
+            if !resolved.url.is_empty() {
+                cmd.arg("--all-proxy").arg(&resolved.url);
+            }
+        }
+        
+        info!("Running aria2c with {} connections", connections);
+        
+        let output = cmd.stdout(Stdio::piped())
+                       .stderr(Stdio::piped())
+                       .output()
+                       .await
+                       .map_err(|e| format!("Failed to run aria2c: {}", e))?;
+        
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            error!("aria2c failed: {}", stderr);
+            return Err(format!("Download failed: {}", stderr));
+        }
+        
+        info!("aria2c download complete: {:?}", dest_path);
+    } else {
+        // Fallback to simple download with reqwest
+        info!("aria2c not available, using reqwest fallback");
+        
+        let config = proxy_config.unwrap_or_default();
+        let resolved = proxy::resolve_proxy(&config);
+        
+        let mut builder = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(3600)); // 1 hour timeout
+        
+        if !resolved.url.is_empty() {
+            let proxy = reqwest::Proxy::all(&resolved.url)
+                .map_err(|e| format!("Invalid proxy: {}", e))?;
+            builder = builder.proxy(proxy);
+        }
+        
+        let client = builder.build()
+            .map_err(|e| format!("Failed to create client: {}", e))?;
+        
+        let response = client.get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("Request failed: {}", e))?;
+        
+        if !response.status().is_success() {
+            return Err(format!("HTTP error: {}", response.status()));
+        }
+        
+        let total_size = response.content_length().unwrap_or(0);
+        let mut downloaded: u64 = 0;
+        
+        let mut file = tokio::fs::File::create(&dest_path)
+            .await
+            .map_err(|e| format!("Failed to create file: {}", e))?;
+        
+        use futures_util::StreamExt;
+        use tokio::io::AsyncWriteExt;
+        
+        let mut stream = response.bytes_stream();
+        let start_time = std::time::Instant::now();
+        let mut last_emit = std::time::Instant::now();
+        
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| format!("Download error: {}", e))?;
+            file.write_all(&chunk)
+                .await
+                .map_err(|e| format!("Write error: {}", e))?;
+            
+            downloaded += chunk.len() as u64;
+            
+            // Emit progress every 100ms
+            if last_emit.elapsed().as_millis() >= 100 {
+                let elapsed = start_time.elapsed().as_secs_f64();
+                let speed = if elapsed > 0.0 { downloaded as f64 / elapsed } else { 0.0 };
+                
+                let progress = if total_size > 0 {
+                    (downloaded as f64 / total_size as f64) * 100.0
+                } else {
+                    0.0
+                };
+                
+                let _ = window.emit("file-download-progress", serde_json::json!({
+                    "url": url,
+                    "progress": progress,
+                    "downloaded": downloaded,
+                    "total": total_size,
+                    "speed": speed,
+                }));
+                
+                last_emit = std::time::Instant::now();
+            }
+        }
+        
+        file.flush().await.map_err(|e| format!("Flush error: {}", e))?;
+        info!("reqwest download complete: {:?}", dest_path);
+    }
+    
+    // Verify file exists
+    if !dest_path.exists() {
+        return Err("Download failed: file not created".to_string());
+    }
+    
+    Ok(dest_path.to_string_lossy().to_string())
+}
+
+/// Check if a URL is a direct file download (HEAD request)
+/// Returns file info if it's a downloadable file
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+async fn check_file_url(
+    url: String,
+    proxy_config: Option<proxy::ProxyConfig>,
+) -> Result<FileUrlInfo, String> {
+    let config = proxy_config.unwrap_or_default();
+    let resolved = proxy::resolve_proxy(&config);
+    
+    let mut builder = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .connect_timeout(std::time::Duration::from_secs(5));
+    
+    if !resolved.url.is_empty() {
+        let proxy = reqwest::Proxy::all(&resolved.url)
+            .map_err(|e| format!("Invalid proxy: {}", e))?;
+        builder = builder.proxy(proxy);
+    }
+    
+    let client = builder.build()
+        .map_err(|e| format!("Failed to create client: {}", e))?;
+    
+    let response = client.head(&url)
+        .send()
+        .await
+        .map_err(|e| format!("HEAD request failed: {}", e))?;
+    
+    if !response.status().is_success() {
+        return Err(format!("HTTP error: {}", response.status()));
+    }
+    
+    let content_type = response.headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    
+    let content_length = response.headers()
+        .get("content-length")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(0);
+    
+    let content_disposition = response.headers()
+        .get("content-disposition")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    
+    // Extract filename from Content-Disposition or URL
+    let filename = extract_filename_from_headers(&content_disposition, &url);
+    
+    // Determine if this is a downloadable file (not HTML/text page)
+    let is_file = !content_type.starts_with("text/html") 
+        && !content_type.starts_with("application/xhtml")
+        && (content_length > 0 || !content_type.starts_with("text/"));
+    
+    Ok(FileUrlInfo {
+        is_file,
+        filename,
+        size: content_length,
+        mime_type: content_type,
+        supports_resume: response.headers().contains_key("accept-ranges"),
+    })
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileUrlInfo {
+    is_file: bool,
+    filename: String,
+    size: u64,
+    mime_type: String,
+    supports_resume: bool,
+}
+
+/// Extract filename from Content-Disposition header or URL
+#[cfg(not(target_os = "android"))]
+fn extract_filename_from_headers(content_disposition: &str, url: &str) -> String {
+    // Try Content-Disposition first
+    if !content_disposition.is_empty() {
+        // filename="example.zip" or filename*=UTF-8''example.zip
+        if let Some(start) = content_disposition.find("filename=") {
+            let rest = &content_disposition[start + 9..];
+            let filename = if rest.starts_with('"') {
+                rest[1..].split('"').next().unwrap_or("")
+            } else {
+                rest.split(';').next().unwrap_or("").trim()
+            };
+            if !filename.is_empty() {
+                return filename.to_string();
+            }
+        }
+    }
+    
+    // Fall back to URL path
+    if let Ok(parsed) = url::Url::parse(url) {
+        if let Some(segments) = parsed.path_segments() {
+            if let Some(last) = segments.last() {
+                if !last.is_empty() && last.contains('.') {
+                    return urlencoding::decode(last)
+                        .unwrap_or_else(|_| std::borrow::Cow::Borrowed(last))
+                        .into_owned();
+                }
+            }
+        }
+    }
+    
+    // Default filename
+    "download".to_string()
+}
+
+// Android stubs for file download commands
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn download_file(
+    _app: AppHandle,
+    _window: tauri::Window,
+    _url: String,
+    _filename: String,
+    _download_path: String,
+    _proxy_config: Option<proxy::ProxyConfig>,
+    _connections: Option<u32>,
+    _speed_limit: Option<u64>,
+) -> Result<String, String> {
+    Err("File downloads are not supported on Android yet".to_string())
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn check_file_url(
+    _url: String,
+    _proxy_config: Option<proxy::ProxyConfig>,
+) -> Result<FileUrlInfo, String> {
+    Err("File URL checking is not supported on Android yet".to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
@@ -2371,6 +2830,12 @@ pub fn run() {
             cleanup_old_logs,
             open_logs_folder,
             get_logs_folder_path,
+            resolve_proxy_config,
+            validate_proxy_url,
+            detect_system_proxy,
+            check_ip,
+            download_file,
+            check_file_url,
             deps::check_ytdlp,
             deps::install_ytdlp,
             deps::uninstall_ytdlp,

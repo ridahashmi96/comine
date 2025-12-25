@@ -119,11 +119,13 @@
     "moreOptions": "Ещё",
     "play": "Воспроизвести",
     "noFilePath": "Путь к файлу недоступен для этого элемента",
+    "fileMissing": "Файл больше не существует",
     "filters": {
       "all": "Все",
       "video": "Видео",
       "audio": "Музыка",
-      "image": "Изображения"
+      "image": "Изображения",
+      "file": "Файлы"
     },
     "views": {
       "list": "Список",
@@ -202,6 +204,7 @@
     "resume": "Продолжить",
     "cancel": "Отменить",
     "items": "{count} элементов",
+    "alreadyInQueue": "Уже в очереди загрузок",
     "comingSoon": "Очередь скоро появится..."
   },
   "settings": {
@@ -250,12 +253,23 @@
       "embedThumbnail": "Встраивать обложку в аудиофайлы",
       "embedThumbnailTooltip": "Встроить миниатюру видео как обложку в загруженные аудиофайлы",
       "concurrentDownloads": "Параллельные загрузки",
-      "concurrentDownloadsDescription": "Количество загрузок, которые могут выполняться одновременно"
+      "concurrentDownloadsDescription": "Количество загрузок, которые могут выполняться одновременно",
+      "watchClipboardForFiles": "Обнаруживать ссылки на файлы в буфере обмена",
+      "watchClipboardForFilesTooltip": "Показывать уведомления при копировании прямых ссылок на файлы (например, .zip, .exe)",
+      "fileDownloadNotifications": "Уведомления о загрузке файлов",
+      "fileDownloadNotificationsTooltip": "Показывать всплывающее уведомление при обнаружении ссылки на файл",
+      "aria2Connections": "Подключений aria2 к серверу",
+      "aria2ConnectionsDescription": "Максимум параллельных подключений для быстрых загрузок (1-16)",
+      "aria2Splits": "Частей разбиения файла aria2",
+      "aria2SplitsDescription": "Количество частей для разбиения файлов при параллельной загрузке (1-16)",
+      "downloadSpeedLimit": "Лимит скорости загрузки",
+      "downloadSpeedLimitDescription": "Максимальная скорость загрузки (0 = без ограничений)",
+      "unlimited": "Без ограничений"
     },
     "app": {
       "title": "Приложение",
       "autoUpdate": "Автоматически обновлять приложение",
-      "sendStats": "Отправлять анонимные статистики использования",
+      "sendStats": "Отправлять анонимную статистику использования",
       "sendStatsTooltip": "Помогает нам улучшать приложение, отправляя анонимные данные об использовании",
       "acrylicBackground": "Использовать акриловый фон",
       "disableAnimations": "Отключить анимации",
@@ -293,6 +307,33 @@
       "thumbnailTheming": "Цвет из миниатюры",
       "thumbnailThemingDescription": "Использовать цвета миниатюр для прогресс-баров и эффектов наведения",
       "resetToDefault": "Сбросить"
+    },
+    "network": {
+      "title": "Сеть",
+      "proxy": "Прокси",
+      "proxyDescription": "Настройка прокси для всех сетевых запросов",
+      "proxyMode": "Режим прокси",
+      "proxyModeDescription": "Выберите как маршрутизировать запросы",
+      "proxyModeNone": "Без прокси",
+      "proxyModeSystem": "Системный прокси",
+      "proxyModeCustom": "Свой прокси",
+      "customProxyUrl": "URL прокси",
+      "customProxyUrlPlaceholder": "http://host:port или socks5://host:port",
+      "customProxyUrlDescription": "Введите URL прокси-сервера (http, https или socks5)",
+      "proxyFallback": "Запасной вариант при ошибке",
+      "proxyFallbackTooltip": "При ошибке прокси попробовать системный, затем прямое подключение",
+      "proxyInvalid": "Неверный формат URL прокси",
+      "proxyValidFormats": "Допустимые форматы: http://host:port, https://host:port, socks5://host:port",
+      "systemProxyDetected": "Системный прокси обнаружен",
+      "noSystemProxy": "Системный прокси не настроен",
+      "detectingProxy": "Поиск системного прокси...",
+      "recheckProxy": "Проверить снова",
+      "checkIp": "Проверка IP",
+      "checkIpDescription": "Проверьте работу прокси, узнав свой публичный IP",
+      "checkIpBtn": "Узнать мой IP",
+      "ipCheckFailed": "Не удалось узнать IP",
+      "proxyActive": "Через прокси",
+      "directConnection": "Прямое подключение"
     },
     "deps": {
       "title": "Зависимости",
@@ -456,6 +497,7 @@
   },
   "clipboard": {
     "detected": "Обнаружена ссылка в буфере обмена",
+    "fileDetected": "Обнаружена ссылка на файл в буфере обмена",
     "noValidUrl": "В буфере нет подходящей ссылки",
     "error": "Не удалось прочитать буфер обмена"
   },

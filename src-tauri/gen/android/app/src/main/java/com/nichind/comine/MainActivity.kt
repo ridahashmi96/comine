@@ -132,6 +132,72 @@ class MainActivity : TauriActivity() {
     activeNotifications.remove(notificationId)
   }
   
+  private fun showCompletedNotification(notificationId: Int, title: String, filePath: String) {
+    val file = File(filePath)
+    
+    // Create intent to open file when notification is clicked
+    val openIntent = try {
+      val uri = androidx.core.content.FileProvider.getUriForFile(
+        this,
+        "${packageName}.fileprovider",
+        file
+      )
+      
+      val mimeType = when (file.extension.lowercase()) {
+        "mp4", "mkv", "webm", "avi", "mov" -> "video/*"
+        "mp3", "m4a", "ogg", "flac", "wav", "opus" -> "audio/*"
+        "jpg", "jpeg", "png", "gif", "webp" -> "image/*"
+        else -> "*/*"
+      }
+      
+      Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, mimeType)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      }
+    } catch (e: Exception) {
+      // Fallback to opening app
+      Intent(this, MainActivity::class.java).apply {
+        flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+      }
+    }
+    
+    val pendingIntent = PendingIntent.getActivity(
+      this, notificationId, openIntent,
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+    
+    val builder = NotificationCompat.Builder(this, DOWNLOAD_CHANNEL_ID)
+      .setSmallIcon(android.R.drawable.stat_sys_download_done)
+      .setContentTitle("Download complete")
+      .setContentText(title)
+      .setContentIntent(pendingIntent)
+      .setAutoCancel(true)
+      .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+    
+    notificationManager?.notify(notificationId + 5000, builder.build())
+  }
+  
+  private fun showFailedNotification(notificationId: Int, title: String, error: String) {
+    val intent = Intent(this, MainActivity::class.java).apply {
+      flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+    }
+    val pendingIntent = PendingIntent.getActivity(
+      this, notificationId, intent,
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+    
+    val builder = NotificationCompat.Builder(this, DOWNLOAD_CHANNEL_ID)
+      .setSmallIcon(android.R.drawable.stat_notify_error)
+      .setContentTitle("Download failed")
+      .setContentText(title)
+      .setStyle(NotificationCompat.BigTextStyle().bigText("$title\n$error"))
+      .setContentIntent(pendingIntent)
+      .setAutoCancel(true)
+      .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+    
+    notificationManager?.notify(notificationId + 5000, builder.build())
+  }
+
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     // Handle share intent when app is already running
@@ -887,10 +953,12 @@ class MainActivity : TauriActivity() {
     }
     
     @JavascriptInterface
-    fun download(url: String, format: String?, callbackName: String) {
+    fun download(url: String, format: String?, playlistFolder: String?, callbackName: String) {
       downloadExecutor.execute {
         // Get unique notification ID for this download
         val notificationId = getNotificationIdForUrl(url)
+        
+        var currentTitle = "Downloading..."
         
         try {
           if (!ytdlInitialized) {
@@ -900,12 +968,27 @@ class MainActivity : TauriActivity() {
           }
           
           sendLog("info", "Starting download: $url")
-          sendLog("debug", "Format: ${format ?: "best"}")
+          sendLog("debug", "Format: ${format ?: "best"}, PlaylistFolder: ${playlistFolder ?: "none"}")
           
-          val downloadDir = File(
+          // Base download directory
+          val baseDir = File(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
             "Comine"
           )
+          
+          // Create playlist subfolder if specified
+          val downloadDir = if (!playlistFolder.isNullOrBlank()) {
+            // Sanitize folder name for filesystem
+            val safeFolderName = playlistFolder
+              .replace(Regex("[<>:\"/\\\\|?*]"), "_")
+              .replace(Regex("\\s+"), " ")
+              .trim()
+              .take(100)
+            File(baseDir, safeFolderName)
+          } else {
+            baseDir
+          }
+          
           if (!downloadDir.exists()) {
             downloadDir.mkdirs()
             sendLog("debug", "Created download directory: ${downloadDir.absolutePath}")
@@ -944,7 +1027,6 @@ class MainActivity : TauriActivity() {
           }
           
           // Show initial notification for this download
-          var currentTitle = "Downloading..."
           activeNotifications[notificationId] = url
           mainHandler.post { showDownloadNotification(notificationId, currentTitle, -1) }
           
@@ -996,8 +1078,14 @@ class MainActivity : TauriActivity() {
           // 3. [download] /path/to/file.mp4 has already been downloaded
           // 4. [ExtractAudio] Destination: /path/to/file.mp3
           // 5. [ffmpeg] Destination: /path/to/file.mp4 (for remux)
+          // 6. [VideoRemuxer] Remuxing video from m4a to mp4; Destination: /path/to/file.mp4
           
-          // Look for the final merged/downloaded file - order matters, prefer merger result
+          // Look for the final merged/downloaded file - order matters, prefer remux result
+          val videoRemuxMatch = Regex("""\[VideoRemuxer\].*Destination:\s*(.+)""").findAll(output).lastOrNull()
+          if (videoRemuxMatch != null) {
+            sendLog("debug", "Found VideoRemuxer match: ${videoRemuxMatch.groupValues[1]}")
+          }
+          
           val mergerMatch = Regex("""\[Merger\] Merging formats into "(.+?)"""").find(output)
           if (mergerMatch != null) {
             sendLog("debug", "Found merger match: ${mergerMatch.groupValues[1]}")
@@ -1023,8 +1111,9 @@ class MainActivity : TauriActivity() {
             sendLog("debug", "Found already downloaded match: ${alreadyMatch.groupValues[1]}")
           }
           
-          // Priority order: ffmpeg result > merger > extractAudio > last download dest > already downloaded
-          var parsedPath = ffmpegDestMatch?.groupValues?.get(1)?.trim()
+          // Priority order: VideoRemuxer > ffmpeg result > merger > extractAudio > last download dest > already downloaded
+          var parsedPath = videoRemuxMatch?.groupValues?.get(1)?.trim()
+            ?: ffmpegDestMatch?.groupValues?.get(1)?.trim()
             ?: mergerMatch?.groupValues?.get(1)?.trim()
             ?: extractAudioMatch?.groupValues?.get(1)?.trim()
             ?: destMatch?.groupValues?.get(1)?.trim()
@@ -1077,9 +1166,16 @@ class MainActivity : TauriActivity() {
           
           if (response.exitCode == 0) {
             sendLog("info", "Download completed successfully")
+            // Show completion notification
+            if (filePath != null) {
+              val fileName = File(filePath).nameWithoutExtension
+              mainHandler.post { showCompletedNotification(notificationId, fileName, filePath) }
+            }
           } else {
             sendLog("error", "Download failed with exit code: ${response.exitCode}")
             sendLog("error", "Output: ${response.out}")
+            // Show failed notification
+            mainHandler.post { showFailedNotification(notificationId, currentTitle, "Exit code: ${response.exitCode}") }
           }
           
           val resultJson = JSONObject().apply {
@@ -1094,8 +1190,11 @@ class MainActivity : TauriActivity() {
         } catch (e: Exception) {
           Log.e(TAG, "Download failed", e)
           sendLog("error", "Download exception: ${e.message}")
-          // Hide notification on error
-          mainHandler.post { hideDownloadNotification(notificationId) }
+          // Hide notification on error and show failed notification
+          mainHandler.post { 
+            hideDownloadNotification(notificationId)
+            showFailedNotification(notificationId, currentTitle, e.message ?: "Unknown error")
+          }
           // Use JSONObject to properly escape the error message
           val errorJson = JSONObject().apply {
             put("error", e.message ?: "Unknown error")

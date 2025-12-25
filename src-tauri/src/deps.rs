@@ -15,6 +15,11 @@ use crate::CommandExt;
 #[cfg(not(target_os = "android"))]
 use std::io::Read;
 
+// ProxyConfig is needed for function signatures on all platforms
+use crate::proxy::ProxyConfig;
+#[cfg(not(target_os = "android"))]
+use crate::proxy::proxy_strategies;
+
 // ==================== Binary names per platform ====================
 
 #[cfg(target_os = "windows")]
@@ -113,7 +118,7 @@ pub fn get_quickjs_path(app: &AppHandle) -> Result<PathBuf, String> {
 // ==================== HTTP Client ====================
 
 #[cfg(not(target_os = "android"))]
-fn create_http_client_with_proxy(use_system_proxy: bool) -> Result<reqwest::Client, String> {
+fn http_client(proxy_url: Option<&str>) -> Result<reqwest::Client, String> {
     let mut builder = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
         .redirect(reqwest::redirect::Policy::limited(10))
@@ -123,28 +128,36 @@ fn create_http_client_with_proxy(use_system_proxy: bool) -> Result<reqwest::Clie
         .tcp_keepalive(std::time::Duration::from_secs(30))
         .danger_accept_invalid_certs(false); // Keep security, but could enable for debugging
     
-    if !use_system_proxy {
-        builder = builder.no_proxy();
+    match proxy_url {
+        Some(url) if !url.is_empty() => {
+            // Use explicit proxy
+            let proxy = reqwest::Proxy::all(url)
+                .map_err(|e| format!("Invalid proxy URL: {}", e))?;
+            builder = builder.proxy(proxy);
+            debug!("HTTP client using proxy: {}", url);
+        }
+        _ => {
+            // No proxy - disable system proxy detection
+            builder = builder.no_proxy();
+            debug!("HTTP client with no proxy");
+        }
     }
     
     builder.build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))
 }
 
-/// Robust download with multiple retry strategies
+/// Download with proxy strategies based on config
 #[cfg(not(target_os = "android"))]
-async fn robust_download(url: &str) -> Result<reqwest::Response, String> {
-    let strategies = [
-        ("with proxy", true),
-        ("without proxy", false),
-    ];
+async fn fetch(url: &str, proxy_config: &ProxyConfig) -> Result<reqwest::Response, String> {
+    let strategies = proxy_strategies(proxy_config);
     
     let mut last_error = String::new();
     
-    for (strategy_name, use_proxy) in strategies {
+    for (strategy_name, proxy_url) in &strategies {
         info!("Trying download {} - {}", strategy_name, url);
         
-        let client = match create_http_client_with_proxy(use_proxy) {
+        let client = match http_client(proxy_url.as_deref()) {
             Ok(c) => c,
             Err(e) => {
                 warn!("Failed to create client {}: {}", strategy_name, e);
@@ -184,7 +197,7 @@ async fn robust_download(url: &str) -> Result<reqwest::Response, String> {
                     let err_str = e.to_string();
                     warn!("Request error: {}", err_str);
                     
-                    // Check if it's a connection error that might be fixed by trying without proxy
+                    // Check if it's a connection error that might be fixed by trying different proxy
                     if err_str.contains("connection") || err_str.contains("timeout") || err_str.contains("proxy") {
                         last_error = err_str;
                         if attempt >= 2 {
@@ -201,6 +214,18 @@ async fn robust_download(url: &str) -> Result<reqwest::Response, String> {
     Err(format!("All download attempts failed: {}", last_error))
 }
 
+/// Fetch with default system proxy
+#[cfg(not(target_os = "android"))]
+async fn fetch_default(url: &str) -> Result<reqwest::Response, String> {
+    // Use default system proxy mode
+    let default_config = ProxyConfig {
+        mode: "system".to_string(),
+        custom_url: String::new(),
+        fallback: true,
+    };
+    fetch(url, &default_config).await
+}
+
 // ==================== aria2-accelerated download ====================
 
 /// Download a file using aria2c with multi-connection support (much faster for large files)
@@ -213,6 +238,7 @@ async fn download_with_aria2(
     event_name: &str,
     dep_name: &str,
     version: &str,
+    proxy_url: Option<&str>,
 ) -> Result<(), String> {
     let aria2_path = get_aria2_path(app)?;
     
@@ -251,7 +277,7 @@ async fn download_with_aria2(
     // --retry-wait=2: wait 2 seconds between retries
     // --summary-interval=1: update progress every second
     let mut cmd = tokio::process::Command::new(&aria2_path);
-    cmd.args([
+    let mut args = vec![
         "-x16",
         "-s16", 
         "-k1M",
@@ -263,10 +289,20 @@ async fn download_with_aria2(
         "--download-result=hide",
         "--allow-overwrite=true",
         "--auto-file-renaming=false",
-        "-d", &dest_dir,
-        "-o", &dest_filename,
-        url,
-    ]);
+    ];
+    
+    // Add proxy argument if configured
+    let proxy_arg;
+    if let Some(proxy) = proxy_url {
+        if !proxy.is_empty() {
+            proxy_arg = format!("--all-proxy={}", proxy);
+            args.push(&proxy_arg);
+            info!("aria2 using proxy: {}", proxy);
+        }
+    }
+    
+    args.extend(["-d", &dest_dir, "-o", &dest_filename, url]);
+    cmd.args(&args);
     
     #[cfg(target_os = "windows")]
     cmd.hide_console();
@@ -468,9 +504,9 @@ fn parse_size(s: &str) -> u64 {
 
 // ==================== Generic download with progress ====================
 
-/// Smart download: uses aria2 if available, falls back to reqwest
+/// Download file: uses aria2 if available, falls back to reqwest
 #[cfg(not(target_os = "android"))]
-async fn smart_download_file(
+async fn download_file(
     app: &AppHandle,
     url: &str,
     dest: &PathBuf,
@@ -478,31 +514,53 @@ async fn smart_download_file(
     event_name: &str,
     dep_name: &str,
     version: &str,
+    proxy_config: Option<&ProxyConfig>,
 ) -> Result<(), String> {
+    // Resolve proxy for this download
+    let config = proxy_config.cloned().unwrap_or_else(|| ProxyConfig {
+        mode: "system".to_string(),
+        custom_url: String::new(),
+        fallback: true,
+    });
+    
+    let strategies = proxy_strategies(&config);
+    
     // Try aria2 first if it's installed
     let aria2_path = get_aria2_path(app)?;
     if aria2_path.exists() {
-        match download_with_aria2(app, url, dest, window, event_name, dep_name, version).await {
-            Ok(()) => return Ok(()),
-            Err(e) => {
-                warn!("aria2 download failed, falling back to reqwest: {}", e);
+        // Try each proxy strategy with aria2
+        for (strategy_name, proxy_url) in &strategies {
+            info!("Trying aria2 download with {} strategy", strategy_name);
+            match download_with_aria2(
+                app, url, dest, window, event_name, dep_name, version,
+                proxy_url.as_deref()
+            ).await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    warn!("aria2 download failed with {}: {}", strategy_name, e);
+                    // Continue to next strategy
+                }
             }
         }
+        warn!("All aria2 strategies failed, falling back to reqwest");
     }
     
-    // Fall back to regular download
-    download_file_with_progress(url, dest, window, event_name, dep_name, version).await
+    // Fall back to reqwest download with proxy config
+    download_with_progress(
+        url, dest, window, event_name, dep_name, version, &config
+    ).await
 }
 
+/// Download file with progress reporting
 #[cfg(not(target_os = "android"))]
-#[allow(dead_code)]
-async fn download_file_with_progress(
+async fn download_with_progress(
     url: &str,
     dest: &PathBuf,
     window: &tauri::Window,
     event_name: &str,
     dep_name: &str,
     version: &str,
+    proxy_config: &ProxyConfig,
 ) -> Result<(), String> {
     // Clean up any existing partial download
     if dest.exists() {
@@ -512,7 +570,7 @@ async fn download_file_with_progress(
     
     info!("Starting download: {} -> {:?}", url, dest);
     
-    let response = robust_download(url).await.map_err(|e| {
+    let response = fetch(url, proxy_config).await.map_err(|e| {
         error!("Failed to download {}: {}", dep_name, e);
         format!("Failed to download {}: {}", dep_name, e)
     })?;
@@ -635,7 +693,7 @@ async fn make_executable(path: &PathBuf) -> Result<(), String> {
 async fn get_latest_release() -> Result<GitHubRelease, String> {
     info!("Fetching latest release info from GitHub API...");
     
-    let response = robust_download("https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest")
+    let response = fetch_default("https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest")
         .await
         .map_err(|e| {
             error!("Failed to fetch release info: {}", e);
@@ -654,7 +712,7 @@ async fn get_latest_release() -> Result<GitHubRelease, String> {
 #[cfg(not(target_os = "android"))]
 #[tauri::command]
 pub async fn get_ytdlp_releases() -> Result<Vec<ReleaseInfo>, String> {
-    let response = robust_download("https://api.github.com/repos/yt-dlp/yt-dlp/releases?per_page=10")
+    let response = fetch_default("https://api.github.com/repos/yt-dlp/yt-dlp/releases?per_page=10")
         .await
         .map_err(|e| format!("Failed to fetch releases: {}", e))?;
     
@@ -791,7 +849,12 @@ pub async fn check_ytdlp(app: AppHandle, check_updates: Option<bool>) -> Result<
 /// Download and install yt-dlp
 #[tauri::command]
 #[allow(unused_variables)]
-pub async fn install_ytdlp(app: AppHandle, window: tauri::Window, version: Option<String>) -> Result<String, String> {
+pub async fn install_ytdlp(
+    app: AppHandle, 
+    window: tauri::Window, 
+    version: Option<String>,
+    proxy_config: Option<ProxyConfig>,
+) -> Result<String, String> {
     info!("Starting yt-dlp installation");
     
     // On Android, yt-dlp is bundled via youtubedl-android library
@@ -875,7 +938,7 @@ pub async fn install_ytdlp(app: AppHandle, window: tauri::Window, version: Optio
     });
     
     // Use aria2 for faster download if available
-    smart_download_file(
+    download_file(
         &app,
         &download_url,
         &ytdlp_path,
@@ -883,6 +946,7 @@ pub async fn install_ytdlp(app: AppHandle, window: tauri::Window, version: Optio
         "ytdlp-install-progress",
         "yt-dlp",
         &target_version,
+        proxy_config.as_ref(),
     ).await.map_err(|e| {
         error!("Failed to download yt-dlp: {}", e);
         format!("Failed to download yt-dlp: {}", e)
@@ -1089,7 +1153,11 @@ pub async fn check_ffmpeg(app: AppHandle) -> Result<DependencyStatus, String> {
 /// Download and install ffmpeg
 #[tauri::command]
 #[allow(unused_variables)]
-pub async fn install_ffmpeg(app: AppHandle, window: tauri::Window) -> Result<String, String> {
+pub async fn install_ffmpeg(
+    app: AppHandle, 
+    window: tauri::Window,
+    proxy_config: Option<ProxyConfig>,
+) -> Result<String, String> {
     // Early return for unsupported platforms
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     return Err("ffmpeg installation is not supported on this platform. On Android, install via Termux.".to_string());
@@ -1124,7 +1192,7 @@ pub async fn install_ffmpeg(app: AppHandle, window: tauri::Window) -> Result<Str
         let temp_archive = bin_dir.join("ffmpeg_temp.archive");
         
         // Use aria2 if available for faster download (ffmpeg is ~150MB)
-        smart_download_file(
+        download_file(
             &app,
             download_url,
             &temp_archive,
@@ -1132,6 +1200,7 @@ pub async fn install_ffmpeg(app: AppHandle, window: tauri::Window) -> Result<Str
             "ffmpeg-install-progress",
             "ffmpeg",
             "latest",
+            proxy_config.as_ref(),
         ).await?;
         
         // Emit progress: extracting
@@ -1357,7 +1426,11 @@ pub async fn check_aria2(app: AppHandle) -> Result<DependencyStatus, String> {
 /// Download and install aria2c
 #[tauri::command]
 #[allow(unused_variables)]
-pub async fn install_aria2(app: AppHandle, window: tauri::Window) -> Result<String, String> {
+pub async fn install_aria2(
+    app: AppHandle, 
+    window: tauri::Window,
+    proxy_config: Option<ProxyConfig>,
+) -> Result<String, String> {
     // Early return for unsupported platforms
     #[cfg(target_os = "macos")]
     return Err("aria2 installation on macOS: please install via 'brew install aria2'".to_string());
@@ -1399,13 +1472,21 @@ pub async fn install_aria2(app: AppHandle, window: tauri::Window) -> Result<Stri
         // Both Windows and Linux use zip format
         let temp_archive = bin_dir.join("aria2_temp.zip");
         
-        download_file_with_progress(
+        // Download aria2 - use the download function with proxy support
+        // Note: We can't use aria2 to download itself, so we use reqwest only
+        let config = proxy_config.unwrap_or_else(|| ProxyConfig {
+            mode: "system".to_string(),
+            custom_url: String::new(),
+            fallback: true,
+        });
+        download_with_progress(
             download_url,
             &temp_archive,
             &window,
             "aria2-install-progress",
             "aria2",
             "1.37.0",
+            &config,
         ).await?;
         
         // Emit progress: extracting
@@ -1577,7 +1658,11 @@ pub async fn check_deno(app: AppHandle) -> Result<DependencyStatus, String> {
 /// Download and install deno
 #[tauri::command]
 #[allow(unused_variables)]
-pub async fn install_deno(app: AppHandle, window: tauri::Window) -> Result<String, String> {
+pub async fn install_deno(
+    app: AppHandle, 
+    window: tauri::Window,
+    proxy_config: Option<ProxyConfig>,
+) -> Result<String, String> {
     #[cfg(target_os = "android")]
     return Err("Deno installation on Android is not supported.".to_string());
     
@@ -1615,7 +1700,7 @@ pub async fn install_deno(app: AppHandle, window: tauri::Window) -> Result<Strin
         let temp_archive = bin_dir.join("deno_temp.zip");
         
         // Use aria2 if available for faster download
-        smart_download_file(
+        download_file(
             &app,
             download_url,
             &temp_archive,
@@ -1623,6 +1708,7 @@ pub async fn install_deno(app: AppHandle, window: tauri::Window) -> Result<Strin
             "deno-install-progress",
             "deno",
             "latest",
+            proxy_config.as_ref(),
         ).await?;
         
         // Emit progress: extracting
@@ -1812,7 +1898,11 @@ pub async fn check_quickjs(app: AppHandle) -> Result<DependencyStatus, String> {
 /// Download and install quickjs
 #[tauri::command]
 #[allow(unused_variables)]
-pub async fn install_quickjs(app: AppHandle, window: tauri::Window) -> Result<String, String> {
+pub async fn install_quickjs(
+    app: AppHandle, 
+    window: tauri::Window,
+    proxy_config: Option<ProxyConfig>,
+) -> Result<String, String> {
     #[cfg(target_os = "android")]
     return Err("QuickJS installation on Android is not supported.".to_string());
     
@@ -1852,13 +1942,19 @@ pub async fn install_quickjs(app: AppHandle, window: tauri::Window) -> Result<St
         
         // Download - use direct HTTP instead of aria2 for small files from bellard.org
         // (aria2 has issues with this server's redirects/SSL)
-        download_file_with_progress(
+        let config = proxy_config.unwrap_or_else(|| ProxyConfig {
+            mode: "system".to_string(),
+            custom_url: String::new(),
+            fallback: true,
+        });
+        download_with_progress(
             download_url,
             &temp_archive,
             &window,
             "quickjs-install-progress",
             "QuickJS",
             "latest",
+            &config,
         ).await?;
         
         // Emit progress: extracting

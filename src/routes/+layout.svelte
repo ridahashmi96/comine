@@ -19,11 +19,11 @@
   import { toast } from '$lib/components/Toast.svelte';
   import { tooltip } from '$lib/actions/tooltip';
   import { t } from '$lib/i18n';
-  import { initSettings, settings, settingsReady, type CloseBehavior, getSettings } from '$lib/stores/settings';
+  import { initSettings, settings, settingsReady, type CloseBehavior, getSettings, getProxyConfig } from '$lib/stores/settings';
   import { queue, activeDownloadsCount } from '$lib/stores/queue';
   import { deps } from '$lib/stores/deps';
   import { logs, type LogLevel } from '$lib/stores/logs';
-  import { cleanUrl, isLikelyPlaylist, isValidMediaUrl, getQuickThumbnail } from '$lib/utils/format';
+  import { cleanUrl, isLikelyPlaylist, isValidMediaUrl, getQuickThumbnail, isDirectFileUrl } from '$lib/utils/format';
   import { isAndroid, onShareIntent, setupAndroidLogHandler, processYtmThumbnailOnAndroid } from '$lib/utils/android';
   
   let { children }: { children: Snippet } = $props();
@@ -276,6 +276,12 @@
         uploader?: string | null;
         downloadMode?: 'auto' | 'audio' | 'mute';
         isPlaylist?: boolean | null;
+        isFile?: boolean | null; // For direct file downloads
+        fileInfo?: {
+          filename: string;
+          size: number;
+          mimeType: string;
+        } | null;
       } | null;
     }
     
@@ -284,11 +290,32 @@
       const url = cleanUrl(rawUrl);
       const notificationDownloadMode = metadata?.downloadMode;
       const isPlaylistNotification = metadata?.isPlaylist === true;
-      logs.info('layout', `notification-start-download received: ${url}, isPlaylist: ${isPlaylistNotification}`);
+      const isFileNotification = metadata?.isFile === true;
+      logs.info('layout', `notification-start-download received: ${url}, isPlaylist: ${isPlaylistNotification}, isFile: ${isFileNotification}`);
       logs.debug('layout', `Prefetched metadata: title=${metadata?.title}, uploader=${metadata?.uploader}, mode=${notificationDownloadMode}`);
       
-      if (url) {
-        if (isPlaylistNotification) {
+      if (!url) return;
+      
+      // Handle file downloads differently
+      if (isFileNotification && metadata?.fileInfo) {
+        logs.info('layout', `Starting file download: ${metadata.fileInfo.filename}`);
+        
+        const queueId = queue.addFile({
+          url: rawUrl, // Use raw URL for file downloads
+          filename: metadata.fileInfo.filename,
+          size: metadata.fileInfo.size,
+          mimeType: metadata.fileInfo.mimeType,
+        });
+        
+        if (queueId) {
+          toast.success($t('notification.downloadStarted'));
+        } else {
+          toast.info($t('queue.alreadyInQueue') || 'Already in queue');
+        }
+        return;
+      }
+      
+      if (isPlaylistNotification) {
           logs.info('layout', `Playlist detected - showing window and opening playlist modal: ${url}`);
           
           if (appWindow) {
@@ -334,7 +361,6 @@
         if (queueId) {
           toast.success($t('notification.downloadStarted'));
         }
-      }
     });
   }
   
@@ -418,13 +444,104 @@
         if (!text || text === lastClipboardText) return;
         
         lastClipboardText = text;
+        logs.debug('layout', `Clipboard changed: ${text.substring(0, 100)}...`);
         
+        // First check if it's a media URL (YouTube, etc.)
         if (isValidMediaUrl(text, $settings.clipboardPatterns || [])) {
+          logs.debug('layout', `Media URL detected: ${text}`);
           await handleDetectedUrl(text);
+          return;
+        }
+        
+        // Then check if it's a direct file URL (only if setting is enabled)
+        const fileCheck = isDirectFileUrl(text);
+        logs.debug('layout', `Checking file URL: watchClipboardForFiles=${$settings.watchClipboardForFiles}, isDirectFileUrl=${fileCheck.isFile}`);
+        if ($settings.watchClipboardForFiles && fileCheck.isFile) {
+          logs.info('layout', `Direct file URL detected: ${fileCheck.filename}`);
+          await handleDetectedFileUrl(text, fileCheck.filename);
         }
       } catch (err) {
+        logs.error('layout', `Clipboard watcher error: ${err}`);
       }
     }, CLIPBOARD_CHECK_INTERVAL);
+  }
+  
+  // Handle detected file URL
+  async function handleDetectedFileUrl(rawUrl: string, detectedFilename: string | null) {
+    if (!appWindow) return;
+    
+    // Don't process if notifications are disabled
+    if (!$settings.fileDownloadNotifications) return;
+    
+    const isVisible = await appWindow.isVisible();
+    const isFocused = await appWindow.isFocused();
+    
+    // If app is focused, just show a toast
+    if (isVisible && isFocused) {
+      toast.info(`📋 ${$t('clipboard.fileDetected') || 'File URL detected'}: ${detectedFilename || 'file'}`);
+      return;
+    }
+    
+    if (!$settings.notificationsEnabled) return;
+    
+    try {
+      // Use HEAD request to get file info
+      interface FileUrlInfo {
+        isFile: boolean;
+        filename: string;
+        size: number;
+        mimeType: string;
+        supportsResume: boolean;
+      }
+      
+      const fileInfo = await invoke<FileUrlInfo>('check_file_url', {
+        url: rawUrl,
+        proxyConfig: getProxyConfig()
+      });
+      
+      // Use detected filename if server doesn't provide one
+      if (!fileInfo.filename && detectedFilename) {
+        fileInfo.filename = detectedFilename;
+      }
+      
+      if (!fileInfo.isFile) {
+        logs.debug('layout', `URL is not a file: ${rawUrl}`);
+        return;
+      }
+      
+      logs.info('layout', `File URL detected: ${fileInfo.filename} (${fileInfo.size} bytes)`);
+      
+      const currentSettings = getSettings();
+      
+      // Show notification with file info
+      await invoke('show_notification_window', {
+        data: {
+          title: fileInfo.filename,
+          body: formatFileSize(fileInfo.size),
+          thumbnail: null,
+          url: rawUrl,
+          compact: currentSettings.compactNotifications,
+          download_label: $t('notification.downloadButton'),
+          dismiss_label: $t('notification.dismissButton'),
+          is_file: true, // New flag for file downloads
+          file_info: fileInfo
+        },
+        position: currentSettings.notificationPosition,
+        monitor: currentSettings.notificationMonitor,
+        offset: currentSettings.notificationOffset
+      });
+    } catch (err) {
+      logs.warn('layout', `Failed to check file URL: ${err}`);
+    }
+  }
+  
+  // Format file size for display
+  function formatFileSize(bytes: number): string {
+    if (bytes === 0) return 'Unknown size';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   }
 
   async function handleDetectedUrl(rawUrl: string) {
@@ -463,7 +580,8 @@
           offset: 0,
           limit: 1,
           cookiesFromBrowser: currentSettings.cookiesFromBrowser || null,
-          customCookies: currentSettings.customCookies || null
+          customCookies: currentSettings.customCookies || null,
+          proxyConfig: getProxyConfig()
         });
         logs.info('layout', `Playlist info: is_playlist=${playlistInfo.is_playlist}, title=${playlistInfo.title}, count=${playlistInfo.total_count}`);
         
@@ -488,7 +606,10 @@
         }
       }
       
-      const videoInfo: VideoInfo = await invoke('get_video_info', { url });
+      const videoInfo: VideoInfo = await invoke('get_video_info', { 
+        url,
+        proxyConfig: getProxyConfig()
+      });
       
       let croppedThumbnailUrl: string | undefined = undefined;
       const originalThumbnailUrl = videoInfo.thumbnail || getQuickThumbnail(url);

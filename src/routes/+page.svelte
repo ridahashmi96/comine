@@ -20,8 +20,8 @@
   import PlaylistModal, { type SelectedEntry } from '$lib/components/PlaylistModal.svelte';
   import type { IconName } from '$lib/components/Icon.svelte';
   import { isAndroid, isAndroidYtDlpReady, getPlaylistInfoOnAndroid } from '$lib/utils/android';
-  import { settings, settingsReady, updateSetting, updateSettings, type CustomPreset, type VideoQuality, type DownloadMode, type AudioQuality } from '$lib/stores/settings';
-  import { cleanUrl, isLikelyPlaylist, isValidMediaUrl } from '$lib/utils/format';
+  import { settings, settingsReady, updateSetting, updateSettings, type CustomPreset, type VideoQuality, type DownloadMode, type AudioQuality, getProxyConfig } from '$lib/stores/settings';
+  import { cleanUrl, isLikelyPlaylist, isValidMediaUrl, isDirectFileUrl } from '$lib/utils/format';
 
   let url = $state("");
   let status = $state("");
@@ -32,6 +32,7 @@
   let playlistUrl = $state('');
   let checkingPlaylist = $state(false);
   let pendingPlaylistCheck = $state(false);
+  let processedPlaylistUrl = $state(''); // Track which URL was already opened in modal
   
   // React to URL query param changes (from Ctrl+V navigation or notification)
   $effect(() => {
@@ -40,8 +41,10 @@
     if (urlParam && urlParam !== url) {
       url = urlParam;
       // If openPlaylist flag is set, open the modal immediately (don't wait for playlist check)
-      if (openPlaylist) {
+      // But only if we haven't already processed this URL
+      if (openPlaylist && urlParam !== processedPlaylistUrl) {
         playlistUrl = urlParam;
+        processedPlaylistUrl = urlParam; // Mark as processed to prevent double-open
         playlistModalOpen = true; // Open modal instantly - it will show loading state
       }
       // Clean the URL from address bar
@@ -62,6 +65,20 @@
     if (!url.trim()) return;
     
     const downloadUrl = url.trim();
+    
+    // Check if it's a direct file URL
+    const fileCheck = isDirectFileUrl(downloadUrl);
+    if (fileCheck.isFile) {
+      logs.info('download', `Direct file URL detected: ${fileCheck.filename}`);
+      queue.addFile({
+        url: downloadUrl,
+        filename: fileCheck.filename || 'download'
+      });
+      toast.info($t('downloads.active'));
+      url = '';
+      return;
+    }
+    
     checkingPlaylist = true;
     
     try {
@@ -78,7 +95,8 @@
           offset: 0,
           limit: 1,
           cookiesFromBrowser: cookiesFromBrowser || null,
-          customCookies: customCookies || null
+          customCookies: customCookies || null,
+          proxyConfig: getProxyConfig()
         });
       }
       
@@ -441,6 +459,8 @@
       usePlaylistFolder: playlistInfo.usePlaylistFolder
     }, globalOptions);
     url = '';
+    playlistUrl = '';
+    processedPlaylistUrl = ''; // Allow re-opening same playlist later
     status = '';
     toast.success($t('playlist.notification.downloadStarted').replace('{count}', entries.length.toString()));
   }
@@ -448,6 +468,22 @@
   async function download() {
     if (!url.trim()) {
       status = `⚠️ ${$t('download.placeholder')}`;
+      return;
+    }
+
+    const downloadUrl = url.trim();
+    logs.info('download', `User initiated download: ${downloadUrl}`);
+    
+    // Check if it's a direct file URL
+    const fileCheck = isDirectFileUrl(downloadUrl);
+    if (fileCheck.isFile) {
+      logs.info('download', `Direct file URL detected: ${fileCheck.filename}`);
+      queue.addFile({
+        url: downloadUrl,
+        filename: fileCheck.filename || 'download'
+      });
+      toast.info($t('downloads.active'));
+      url = '';
       return;
     }
 
@@ -465,10 +501,6 @@
       }
     }
 
-    // Add to queue - queue store handles the rest (works for both Android and desktop)
-    const downloadUrl = url.trim();
-    logs.info('download', `User initiated download: ${downloadUrl}`);
-    
     // Check if this might be a playlist URL
     const isPlaylistUrl = isLikelyPlaylist(downloadUrl);
     logs.debug('download', `Is likely playlist: ${isPlaylistUrl}`);
@@ -489,7 +521,8 @@
             offset: 0,
             limit: 1,
             cookiesFromBrowser: cookiesFromBrowser || null,
-            customCookies: customCookies || null
+            customCookies: customCookies || null,
+            proxyConfig: getProxyConfig()
           });
         }
         
@@ -787,6 +820,10 @@
   {customCookies}
   defaultDownloadMode={downloadMode}
   ondownload={handlePlaylistDownload}
+  onclose={() => {
+    playlistUrl = '';
+    processedPlaylistUrl = ''; // Allow re-opening same playlist later
+  }}
 />
 
 <style>

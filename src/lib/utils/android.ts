@@ -9,7 +9,7 @@ interface AndroidYtDlp {
   getVersion(): string;
   getVideoInfo(url: string, callbackName: string): void; // Async with callback
   getPlaylistInfo(url: string, callbackName: string): void; // Playlist info with entries
-  download(url: string, format: string | null, callbackName: string): void;
+  download(url: string, format: string | null, playlistFolder: string | null, callbackName: string): void;
   openFile(filePath: string): boolean;
   openFolder(filePath: string): boolean;
   pickFile(mimeTypes: string, callbackName: string): void; // File picker
@@ -113,7 +113,8 @@ let callbackCounter = 0;
 export function downloadOnAndroid(
   url: string,
   format: string = 'best',
-  onProgress?: (progress: DownloadProgress) => void
+  onProgress?: (progress: DownloadProgress) => void,
+  playlistFolder?: string | null
 ): Promise<DownloadResult> {
   return new Promise((resolve, reject) => {
     if (!isAndroid() || !window.AndroidYtDlp) {
@@ -205,8 +206,8 @@ export function downloadOnAndroid(
     };
 
     try {
-      logHandler?.('info', 'Android', `Starting download via bridge: ${url}`);
-      window.AndroidYtDlp.download(url, format || null, callbackName);
+      logHandler?.('info', 'Android', `Starting download via bridge: ${url}${playlistFolder ? ` (folder: ${playlistFolder})` : ''}`);
+      window.AndroidYtDlp.download(url, format || null, playlistFolder || null, callbackName);
     } catch (error) {
       hasCompleted = true;
       cleanup();

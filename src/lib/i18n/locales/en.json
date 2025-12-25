@@ -124,7 +124,8 @@
       "all": "All",
       "video": "Video",
       "audio": "Music",
-      "image": "Image"
+      "image": "Image",
+      "file": "Files"
     },
     "views": {
       "list": "List view",
@@ -203,6 +204,7 @@
     "resume": "Resume",
     "cancel": "Cancel",
     "items": "{count} items",
+    "alreadyInQueue": "Already in download queue",
     "comingSoon": "Queue feature coming soon..."
   },
   "settings": {
@@ -248,7 +250,18 @@
       "embedThumbnail": "Embed thumbnail in audio files",
       "embedThumbnailTooltip": "Embed the video thumbnail as cover art in downloaded audio files",
       "concurrentDownloads": "Concurrent downloads",
-      "concurrentDownloadsDescription": "Number of downloads that can run simultaneously"
+      "concurrentDownloadsDescription": "Number of downloads that can run simultaneously",
+      "watchClipboardForFiles": "Detect file URLs in clipboard",
+      "watchClipboardForFilesTooltip": "Show notifications when direct file download URLs are copied (e.g., .zip, .exe files)",
+      "fileDownloadNotifications": "Show file download notifications",
+      "fileDownloadNotificationsTooltip": "Display popup notification when a file URL is detected",
+      "aria2Connections": "Aria2 connections per server",
+      "aria2ConnectionsDescription": "Maximum parallel connections for faster downloads (1-16)",
+      "aria2Splits": "Aria2 file splits",
+      "aria2SplitsDescription": "Number of parts to split files for parallel downloading (1-16)",
+      "downloadSpeedLimit": "Download speed limit",
+      "downloadSpeedLimitDescription": "Maximum download speed (0 = unlimited)",
+      "unlimited": "Unlimited"
     },
     "app": {
       "title": "App",
@@ -359,6 +372,33 @@
       "cornerDismissTooltip": "Hide the full dismiss button and use only the corner X to close notifications",
       "offset": "Screen edge offset",
       "offsetDescription": "Distance from the screen edge (taskbar height)"
+    },
+    "network": {
+      "title": "Network",
+      "proxy": "Proxy",
+      "proxyDescription": "Configure proxy settings for all network requests",
+      "proxyMode": "Proxy mode",
+      "proxyModeDescription": "Choose how network requests are routed",
+      "proxyModeNone": "No proxy",
+      "proxyModeSystem": "System proxy",
+      "proxyModeCustom": "Custom proxy",
+      "customProxyUrl": "Proxy URL",
+      "customProxyUrlPlaceholder": "http://host:port or socks5://host:port",
+      "customProxyUrlDescription": "Enter your proxy server URL (http, https, or socks5)",
+      "proxyFallback": "Fallback on failure",
+      "proxyFallbackTooltip": "If the custom proxy fails, try system proxy, then direct connection",
+      "proxyInvalid": "Invalid proxy URL format",
+      "proxyValidFormats": "Valid formats: http://host:port, https://host:port, socks5://host:port",
+      "systemProxyDetected": "System proxy detected",
+      "noSystemProxy": "No system proxy configured",
+      "detectingProxy": "Detecting system proxy...",
+      "recheckProxy": "Recheck system proxy",
+      "checkIp": "Check IP",
+      "checkIpDescription": "Verify your proxy is working by checking your public IP",
+      "checkIpBtn": "Check my IP",
+      "ipCheckFailed": "Failed to check IP",
+      "proxyActive": "Via proxy",
+      "directConnection": "Direct connection"
     }
   },
   "info": {
@@ -432,6 +472,7 @@
   },
   "clipboard": {
     "detected": "Media URL detected in clipboard",
+    "fileDetected": "File URL detected in clipboard",
     "noValidUrl": "No valid media URL in clipboard",
     "error": "Failed to read clipboard"
   },

@@ -4,7 +4,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { portal } from '$lib/actions/portal';
   import { t } from '$lib/i18n';
-  import { settings, type VideoQuality, type DownloadMode, type AudioQuality } from '$lib/stores/settings';
+  import { settings, type VideoQuality, type DownloadMode, type AudioQuality, getProxyConfig } from '$lib/stores/settings';
   import { isAndroid, getPlaylistInfoOnAndroid, type PlaylistInfo as AndroidPlaylistInfo } from '$lib/utils/android';
   import Icon from './Icon.svelte';
   import Checkbox from './Checkbox.svelte';
@@ -166,7 +166,8 @@
           offset: 0,
           limit: 100, // Smaller initial batch for faster response
           cookiesFromBrowser: cookiesFromBrowser || null,
-          customCookies: customCookies || null
+          customCookies: customCookies || null,
+          proxyConfig: getProxyConfig()
         });
         console.log('[PlaylistModal] First batch returned, entries:', info?.entries?.length, 'has_more:', info?.has_more);
         
@@ -181,7 +182,8 @@
             offset: currentOffset,
             limit: 100,
             cookiesFromBrowser: cookiesFromBrowser || null,
-            customCookies: customCookies || null
+            customCookies: customCookies || null,
+            proxyConfig: getProxyConfig()
           });
           console.log('[PlaylistModal] Got more entries:', moreInfo?.entries?.length, 'has_more:', moreInfo?.has_more);
           
@@ -239,7 +241,8 @@
         offset: playlistInfo.entries.length,
         limit: 200, // Load in larger batches
         cookiesFromBrowser: cookiesFromBrowser || null,
-        customCookies: customCookies || null
+        customCookies: customCookies || null,
+        proxyConfig: getProxyConfig()
       });
       
       // Merge new entries

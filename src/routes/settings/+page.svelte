@@ -1,6 +1,6 @@
 <script lang="ts">
   import { t, locale, setLocale, locales, type Locale } from '$lib/i18n';
-  import { settings, updateSetting, settingsReady, defaultSettings, resetSettings, type NotificationPosition, type NotificationMonitor, type BackgroundType, type ToastPosition } from '$lib/stores/settings';
+  import { settings, updateSetting, settingsReady, defaultSettings, resetSettings, type NotificationPosition, type NotificationMonitor, type BackgroundType, type ToastPosition, type ProxyMode } from '$lib/stores/settings';
   import { history } from '$lib/stores/history';
   import { deps } from '$lib/stores/deps';
   import { onMount } from 'svelte';
@@ -27,6 +27,15 @@
   // Background input state (synced from settings on mount)
   let backgroundVideoInput = $state('');
   let backgroundImageInput = $state('');
+  
+  // Proxy state
+  let customProxyInput = $state('');
+  let proxyValidationError = $state<string | null>(null);
+  let systemProxyStatus = $state<string | null>(null);
+  let detectingSystemProxy = $state(false);
+  let currentIp = $state<string | null>(null);
+  let checkingIp = $state(false);
+  let ipProxyUsed = $state(false);
 
   onMount(() => {
     // Check platform
@@ -36,6 +45,14 @@
     // Initialize background inputs from settings
     backgroundVideoInput = $settings.backgroundVideo || '';
     backgroundImageInput = $settings.backgroundImage || '';
+    
+    // Initialize proxy input from settings
+    customProxyInput = $settings.customProxyUrl || '';
+    
+    // Detect system proxy on mount (desktop only)
+    if (onDesktop) {
+      detectSystemProxy();
+    }
     
     // Check all deps status when settings page loads (desktop only)
     if (onDesktop) {
@@ -61,6 +78,11 @@
     youtubeMusicAudioOnly: { section: 'downloads', keywords: ['youtube', 'music', 'audio', 'only', 'аудио', 'музыка'] },
     embedThumbnail: { section: 'downloads', keywords: ['thumbnail', 'cover', 'art', 'image', 'embed', 'audio', 'обложка', 'миниатюра'] },
     concurrentDownloads: { section: 'downloads', keywords: ['concurrent', 'parallel', 'simultaneous', 'downloads', 'speed', 'multiple', 'queue', 'параллельные', 'одновременные'] },
+    watchClipboardForFiles: { section: 'downloads', keywords: ['clipboard', 'file', 'detect', 'direct', 'url', 'буфер', 'файл'] },
+    fileDownloadNotifications: { section: 'downloads', keywords: ['notification', 'file', 'download', 'alert', 'уведомление', 'файл'] },
+    aria2Connections: { section: 'downloads', keywords: ['aria2', 'connections', 'parallel', 'speed', 'соединения'] },
+    aria2Splits: { section: 'downloads', keywords: ['aria2', 'splits', 'chunks', 'pieces', 'части'] },
+    downloadSpeedLimit: { section: 'downloads', keywords: ['speed', 'limit', 'throttle', 'bandwidth', 'скорость', 'лимит'] },
     autoUpdate: { section: 'app', keywords: ['update', 'auto', 'automatic', 'обновление'] },
     sendStats: { section: 'app', keywords: ['stats', 'statistics', 'analytics', 'telemetry', 'статистика'] },
     background: { section: 'app', keywords: ['background', 'acrylic', 'blur', 'transparency', 'video', 'animated', 'solid', 'color', 'image', 'фон'] },
@@ -71,6 +93,7 @@
     showHistoryStats: { section: 'app', keywords: ['history', 'stats', 'statistics', 'downloads', 'статистика', 'история'] },
     thumbnailTheming: { section: 'app', keywords: ['thumbnail', 'color', 'theming', 'progress', 'dynamic', 'миниатюра', 'цвет', 'тема'] },
     ytdlp: { section: 'deps', keywords: ['yt-dlp', 'ytdlp', 'dependency', 'download', 'зависимость'] },
+    proxy: { section: 'network', keywords: ['proxy', 'network', 'http', 'socks', 'vpn', 'прокси', 'сеть'] },
   };
 
   // Check if a setting matches the search query
@@ -337,6 +360,13 @@
     { value: 'cursor', label: $t('settings.notifications.monitorCursor') }
   ]);
 
+  // Proxy mode options
+  let proxyModeOptions = $derived([
+    { value: 'none', label: $t('settings.network.proxyModeNone') },
+    { value: 'system', label: $t('settings.network.proxyModeSystem') },
+    { value: 'custom', label: $t('settings.network.proxyModeCustom') }
+  ]);
+
   // Modal states
   let showResetModal = $state(false);
   let showClearHistoryModal = $state(false);
@@ -418,6 +448,83 @@
   function undoLanguage() {
     setLocale(defaultSettings.language as Locale);
     updateSetting('language', defaultSettings.language);
+  }
+
+  // Proxy handlers
+  function handleProxyModeChange(value: string) {
+    updateSetting('proxyMode', value as ProxyMode);
+  }
+
+  function handleProxyFallbackChange(checked: boolean) {
+    updateSetting('proxyFallback', checked);
+  }
+
+  // Validate proxy URL format
+  function validateProxyUrl(url: string): boolean {
+    if (!url.trim()) return true; // Empty is valid (will clear)
+    
+    const proxyRegex = /^(https?|socks5?):\/\/([a-zA-Z0-9.-]+|\[[a-fA-F0-9:]+\])(:\d{1,5})?(\/.*)?$/;
+    return proxyRegex.test(url.trim());
+  }
+
+  function handleCustomProxyInput(value: string) {
+    customProxyInput = value;
+    
+    if (!value.trim()) {
+      proxyValidationError = null;
+      updateSetting('customProxyUrl', '');
+      return;
+    }
+    
+    if (validateProxyUrl(value)) {
+      proxyValidationError = null;
+      updateSetting('customProxyUrl', value.trim());
+    } else {
+      proxyValidationError = $t('settings.network.proxyInvalid');
+    }
+  }
+
+  async function detectSystemProxy() {
+    if (!onDesktop) return;
+    
+    detectingSystemProxy = true;
+    systemProxyStatus = null;
+    
+    try {
+      const result = await invoke<{ url: string; source: string; description: string }>('detect_system_proxy');
+      if (result?.url && result.url.length > 0) {
+        systemProxyStatus = `${result.url} (${result.source})`;
+      } else {
+        systemProxyStatus = $t('settings.network.noSystemProxy');
+      }
+    } catch (err) {
+      console.error('Failed to detect system proxy:', err);
+      systemProxyStatus = $t('settings.network.noSystemProxy');
+    } finally {
+      detectingSystemProxy = false;
+    }
+  }
+
+  async function checkIp() {
+    checkingIp = true;
+    currentIp = null;
+    
+    try {
+      const result = await invoke<{ ip: string; proxyUsed: boolean; proxySource: string }>('check_ip', {
+        proxyConfig: {
+          mode: $settings.proxyMode,
+          customUrl: $settings.customProxyUrl,
+          fallback: $settings.proxyFallback
+        }
+      });
+      currentIp = result.ip;
+      ipProxyUsed = result.proxyUsed;
+    } catch (err) {
+      console.error('Failed to check IP:', err);
+      currentIp = $t('settings.network.ipCheckFailed');
+    } finally {
+      checkingIp = false;
+    }
   }
 </script>
 
@@ -929,6 +1036,292 @@
         </div>
       </div>
       {/if}
+
+      <!-- Watch Clipboard for File URLs -->
+      {#if matchesSearch('watchClipboardForFiles')}
+      <div class="setting-item">
+        <div class="setting-row">
+          <div class="setting-label-group">
+            <span class="setting-label">{$t('settings.downloads.watchClipboardForFiles')}</span>
+            <span class="setting-description">{$t('settings.downloads.watchClipboardForFilesTooltip')}</span>
+          </div>
+          <div class="setting-controls">
+            {#if $settings.watchClipboardForFiles !== defaultSettings.watchClipboardForFiles}
+              <button class="undo-btn" onclick={() => updateSetting('watchClipboardForFiles', defaultSettings.watchClipboardForFiles)} use:tooltip={$t('settings.app.resetToDefault')}>
+                <Icon name="undo" size={14} />
+              </button>
+            {/if}
+            <Toggle checked={$settings.watchClipboardForFiles} onchange={(checked) => updateSetting('watchClipboardForFiles', checked)} />
+          </div>
+        </div>
+      </div>
+      {/if}
+
+      <!-- File Download Notifications -->
+      {#if matchesSearch('fileDownloadNotifications')}
+      <div class="setting-item">
+        <div class="setting-row">
+          <div class="setting-label-group">
+            <span class="setting-label">{$t('settings.downloads.fileDownloadNotifications')}</span>
+            <span class="setting-description">{$t('settings.downloads.fileDownloadNotificationsTooltip')}</span>
+          </div>
+          <div class="setting-controls">
+            {#if $settings.fileDownloadNotifications !== defaultSettings.fileDownloadNotifications}
+              <button class="undo-btn" onclick={() => updateSetting('fileDownloadNotifications', defaultSettings.fileDownloadNotifications)} use:tooltip={$t('settings.app.resetToDefault')}>
+                <Icon name="undo" size={14} />
+              </button>
+            {/if}
+            <Toggle checked={$settings.fileDownloadNotifications} onchange={(checked) => updateSetting('fileDownloadNotifications', checked)} />
+          </div>
+        </div>
+      </div>
+      {/if}
+
+      <!-- Aria2 Connections -->
+      {#if matchesSearch('aria2Connections')}
+      <div class="setting-item">
+        <div class="setting-row">
+          <div class="setting-label-group">
+            <span class="setting-label">{$t('settings.downloads.aria2Connections')}</span>
+            <span class="setting-description">{$t('settings.downloads.aria2ConnectionsDescription')}</span>
+          </div>
+          <div class="slider-with-value">
+            {#if $settings.aria2Connections !== defaultSettings.aria2Connections}
+              <button class="undo-btn" onclick={() => updateSetting('aria2Connections', defaultSettings.aria2Connections)} use:tooltip={$t('settings.app.resetToDefault')}>
+                <Icon name="undo" size={14} />
+              </button>
+            {/if}
+            <input 
+              type="range" 
+              class="blur-slider"
+              min="1" 
+              max="16" 
+              step="1"
+              value={$settings.aria2Connections}
+              oninput={(e) => updateSetting('aria2Connections', parseInt((e.target as HTMLInputElement).value))}
+            />
+            <span class="slider-value">{$settings.aria2Connections}</span>
+          </div>
+        </div>
+      </div>
+      {/if}
+
+      <!-- Aria2 Splits -->
+      {#if matchesSearch('aria2Splits')}
+      <div class="setting-item">
+        <div class="setting-row">
+          <div class="setting-label-group">
+            <span class="setting-label">{$t('settings.downloads.aria2Splits')}</span>
+            <span class="setting-description">{$t('settings.downloads.aria2SplitsDescription')}</span>
+          </div>
+          <div class="slider-with-value">
+            {#if $settings.aria2Splits !== defaultSettings.aria2Splits}
+              <button class="undo-btn" onclick={() => updateSetting('aria2Splits', defaultSettings.aria2Splits)} use:tooltip={$t('settings.app.resetToDefault')}>
+                <Icon name="undo" size={14} />
+              </button>
+            {/if}
+            <input 
+              type="range" 
+              class="blur-slider"
+              min="1" 
+              max="16" 
+              step="1"
+              value={$settings.aria2Splits}
+              oninput={(e) => updateSetting('aria2Splits', parseInt((e.target as HTMLInputElement).value))}
+            />
+            <span class="slider-value">{$settings.aria2Splits}</span>
+          </div>
+        </div>
+      </div>
+      {/if}
+
+      <!-- Download Speed Limit -->
+      {#if matchesSearch('downloadSpeedLimit')}
+      <div class="setting-item">
+        <div class="setting-row">
+          <div class="setting-label-group">
+            <span class="setting-label">{$t('settings.downloads.downloadSpeedLimit')}</span>
+            <span class="setting-description">{$t('settings.downloads.downloadSpeedLimitDescription')}</span>
+          </div>
+          <div class="setting-controls">
+            {#if $settings.downloadSpeedLimit !== defaultSettings.downloadSpeedLimit}
+              <button class="undo-btn" onclick={() => updateSetting('downloadSpeedLimit', defaultSettings.downloadSpeedLimit)} use:tooltip={$t('settings.app.resetToDefault')}>
+                <Icon name="undo" size={14} />
+              </button>
+            {/if}
+            <div class="slider-with-value">
+              <input 
+                type="range" 
+                class="blur-slider"
+                min="0" 
+                max="100" 
+                step="1"
+                value={$settings.downloadSpeedLimit}
+                oninput={(e) => updateSetting('downloadSpeedLimit', parseInt((e.target as HTMLInputElement).value))}
+              />
+              <span class="slider-value speed-limit-value">{$settings.downloadSpeedLimit === 0 ? $t('settings.downloads.unlimited') : `${$settings.downloadSpeedLimit} ${$settings.sizeUnit === 'binary' ? 'MiB/s' : 'MB/s'}`}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      {/if}
+    </section>
+    {/if}
+
+    <!-- Network Section (proxy settings) -->
+    {#if sectionHasMatches('network')}
+    <section class="settings-section">
+      <h3 class="section-title">{$t('settings.network.title')}</h3>
+
+      {#if matchesSearch('proxy')}
+      <!-- Proxy Mode -->
+      <div class="setting-item">
+        <div class="setting-row">
+          <div class="setting-label-group">
+            <span class="setting-label">{$t('settings.network.proxyMode')}</span>
+            <span class="setting-description">{$t('settings.network.proxyModeDescription')}</span>
+          </div>
+          <div class="setting-controls">
+            {#if $settings.proxyMode !== defaultSettings.proxyMode}
+              <button class="undo-btn" onclick={() => updateSetting('proxyMode', defaultSettings.proxyMode)} use:tooltip={$t('settings.app.resetToDefault')}>
+                <Icon name="undo" size={14} />
+              </button>
+            {/if}
+            <div style="width: 180px;">
+              <Select
+                options={proxyModeOptions}
+                value={$settings.proxyMode}
+                onchange={handleProxyModeChange}
+              />
+            </div>
+          </div>
+        </div>
+
+        <!-- System proxy status (shown when mode is 'system') -->
+        {#if $settings.proxyMode === 'system' && onDesktop}
+        <div class="setting-sub-row proxy-status">
+          <div class="proxy-status-content">
+            {#if detectingSystemProxy}
+              <span class="proxy-detecting">
+                <span class="btn-spinner"></span>
+                {$t('settings.network.detectingProxy')}
+              </span>
+            {:else if systemProxyStatus}
+              <span class="proxy-detected">
+                <Icon name="check" size={14} />
+                {systemProxyStatus}
+              </span>
+            {:else}
+              <span class="proxy-none">
+                <Icon name="warning" size={14} />
+                {$t('settings.network.noSystemProxy')}
+              </span>
+            {/if}
+          </div>
+          <button class="dep-btn" onclick={detectSystemProxy} use:tooltip={$t('settings.network.recheckProxy')}>
+            <Icon name="undo" size={14} />
+          </button>
+        </div>
+        {/if}
+
+        <!-- Custom proxy URL (shown when mode is 'custom') -->
+        {#if $settings.proxyMode === 'custom'}
+        <div class="setting-sub-row">
+          <div class="setting-label-group">
+            <span class="setting-label">{$t('settings.network.customProxyUrl')}</span>
+            <span class="setting-description">{$t('settings.network.customProxyUrlDescription')}</span>
+          </div>
+          <div class="proxy-input-group">
+            {#if $settings.customProxyUrl !== defaultSettings.customProxyUrl}
+              <button class="undo-btn" onclick={() => { customProxyInput = defaultSettings.customProxyUrl; handleCustomProxyInput(defaultSettings.customProxyUrl); }} use:tooltip={$t('settings.app.resetToDefault')}>
+                <Icon name="undo" size={14} />
+              </button>
+            {/if}
+            <div class="proxy-input-wrapper" class:error={proxyValidationError}>
+              <Input 
+                value={customProxyInput}
+                oninput={(e) => handleCustomProxyInput((e.target as HTMLInputElement).value)}
+                placeholder={$t('settings.network.customProxyUrlPlaceholder')}
+              />
+            </div>
+          </div>
+        </div>
+        
+        {#if proxyValidationError}
+        <div class="setting-sub-row proxy-error">
+          <span class="error-text">
+            <Icon name="warning" size={14} />
+            {proxyValidationError}
+          </span>
+          <span class="error-hint">{$t('settings.network.proxyValidFormats')}</span>
+        </div>
+        {/if}
+
+        <!-- Fallback option -->
+        <div class="setting-sub-row">
+          <div class="setting-with-info">
+            <Checkbox 
+              checked={$settings.proxyFallback} 
+              label={$t('settings.network.proxyFallback')} 
+              onchange={handleProxyFallbackChange}
+            />
+            <button class="info-btn" use:tooltip={$t('settings.network.proxyFallbackTooltip')}>
+              <Icon name="info" size={18} />
+            </button>
+            <button 
+              class="undo-btn" 
+              class:hidden={$settings.proxyFallback === defaultSettings.proxyFallback}
+              onclick={() => updateSetting('proxyFallback', defaultSettings.proxyFallback)} 
+              use:tooltip={$t('settings.app.resetToDefault')}
+            >
+              <Icon name="undo" size={18} />
+            </button>
+          </div>
+        </div>
+        {/if}
+      </div>
+
+      <!-- IP Check (shown when proxy is not 'none') -->
+      {#if $settings.proxyMode !== 'none' && onDesktop}
+      <div class="setting-item">
+        <div class="setting-row">
+          <div class="setting-label-group">
+            <span class="setting-label">{$t('settings.network.checkIp')}</span>
+            <span class="setting-description">{$t('settings.network.checkIpDescription')}</span>
+          </div>
+          <div class="setting-controls">
+            <button class="dep-btn" onclick={checkIp} disabled={checkingIp}>
+              {#if checkingIp}
+                <span class="btn-spinner"></span>
+              {:else}
+                <Icon name="globe" size={14} />
+              {/if}
+              {$t('settings.network.checkIpBtn')}
+            </button>
+          </div>
+        </div>
+        
+        {#if currentIp}
+        <div class="setting-sub-row ip-result">
+          <div class="ip-result-content">
+            <span class="ip-address">{currentIp}</span>
+            {#if ipProxyUsed}
+              <span class="ip-badge proxy">
+                <Icon name="check" size={12} />
+                {$t('settings.network.proxyActive')}
+              </span>
+            {:else}
+              <span class="ip-badge direct">
+                <Icon name="warning" size={12} />
+                {$t('settings.network.directConnection')}
+              </span>
+            {/if}
+          </div>
+        </div>
+        {/if}
+      </div>
+      {/if}
+      {/if}
     </section>
     {/if}
 
@@ -1112,24 +1505,19 @@
         </div>
         {/if}
         
-        {#if ($settings.backgroundType === 'animated' || $settings.backgroundType === 'image' || $settings.backgroundType === 'solid') && !onAndroid}
+        {#if !isAndroid()}
         <div class="setting-sub-row">
           <div class="setting-label-group">
             <span class="setting-label">{$t('settings.app.backgroundOpacity')}</span>
             <span class="setting-description">{$t('settings.app.backgroundOpacityDescription')}</span>
           </div>
           <div class="slider-with-value">
-            {#if $settings.backgroundOpacity !== defaultSettings.backgroundOpacity}
-              <button class="undo-btn" onclick={() => updateSetting('backgroundOpacity', defaultSettings.backgroundOpacity)} use:tooltip={$t('settings.app.resetToDefault')}>
-                <Icon name="undo" size={14} />
-              </button>
-            {/if}
             <input 
               type="range" 
               class="blur-slider"
               min="0" 
               max="100" 
-              step="5"
+              step="1"
               value={$settings.backgroundOpacity}
               oninput={(e) => handleBackgroundOpacityChange(parseInt((e.target as HTMLInputElement).value))}
             />
@@ -2067,6 +2455,10 @@
     text-align: right;
   }
 
+  .slider-value.speed-limit-value {
+    min-width: 80px;
+  }
+
   .no-results {
     display: flex;
     flex-direction: column;
@@ -2395,12 +2787,121 @@
     justify-content: flex-end;
   }
 
+  .proxy-status-content {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+  }
+  
+  .proxy-detecting {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 13px;
+  }
+  
+  .proxy-detected {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: rgba(34, 197, 94, 0.9);
+    font-size: 13px;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+  
+  .proxy-none {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 13px;
+  }
+  
+  .proxy-input-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 320px;
+  }
+  
+  .proxy-input-wrapper {
+    flex: 1;
+  }
+  
+  .proxy-input-wrapper.error :global(.input-wrapper) {
+    border-color: rgba(239, 68, 68, 0.5);
+  }
+  
+  .proxy-input-wrapper.error :global(.input-wrapper:focus-within) {
+    border-color: rgba(239, 68, 68, 0.8);
+    box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.1);
+  }
+  
+  .proxy-error {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-top: 4px;
+  }
+  
+  .proxy-error .error-text {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: rgba(239, 68, 68, 0.9);
+    font-size: 13px;
+  }
+  
+  .proxy-error .error-hint {
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 12px;
+    margin-left: 20px;
+  }
+
+  
+  .ip-result-content {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  
+  .ip-address {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.9);
+    background: rgba(255, 255, 255, 0.05);
+    padding: 4px 10px;
+    border-radius: 4px;
+  }
+  
+  .ip-badge {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    padding: 3px 8px;
+    border-radius: 4px;
+  }
+  
+  .ip-badge.proxy {
+    background: rgba(34, 197, 94, 0.15);
+    color: rgba(34, 197, 94, 0.9);
+  }
+  
+  .ip-badge.direct {
+    background: rgba(251, 191, 36, 0.15);
+    color: rgba(251, 191, 36, 0.9);
+  }
+
   /* Mobile responsive styles */
   @media (max-width: 700px) {
     .page {
       padding: 0 12px 16px 12px;
     }
-    
+
     h1 {
       font-size: 24px;
     }
@@ -2410,20 +2911,20 @@
       align-items: flex-start;
       gap: 12px;
     }
-    
+
     .setting-controls {
       width: 100%;
     }
-    
+
     .setting-controls > div[style*="width"] {
       width: 100% !important;
     }
-    
+
     .setting-control-group {
       width: 100%;
       flex-wrap: wrap;
     }
-    
+
     .setting-control-group :global(.select-trigger) {
       flex: 1;
     }
@@ -2432,12 +2933,12 @@
       min-width: unset;
       width: 100%;
     }
-    
+
     .input-with-actions {
       min-width: unset;
       width: 100%;
     }
-    
+
     .setting-sub-row {
       flex-direction: column;
       align-items: flex-start;
@@ -2448,47 +2949,53 @@
       width: 100%;
       flex-wrap: wrap;
     }
-    
+
     .color-presets {
       flex-wrap: wrap;
       justify-content: flex-start;
     }
-    
+
     .path-btn {
       max-width: 100%;
       width: 100%;
     }
-    
+
     .path-text {
       max-width: calc(100% - 40px);
     }
-    
+
     /* Dependency items on mobile */
     .dep-item {
       flex-direction: column;
       align-items: flex-start;
       gap: 12px;
     }
-    
+
     .dep-info {
       flex-wrap: wrap;
     }
-    
+
     .dep-actions {
       width: 100%;
       justify-content: flex-start;
     }
-    
+
     /* Data section on mobile */
     .data-item {
       flex-direction: column;
       align-items: flex-start;
       gap: 12px;
     }
-    
+
     .data-btn {
       width: 100%;
       justify-content: center;
+    }
+
+    /* Proxy section on mobile */
+    .proxy-input-group {
+      min-width: unset;
+      width: 100%;
     }
   }
 </style>

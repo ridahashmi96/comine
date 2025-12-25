@@ -13,14 +13,14 @@ export interface HistoryItem {
   duration: number; // seconds
   filePath: string;
   downloadedAt: number; // timestamp
-  type: 'video' | 'audio' | 'image';
+  type: 'video' | 'audio' | 'image' | 'file'; // Added 'file' for direct downloads
   // Playlist grouping (optional)
   playlistId?: string;
   playlistTitle?: string;
   playlistIndex?: number;
 }
 
-export type FilterType = 'all' | 'video' | 'audio' | 'image';
+export type FilterType = 'all' | 'video' | 'audio' | 'image' | 'file';
 export type SortType = 'date' | 'name' | 'size';
 
 interface HistoryState {

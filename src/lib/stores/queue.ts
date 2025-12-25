@@ -2,16 +2,20 @@ import { writable, derived, get } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { stat } from '@tauri-apps/plugin-fs';
+import { load, Store } from '@tauri-apps/plugin-store';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import { history } from './history';
 import { logs } from './logs';
 import { deps } from './deps';
-import { settings, getSettings } from './settings';
+import { settings, getSettings, getProxyConfig } from './settings';
 import { toast } from '$lib/components/Toast.svelte';
 import { translate } from '$lib/i18n';
 import { isAndroid, downloadOnAndroid, getVideoInfoOnAndroid, waitForAndroidYtDlp, processYtmThumbnailOnAndroid, type DownloadProgress as AndroidProgress } from '$lib/utils/android';
 
 export type DownloadStatus = 'pending' | 'paused' | 'fetching-info' | 'downloading' | 'processing' | 'completed' | 'failed';
+
+// Queue item source type - yt-dlp (video/audio extraction) or file (direct download via aria2)
+export type QueueItemSource = 'ytdlp' | 'file';
 
 export interface QueueItem {
   id: string;
@@ -30,13 +34,21 @@ export interface QueueItem {
   eta: string;
   error?: string;
   addedAt: number;
-  type: 'video' | 'audio' | 'image';
+  type: 'video' | 'audio' | 'image' | 'file'; // Added 'file' for direct downloads
   priority: number;
   options?: Partial<DownloadOptions>;
   playlistId?: string;
   playlistTitle?: string;
   playlistIndex?: number;
   usePlaylistFolder?: boolean;
+  
+  // Source type - determines which backend handler to use
+  source: QueueItemSource;
+  
+  // File download specific fields (when source === 'file')
+  mimeType?: string; // Content-Type from HEAD request
+  totalBytes?: number; // Total size for resumable downloads
+  downloadedBytes?: number; // Bytes already downloaded (for resume)
 }
 
 export interface PrefetchedInfo {
@@ -67,6 +79,65 @@ interface QueueState {
   currentDownloadId: string | null; // Deprecated - kept for compatibility, use activeDownloadIds
   activeDownloadIds: string[]; // Track multiple concurrent downloads
   isPaused: boolean; // Global queue pause state
+}
+
+// Store instance for persistence
+let queueStore: Store | null = null;
+let saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+const SAVE_DEBOUNCE_MS = 500; // Debounce saves to avoid excessive writes
+
+// Serialize queue items for storage (exclude non-serializable data)
+function serializeQueueItems(items: QueueItem[]): QueueItem[] {
+  return items
+    // Only persist pending, paused, or failed items (not currently downloading or completed)
+    .filter(item => item.status === 'pending' || item.status === 'paused' || item.status === 'failed')
+    .map(item => ({
+      ...item,
+      // Reset downloading state for items that were interrupted
+      status: item.status === 'downloading' || item.status === 'processing' 
+        ? 'pending' as DownloadStatus 
+        : item.status,
+      statusMessage: item.status === 'failed' ? item.statusMessage : translate('downloads.status.queued'),
+      progress: 0, // Reset progress for non-resumed items
+      speed: '',
+      eta: '',
+    }));
+}
+
+// Load queue from persistent storage
+async function loadQueue(): Promise<QueueItem[]> {
+  try {
+    queueStore = await load('queue.json', { autoSave: false, defaults: {} });
+    const items = await queueStore.get<QueueItem[]>('items');
+    if (items && Array.isArray(items)) {
+      logs.info('queue', `Loaded ${items.length} queued items from storage`);
+      return items;
+    }
+  } catch (error) {
+    logs.error('queue', `Failed to load queue from storage: ${error}`);
+  }
+  return [];
+}
+
+// Save queue to persistent storage (debounced)
+function saveQueue(items: QueueItem[]) {
+  if (!queueStore) return;
+  
+  // Debounce to avoid excessive writes
+  if (saveDebounceTimer) {
+    clearTimeout(saveDebounceTimer);
+  }
+  
+  saveDebounceTimer = setTimeout(async () => {
+    try {
+      const serialized = serializeQueueItems(items);
+      await queueStore!.set('items', serialized);
+      await queueStore!.save();
+      logs.debug('queue', `Saved ${serialized.length} queue items to storage`);
+    } catch (error) {
+      logs.error('queue', `Failed to save queue: ${error}`);
+    }
+  }, SAVE_DEBOUNCE_MS);
 }
 
 function createQueueStore() {
@@ -105,6 +176,9 @@ function createQueueStore() {
   }
   
   async function sendDownloadNotification(type: 'started' | 'completed' | 'failed', title: string, body?: string) {
+    // Skip on Android - native notifications with progress bar are handled in MainActivity.kt
+    if (isAndroid()) return;
+    
     const currentSettings = getSettings();
     if (!currentSettings.notificationsEnabled) return;
     
@@ -372,8 +446,151 @@ function createQueueStore() {
     }
   }
   
+  // Process a direct file download (via aria2 or reqwest)
+  async function processFileDownload(pendingItem: QueueItem) {
+    const itemId = pendingItem.id;
+    const url = pendingItem.url;
+    
+    logs.info('queue', `Starting file download: ${pendingItem.title} from ${url}`);
+    
+    // Reset max progress tracking for this URL
+    maxProgressMap.delete(url);
+
+    // Update status to downloading and add to active downloads
+    update(state => ({
+      ...state,
+      currentDownloadId: itemId,
+      activeDownloadIds: [...state.activeDownloadIds, itemId],
+      items: state.items.map(item =>
+        item.id === itemId ? { 
+          ...item, 
+          status: 'downloading' as DownloadStatus,
+          statusMessage: translate('downloads.status.downloading')
+        } : item
+      )
+    }));
+    
+    // Send notification that download started
+    sendDownloadNotification(
+      'started',
+      translate('notifications.downloadStarted'),
+      pendingItem.title || url
+    );
+
+    try {
+      const currentSettings = getSettings();
+      const proxyConfig = getProxyConfig();
+      
+      // Call Rust backend to download file with aria2
+      const result = await invoke<string>('download_file', {
+        url: url,
+        filename: pendingItem.title,
+        downloadPath: currentSettings.downloadPath || '',
+        proxyConfig: proxyConfig,
+        connections: currentSettings.aria2Connections,
+        speedLimit: currentSettings.downloadSpeedLimit,
+      });
+      
+      // Result is the file path
+      const filePath = result;
+      const extension = filePath.split('.').pop()?.toLowerCase() || pendingItem.extension;
+      
+      // Get file size
+      let filesize = pendingItem.totalBytes || 0;
+      try {
+        const fileStat = await stat(filePath);
+        filesize = fileStat.size;
+      } catch (err) {
+        logs.warn('queue', `Could not get file size: ${err}`);
+      }
+      
+      logs.info('queue', `File download completed: ${filePath}`);
+      
+      // Mark as completed
+      update(state => {
+        const newItems = state.items.map(item =>
+          item.id === itemId 
+            ? { ...item, status: 'completed' as DownloadStatus, progress: 100, filePath, extension, filesize }
+            : item
+        );
+        saveQueue(newItems); // Persist queue (will filter out completed item)
+        return {
+          ...state,
+          currentDownloadId: state.activeDownloadIds.length <= 1 ? null : state.activeDownloadIds.find(id => id !== itemId) ?? null,
+          activeDownloadIds: state.activeDownloadIds.filter(id => id !== itemId),
+          items: newItems
+        };
+      });
+      
+      // Add to history
+      history.add({
+        url: url,
+        title: pendingItem.title || 'Downloaded file',
+        author: new URL(url).hostname,
+        thumbnail: '',
+        extension: extension,
+        size: filesize,
+        duration: 0,
+        filePath: filePath,
+        type: 'file' as const,
+      });
+      
+      sendDownloadNotification(
+        'completed',
+        translate('notifications.downloadComplete'),
+        pendingItem.title || 'Download finished'
+      );
+      
+      toast.success(translate('download.success'));
+      
+      // Remove from queue after a delay
+      setTimeout(() => {
+        update(state => ({
+          ...state,
+          items: state.items.filter(item => item.id !== itemId)
+        }));
+      }, 3000);
+      
+    } catch (error) {
+      // Check if this was a cancelled download
+      if (cancelledIds.has(itemId)) {
+        cancelledIds.delete(itemId);
+        return;
+      }
+      
+      logs.error('queue', `File download failed: ${error}`);
+      
+      update(state => ({
+        ...state,
+        currentDownloadId: state.activeDownloadIds.length <= 1 ? null : state.activeDownloadIds.find(id => id !== itemId) ?? null,
+        activeDownloadIds: state.activeDownloadIds.filter(id => id !== itemId),
+        items: state.items.map(item =>
+          item.id === itemId 
+            ? { ...item, status: 'failed' as DownloadStatus, error: String(error) }
+            : item
+        )
+      }));
+      
+      sendDownloadNotification(
+        'failed',
+        translate('notifications.downloadFailed'),
+        pendingItem.title || String(error)
+      );
+
+      toast.error(`${translate('download.error')}: ${error}`);
+    } finally {
+      maxProgressMap.delete(url);
+      processQueue();
+    }
+  }
+  
   // Process a single download item
   async function processDownload(pendingItem: QueueItem) {
+    // Route to appropriate handler based on source type
+    if (pendingItem.source === 'file') {
+      return processFileDownload(pendingItem);
+    }
+    
     const itemId = pendingItem.id;
     const url = pendingItem.url;
     
@@ -474,8 +691,13 @@ function createQueueStore() {
         }
         // For 'auto' mode, just use 'best' and let --merge-output-format handle merging
         
-        console.log('Starting Android download:', url, 'format:', format);
-        logs.info('queue', `Starting Android download: ${url} (format: ${format})`);
+        // Determine playlist folder for Android
+        const playlistFolder = (pendingItem.playlistTitle && pendingItem.usePlaylistFolder !== false)
+          ? pendingItem.playlistTitle
+          : null;
+        
+        console.log('Starting Android download:', url, 'format:', format, 'playlistFolder:', playlistFolder);
+        logs.info('queue', `Starting Android download: ${url} (format: ${format}${playlistFolder ? `, folder: ${playlistFolder}` : ''})`);
         
         // Download using Android bridge with progress updates
         // Note: The android.ts already implements non-decreasing progress internally
@@ -503,7 +725,7 @@ function createQueueStore() {
                 : item
             )
           }));
-        });
+        }, playlistFolder);
         
         console.log('Android download result:', result);
         logs.info('queue', `Android download result: success=${result.success}, exitCode=${result.exitCode}, filePath=${result.filePath}`);
@@ -569,6 +791,9 @@ function createQueueStore() {
           }
         }
         
+        // Get proxy config for this download
+        const proxyConfig = getProxyConfig();
+        
         // Start download with cropped thumbnail if available
         const downloadPromise = invoke<string>('download_video', { 
           url: url, 
@@ -588,6 +813,8 @@ function createQueueStore() {
           croppedThumbnailData: croppedThumbnailData,
           // Pass playlist title for subfolder creation (backend handles path creation)
           playlistTitle: playlistTitle,
+          // Pass proxy configuration
+          proxyConfig: proxyConfig,
         });
         
         logs.info('queue', `Invoking download_video: downloadMode=${pendingItem.options?.downloadMode}, isAudioDownload=${isAudioDownload}, downloadPath=${downloadPath}, playlistTitle=${playlistTitle}`);
@@ -638,16 +865,20 @@ function createQueueStore() {
       logs.info('queue', `Download completed: ${url}`);
       logs.debug('queue', `File details: path=${filePath}, size=${filesize}, ext=${extension}`);
       
-      update(state => ({
-        ...state,
-        currentDownloadId: state.activeDownloadIds.length <= 1 ? null : state.activeDownloadIds.find(id => id !== itemId) ?? null,
-        activeDownloadIds: state.activeDownloadIds.filter(id => id !== itemId),
-        items: state.items.map(item =>
+      update(state => {
+        const newItems = state.items.map(item =>
           item.id === itemId 
             ? { ...item, status: 'completed' as DownloadStatus, progress: 100 }
             : item
-        )
-      }));
+        );
+        saveQueue(newItems); // Persist queue (will filter out completed item)
+        return {
+          ...state,
+          currentDownloadId: state.activeDownloadIds.length <= 1 ? null : state.activeDownloadIds.find(id => id !== itemId) ?? null,
+          activeDownloadIds: state.activeDownloadIds.filter(id => id !== itemId),
+          items: newItems
+        };
+      });
 
       // Wait for video info to be fetched before saving to history (ensures duration is captured)
       const infoPromise = videoInfoPromises.get(itemId);
@@ -785,10 +1016,12 @@ function createQueueStore() {
           };
           logs.debug('queue', `Android video info: title=${info.title}, uploader_id=${info.uploader_id}, duration=${info.duration}`);
         } else {
+          const proxyConfig = getProxyConfig();
           info = await invoke<VideoInfo>('get_video_info', { 
             url, 
             cookiesFromBrowser: cookiesFromBrowser ?? '',
             customCookies: customCookies ?? '',
+            proxyConfig: proxyConfig,
           });
           logs.debug('queue', `Desktop video info (attempt ${attempt}): title=${info.title}, uploader=${info.uploader}, uploader_id=${info.uploader_id}`);
         }
@@ -867,6 +1100,43 @@ function createQueueStore() {
     // Initialize the store (call this on app start)
     async init() {
       await setupListener();
+      
+      // Load persisted queue items
+      const persistedItems = await loadQueue();
+      if (persistedItems.length > 0) {
+        // Filter out any completed or currently downloading items that shouldn't have been persisted
+        // (safety check in case of corrupt data or interrupted saves)
+        const validItems = persistedItems.filter(item => 
+          item.status === 'pending' || item.status === 'paused' || item.status === 'failed'
+        );
+        
+        // Reset any items that were stuck in 'downloading'/'processing' state
+        const resetItems = validItems.map(item => ({
+          ...item,
+          status: (item.status === 'downloading' || item.status === 'processing' || item.status === 'fetching-info')
+            ? 'pending' as DownloadStatus
+            : item.status,
+          progress: item.status === 'failed' ? item.progress : 0,
+          speed: '',
+          eta: '',
+        }));
+        
+        if (resetItems.length > 0) {
+          update(state => ({
+            ...state,
+            items: [...resetItems, ...state.items]
+          }));
+          logs.info('queue', `Restored ${resetItems.length} queue items from storage`);
+          
+          // Save the cleaned-up queue
+          saveQueue(resetItems);
+          
+          // Start processing if there are pending items
+          processQueue();
+        } else {
+          logs.info('queue', 'No valid queue items to restore');
+        }
+      }
     },
 
     // Add a new download to the queue
@@ -950,15 +1220,86 @@ function createQueueStore() {
         playlistTitle: playlistInfo?.playlistTitle,
         playlistIndex: playlistInfo?.playlistIndex,
         usePlaylistFolder: playlistInfo?.usePlaylistFolder,
+        // Source type - yt-dlp for media extraction
+        source: 'ytdlp',
       };
 
-      update(state => ({
-        ...state,
-        items: [...state.items, newItem]
-      }));
+      update(state => {
+        const newItems = [...state.items, newItem];
+        saveQueue(newItems); // Persist queue
+        return {
+          ...state,
+          items: newItems
+        };
+      });
 
       // Start processing
       processQueue();
+
+      return id;
+    },
+
+    // Add a direct file download to the queue (uses aria2)
+    addFile(fileInfo: {
+      url: string;
+      filename: string;
+      size?: number;
+      mimeType?: string;
+    }): string | null {
+      // Check if URL is already in queue (not completed/failed)
+      const state = get({ subscribe });
+      const existingItem = state.items.find(item => 
+        item.url === fileInfo.url && 
+        item.status !== 'completed' && 
+        item.status !== 'failed'
+      );
+      if (existingItem) {
+        console.log('URL already in queue:', fileInfo.url);
+        return null;
+      }
+
+      const id = crypto.randomUUID();
+      
+      // Extract extension from filename
+      const extension = fileInfo.filename.split('.').pop()?.toLowerCase() || 'bin';
+      
+      const newItem: QueueItem = {
+        id,
+        url: fileInfo.url,
+        status: 'pending',
+        statusMessage: translate('downloads.status.queued'),
+        title: fileInfo.filename,
+        author: new URL(fileInfo.url).hostname, // Use domain as author
+        thumbnail: '', // Files don't have thumbnails
+        duration: 0,
+        filesize: fileInfo.size || 0,
+        extension,
+        filePath: '',
+        progress: 0,
+        speed: '',
+        eta: '',
+        addedAt: Date.now(),
+        type: 'file',
+        priority: 0,
+        source: 'file',
+        mimeType: fileInfo.mimeType,
+        totalBytes: fileInfo.size,
+        downloadedBytes: 0,
+      };
+
+      update(state => {
+        const newItems = [...state.items, newItem];
+        saveQueue(newItems);
+        return {
+          ...state,
+          items: newItems
+        };
+      });
+
+      // Start processing
+      processQueue();
+      
+      logs.info('queue', `Added file download: ${fileInfo.filename} (${fileInfo.size || 'unknown size'})`);
 
       return id;
     },
@@ -1046,12 +1387,16 @@ function createQueueStore() {
       }
       
       // Remove from queue and activeDownloadIds
-      update(state => ({
-        ...state,
-        items: state.items.filter(item => item.id !== id),
-        activeDownloadIds: state.activeDownloadIds.filter(activeId => activeId !== id),
-        currentDownloadId: state.currentDownloadId === id ? null : state.currentDownloadId
-      }));
+      update(state => {
+        const newItems = state.items.filter(item => item.id !== id);
+        saveQueue(newItems); // Persist queue
+        return {
+          ...state,
+          items: newItems,
+          activeDownloadIds: state.activeDownloadIds.filter(activeId => activeId !== id),
+          currentDownloadId: state.currentDownloadId === id ? null : state.currentDownloadId
+        };
+      });
       
       // Show cancelled toast
       toast.info('Download cancelled');
@@ -1062,35 +1407,46 @@ function createQueueStore() {
 
     // Retry a failed download
     retry(id: string) {
-      update(state => ({
-        ...state,
-        items: state.items.map(item =>
+      update(state => {
+        const newItems = state.items.map(item =>
           item.id === id 
             ? { ...item, status: 'pending' as DownloadStatus, error: undefined, progress: 0 }
             : item
-        )
-      }));
+        );
+        saveQueue(newItems); // Persist queue
+        return {
+          ...state,
+          items: newItems
+        };
+      });
       processQueue();
     },
 
     // Clear completed/failed items
     clearFinished() {
-      update(state => ({
-        ...state,
-        items: state.items.filter(item => 
+      update(state => {
+        const newItems = state.items.filter(item => 
           item.status !== 'completed' && item.status !== 'failed'
-        )
-      }));
+        );
+        saveQueue(newItems); // Persist queue
+        return {
+          ...state,
+          items: newItems
+        };
+      });
     },
 
     // Clear all items
     clearAll() {
-      update(state => ({
-        ...state,
-        items: [],
-        activeDownloadIds: [],
-        currentDownloadId: null
-      }));
+      update(state => {
+        saveQueue([]); // Clear persisted queue
+        return {
+          ...state,
+          items: [],
+          activeDownloadIds: [],
+          currentDownloadId: null
+        };
+      });
     },
 
     // Pause the entire queue
@@ -1117,59 +1473,79 @@ function createQueueStore() {
 
     // Pause a specific item (move to paused status)
     pauseItem(id: string) {
-      update(state => ({
-        ...state,
-        items: state.items.map(item =>
+      update(state => {
+        const newItems = state.items.map(item =>
           item.id === id && item.status === 'pending'
             ? { ...item, status: 'paused' as DownloadStatus }
             : item
-        )
-      }));
+        );
+        saveQueue(newItems); // Persist queue
+        return {
+          ...state,
+          items: newItems
+        };
+      });
     },
 
     // Resume a specific paused item
     resumeItem(id: string) {
-      update(state => ({
-        ...state,
-        items: state.items.map(item =>
+      update(state => {
+        const newItems = state.items.map(item =>
           item.id === id && item.status === 'paused'
             ? { ...item, status: 'pending' as DownloadStatus }
             : item
-        )
-      }));
+        );
+        saveQueue(newItems); // Persist queue
+        return {
+          ...state,
+          items: newItems
+        };
+      });
       processQueue();
     },
 
     // Move item up in priority
     moveUp(id: string) {
-      update(state => ({
-        ...state,
-        items: state.items.map(item =>
+      update(state => {
+        const newItems = state.items.map(item =>
           item.id === id ? { ...item, priority: item.priority + 1 } : item
-        )
-      }));
+        );
+        saveQueue(newItems); // Persist queue
+        return {
+          ...state,
+          items: newItems
+        };
+      });
     },
 
     // Move item down in priority
     moveDown(id: string) {
-      update(state => ({
-        ...state,
-        items: state.items.map(item =>
+      update(state => {
+        const newItems = state.items.map(item =>
           item.id === id ? { ...item, priority: Math.max(0, item.priority - 1) } : item
-        )
-      }));
+        );
+        saveQueue(newItems); // Persist queue
+        return {
+          ...state,
+          items: newItems
+        };
+      });
     },
 
     // Move item to top (highest priority)
     moveToTop(id: string) {
       const state = get({ subscribe });
       const maxPriority = Math.max(...state.items.map(i => i.priority), 0);
-      update(s => ({
-        ...s,
-        items: s.items.map(item =>
+      update(s => {
+        const newItems = s.items.map(item =>
           item.id === id ? { ...item, priority: maxPriority + 1 } : item
-        )
-      }));
+        );
+        saveQueue(newItems); // Persist queue
+        return {
+          ...s,
+          items: newItems
+        };
+      });
     },
 
     // Cancel all items in a playlist
@@ -1187,14 +1563,18 @@ function createQueueStore() {
       
       // Remove all playlist items and from activeDownloadIds
       const playlistItemIds = new Set(playlistItems.map(i => i.id));
-      update(state => ({
-        ...state,
-        items: state.items.filter(item => item.playlistId !== playlistId),
-        activeDownloadIds: state.activeDownloadIds.filter(id => !playlistItemIds.has(id)),
-        currentDownloadId: playlistItems.some(i => i.id === state.currentDownloadId) 
-          ? null 
-          : state.currentDownloadId
-      }));
+      update(state => {
+        const newItems = state.items.filter(item => item.playlistId !== playlistId);
+        saveQueue(newItems); // Persist queue
+        return {
+          ...state,
+          items: newItems,
+          activeDownloadIds: state.activeDownloadIds.filter(id => !playlistItemIds.has(id)),
+          currentDownloadId: playlistItems.some(i => i.id === state.currentDownloadId) 
+            ? null 
+            : state.currentDownloadId
+        };
+      });
       
       toast.info('Playlist downloads cancelled');
       processQueue();
@@ -1202,26 +1582,34 @@ function createQueueStore() {
 
     // Pause all pending items in a playlist
     pausePlaylist(playlistId: string) {
-      update(state => ({
-        ...state,
-        items: state.items.map(item =>
+      update(state => {
+        const newItems = state.items.map(item =>
           item.playlistId === playlistId && item.status === 'pending'
             ? { ...item, status: 'paused' as DownloadStatus }
             : item
-        )
-      }));
+        );
+        saveQueue(newItems); // Persist queue
+        return {
+          ...state,
+          items: newItems
+        };
+      });
     },
 
     // Resume all paused items in a playlist
     resumePlaylist(playlistId: string) {
-      update(state => ({
-        ...state,
-        items: state.items.map(item =>
+      update(state => {
+        const newItems = state.items.map(item =>
           item.playlistId === playlistId && item.status === 'paused'
             ? { ...item, status: 'pending' as DownloadStatus }
             : item
-        )
-      }));
+        );
+        saveQueue(newItems); // Persist queue
+        return {
+          ...state,
+          items: newItems
+        };
+      });
       processQueue();
     },
 

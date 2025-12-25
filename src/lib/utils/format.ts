@@ -319,3 +319,81 @@ export function cleanUrl(url: string, options?: { ignoreMixes?: boolean }): stri
     return url; // Return original if parsing fails
   }
 }
+
+// Common file extensions to detect for direct downloads
+const FILE_EXTENSIONS = [
+  // Archives
+  'zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'tgz', 'tbz2',
+  // Applications
+  'exe', 'msi', 'dmg', 'pkg', 'deb', 'rpm', 'appimage', 'jar', 'apk', 'ipa',
+  // Documents
+  'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp',
+  // Images
+  'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'tiff', 'psd',
+  // Media
+  'mp4', 'mkv', 'avi', 'mov', 'webm', 'mp3', 'flac', 'wav', 'ogg', 'aac', 'm4a', 'm4v',
+  // Other
+  'iso', 'img', 'bin', 'torrent', 'rom', 'nsp', 'xci'
+];
+
+/**
+ * Check if a URL points to a direct file download (not a media platform)
+ * Returns the detected filename if it's a file URL, null otherwise
+ */
+export function isDirectFileUrl(text: string): { isFile: boolean; filename: string | null } {
+  try {
+    const url = new URL(text);
+    // Must be http/https
+    if (!url.protocol.startsWith('http')) return { isFile: false, filename: null };
+    
+    // Helper to check if a string ends with a file extension
+    const getFileExtension = (str: string): string | null => {
+      const ext = str.split('.').pop()?.toLowerCase();
+      return ext && FILE_EXTENSIONS.includes(ext) ? ext : null;
+    };
+    
+    // 1. Check pathname's last segment
+    const pathParts = url.pathname.split('/').filter(Boolean);
+    if (pathParts.length > 0) {
+      const pathFilename = decodeURIComponent(pathParts[pathParts.length - 1]);
+      if (getFileExtension(pathFilename)) {
+        return { isFile: true, filename: pathFilename };
+      }
+    }
+    
+    // 2. Check query parameters for filename hints (GitHub releases, CDNs, etc.)
+    // Check 'filename' parameter
+    const filenameParam = url.searchParams.get('filename');
+    if (filenameParam && getFileExtension(filenameParam)) {
+      return { isFile: true, filename: filenameParam };
+    }
+    
+    // Check 'response-content-disposition' parameter (S3-style URLs)
+    const rcdParam = url.searchParams.get('response-content-disposition');
+    if (rcdParam) {
+      const filenameMatch = rcdParam.match(/filename[*]?=["']?([^"';\s]+)/i);
+      if (filenameMatch) {
+        const fn = decodeURIComponent(filenameMatch[1]);
+        if (getFileExtension(fn)) {
+          return { isFile: true, filename: fn };
+        }
+      }
+    }
+    
+    // Check 'rscd' parameter (Azure CDN style, used by GitHub releases)
+    const rscdParam = url.searchParams.get('rscd');
+    if (rscdParam) {
+      const filenameMatch = rscdParam.match(/filename[*]?=["']?([^"';\s]+)/i);
+      if (filenameMatch) {
+        const fn = decodeURIComponent(filenameMatch[1]);
+        if (getFileExtension(fn)) {
+          return { isFile: true, filename: fn };
+        }
+      }
+    }
+    
+    return { isFile: false, filename: null };
+  } catch {
+    return { isFile: false, filename: null };
+  }
+}

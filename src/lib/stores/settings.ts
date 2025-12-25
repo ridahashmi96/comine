@@ -1,5 +1,5 @@
 import { writable, get } from 'svelte/store';
-import { load, Store } from '@tauri-apps/plugin-store';
+import { load, type Store } from '@tauri-apps/plugin-store';
 
 // Check if running on Android (safe for SSR)
 function checkIsAndroid(): boolean {
@@ -34,6 +34,7 @@ export type NotificationPosition = 'bottom-right' | 'bottom-left' | 'top-right' 
 export type ToastPosition = 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left' | 'bottom-center' | 'top-center';
 export type NotificationMonitor = 'primary' | 'cursor';
 export type BackgroundType = 'acrylic' | 'animated' | 'solid' | 'image';
+export type ProxyMode = 'none' | 'system' | 'custom';
 
 export interface AppSettings {
   // Onboarding
@@ -120,6 +121,23 @@ export interface AppSettings {
   // Visual theming
   thumbnailTheming: boolean; // Use thumbnail colors for progress bars and hover effects
   
+  // Proxy settings
+  proxyMode: ProxyMode; // 'none' = no proxy, 'system' = auto-detect system proxy, 'custom' = use custom URL
+  customProxyUrl: string; // Custom proxy URL (http://host:port, socks5://host:port, etc.)
+  proxyFallback: boolean; // When custom proxy fails, fall back to system/no proxy
+  
+  // aria2 settings
+  aria2Connections: number; // Connections per server (1-16)
+  aria2Splits: number; // Number of splits (1-16)
+  aria2MinSplitSize: string; // Minimum split size (e.g. '1M', '5M', '20M')
+  
+  // Speed limits (0 = unlimited)
+  downloadSpeedLimit: number; // Global download speed limit in bytes/sec (0 = unlimited)
+  
+  // File download manager
+  watchClipboardForFiles: boolean; // Detect direct file URLs in clipboard
+  fileDownloadNotifications: boolean; // Show notifications for file URLs
+  
   // Custom presets
   customPresets: CustomPreset[];
 }
@@ -204,6 +222,23 @@ export const defaultSettings: AppSettings = {
   
   // Visual theming
   thumbnailTheming: true, // Use colors from thumbnails
+  
+  // Proxy settings
+  proxyMode: 'system', // Default to system proxy detection
+  customProxyUrl: '',
+  proxyFallback: true, // Default to fallback enabled
+  
+  // aria2 settings
+  aria2Connections: 16, // Max connections per server
+  aria2Splits: 16, // Split downloads into 16 parts
+  aria2MinSplitSize: '1M', // Min 1MB per split
+  
+  // Speed limits
+  downloadSpeedLimit: 0, // Unlimited by default
+  
+  // File download manager
+  watchClipboardForFiles: true, // Detect file URLs
+  fileDownloadNotifications: true, // Show notifications
   
   // Custom presets
   customPresets: []
@@ -325,4 +360,21 @@ export async function resetSettings(): Promise<void> {
 // Get current settings value (non-reactive)
 export function getSettings(): AppSettings {
   return get(settings);
+}
+
+// Proxy config interface for backend commands
+export interface ProxyConfig {
+  mode: ProxyMode;
+  customUrl: string;
+  fallback: boolean;
+}
+
+// Get proxy config from settings for backend commands
+export function getProxyConfig(): ProxyConfig {
+  const s = getSettings();
+  return {
+    mode: s.proxyMode,
+    customUrl: s.customProxyUrl,
+    fallback: s.proxyFallback
+  };
 }
