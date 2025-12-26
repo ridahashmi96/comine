@@ -391,6 +391,7 @@ export type TranslationKeys =
   | 'settings.app.useAnyway'
   | 'settings.app.useSystemAccent'
   | 'settings.app.useSystemAccentDescription'
+  | 'settings.app.whatsNew'
   | 'settings.data.clearCache'
   | 'settings.data.clearCacheDescription'
   | 'settings.data.clearCacheEmpty'

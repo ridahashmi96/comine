@@ -273,6 +273,7 @@
       "updateCheckFailed": "Failed to check for updates",
       "installUpdate": "Install Update",
       "installing": "Installing...",
+      "whatsNew": "What's new:",
       "autoUpdate": "Automatically update",
       "allowPreReleases": "Allow pre-release updates",
       "allowPreReleasesTooltip": "Receive beta and development versions before stable release. May contain bugs.",

@@ -1722,6 +1722,17 @@
                   {/if}
                 </button>
               </div>
+
+              {#if $updateState.info.notes}
+                <div class="setting-sub-row update-notes">
+                  <div class="update-notes-content">
+                    <span class="update-notes-label">{$t('settings.app.whatsNew')}</span>
+                    <div class="update-notes-text">
+                      {@html $updateState.info.notes.replace(/\n/g, '<br>')}
+                    </div>
+                  </div>
+                </div>
+              {/if}
             {/if}
 
             <div class="setting-sub-row">
@@ -2755,6 +2766,42 @@
   .update-badge.pre {
     background: rgba(234, 179, 8, 0.2);
     color: #eab308;
+  }
+
+  .update-notes {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .update-notes-content {
+    width: 100%;
+  }
+
+  .update-notes-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.8);
+    margin-bottom: 6px;
+    display: block;
+  }
+
+  .update-notes-text {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.6);
+    line-height: 1.5;
+    max-height: 150px;
+    overflow-y: auto;
+    padding-right: 8px;
+  }
+
+  .update-notes-text::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  .update-notes-text::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 2px;
   }
 
   .setting-hint {

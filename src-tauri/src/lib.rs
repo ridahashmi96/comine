@@ -2438,7 +2438,6 @@ async fn show_notification_window(
         .always_on_top(true)
         .focused(false)
         .visible(false)
-        .transparent(true)
         .build()
         .map_err(|e| format!("Failed to create notification window: {}", e))?;
 
