@@ -541,8 +541,8 @@
                   <div class="step welcome-step">
                     <div class="welcome-header">
                       <div class="logo-container">
-                        <!-- <img src="/icon.png" alt="Comine" class="logo-icon" /> -->
-                        <span class="logo-text">ネ</span>
+                        <img src="/icon.png" alt="Comine" class="logo-icon" />
+                        <!-- <span class="logo-text">ネ</span> -->
                       </div>
                       <h1>{$t('onboarding.welcome.title')}</h1>
                       <p class="subtitle">{$t('onboarding.welcome.subtitle')}</p>

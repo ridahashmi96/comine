@@ -1,4 +1,4 @@
-﻿# Comine
+﻿# comine <img src="static\icon.png" align="right" height="200" alt="Comine logo (icon)" />
 
 Cross-platform media downloader powered by yt-dlp.
 
@@ -37,3 +37,7 @@ pnpm tauri android build
 ## License
 
 GPL-3.0
+
+#### Consider leaving a star ⭐
+
+[![Star History Chart](https://api.star-history.com/svg?repos=nichind/comine&type=Date)](https://github.com/nichind/comine)
