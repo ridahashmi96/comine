@@ -294,8 +294,23 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install
 
+      - name: Debug signing key
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "Key is set"
+            echo "Key length: ${#TAURI_SIGNING_PRIVATE_KEY}"
+            echo "First 30 chars: ${TAURI_SIGNING_PRIVATE_KEY:0:30}"
+          else
+            echo "KEY IS EMPTY!"
+          fi
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+
       - name: Build Tauri app
         run: pnpm tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
