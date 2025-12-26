@@ -27,6 +27,7 @@
     getSettings,
     getProxyConfig,
   } from '$lib/stores/settings';
+  import { initHistory } from '$lib/stores/history';
   import { queue, activeDownloadsCount } from '$lib/stores/queue';
   import { deps } from '$lib/stores/deps';
   import { logs, type LogLevel } from '$lib/stores/logs';
@@ -182,6 +183,7 @@
     appWindow = getCurrentWindow();
 
     initSettings();
+    initHistory();
     queue.init();
 
     if (!isAndroid()) {

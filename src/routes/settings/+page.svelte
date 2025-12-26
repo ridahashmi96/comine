@@ -520,8 +520,8 @@
     await updateSetting('onboardingCompleted', false);
   }
 
-  function handleClearHistory() {
-    history.clear();
+  async function handleClearHistory() {
+    await history.clear();
     showClearHistoryModal = false;
   }
 
@@ -561,7 +561,7 @@
 
       if (filePath && typeof filePath === 'string') {
         const text = await readTextFile(filePath);
-        const success = history.importData(text);
+        const success = await history.importData(text);
         if (success) {
           importMessage = { type: 'success', text: $t('settings.data.importSuccess') };
         } else {
@@ -1716,12 +1716,23 @@
                 >
                   {#if $updateState.downloading}
                     <span class="btn-spinner"></span>
-                    {$t('settings.app.installing')}
+                    {$t('settings.app.downloading')} {$updateState.progress}%
                   {:else}
                     {$t('settings.app.installUpdate')}
                   {/if}
                 </button>
               </div>
+
+              {#if $updateState.downloading}
+                <div class="setting-sub-row update-progress">
+                  <div class="update-progress-bar">
+                    <div
+                      class="update-progress-fill"
+                      style="width: {$updateState.progress}%"
+                    ></div>
+                  </div>
+                </div>
+              {/if}
 
               {#if $updateState.info.notes}
                 <div class="setting-sub-row update-notes">
@@ -2747,6 +2758,27 @@
     border-left-color: #22c55e;
     padding: 12px 16px;
     border-radius: 8px;
+  }
+
+  .setting-sub-row.update-progress {
+    padding: 0 16px 12px 16px;
+    margin-top: -8px;
+    border-left-color: #22c55e;
+  }
+
+  .update-progress-bar {
+    width: 100%;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .update-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #22c55e, #16a34a);
+    border-radius: 3px;
+    transition: width 0.2s ease-out;
   }
 
   .update-info {

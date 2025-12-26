@@ -1,5 +1,7 @@
 import { writable, get } from 'svelte/store';
 import { settings } from './settings';
+import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
 declare const __GIT_BRANCH__: string;
 declare const __APP_VERSION__: string;
@@ -70,9 +72,14 @@ export async function checkForUpdates(manual = false): Promise<UpdateInfo | null
 }
 
 async function checkForUpdatesDesktop(): Promise<UpdateInfo | null> {
-  const { check } = await import('@tauri-apps/plugin-updater');
+  const allowPre = shouldAllowPreReleases();
 
-  const update = await check();
+  const result = await invoke<{
+    available: boolean;
+    version: string | null;
+    body: string | null;
+    date: string | null;
+  }>('check_for_update', { allowPrerelease: allowPre });
 
   updateState.update((state) => ({
     ...state,
@@ -80,23 +87,18 @@ async function checkForUpdatesDesktop(): Promise<UpdateInfo | null> {
     lastCheck: Date.now(),
   }));
 
-  if (!update) {
+  if (!result.available || !result.version) {
     updateState.update((state) => ({ ...state, available: false, info: null }));
     return null;
   }
 
   const info: UpdateInfo = {
-    version: update.version,
-    notes: update.body || '',
-    pubDate: update.date || '',
+    version: result.version,
+    notes: result.body || '',
+    pubDate: result.date || '',
     downloadUrl: '',
-    isPreRelease: update.version.includes('-'),
+    isPreRelease: result.version.includes('-'),
   };
-
-  if (info.isPreRelease && !shouldAllowPreReleases()) {
-    updateState.update((state) => ({ ...state, available: false, info: null }));
-    return null;
-  }
 
   updateState.update((state) => ({ ...state, available: true, info }));
   return info;
@@ -222,29 +224,37 @@ export async function downloadAndInstall(): Promise<void> {
 }
 
 async function downloadAndInstallDesktop(): Promise<void> {
-  const { check } = await import('@tauri-apps/plugin-updater');
-  const { relaunch } = await import('@tauri-apps/plugin-process');
+  const allowPre = shouldAllowPreReleases();
 
-  const update = await check();
-  if (!update) {
-    updateState.update((s) => ({ ...s, downloading: false }));
-    return;
-  }
+  let contentLength = 0;
+  let downloaded = 0;
+  let unlisten: UnlistenFn | null = null;
 
-  await update.downloadAndInstall((event) => {
-    if (event.event === 'Started' && event.data.contentLength) {
-      updateState.update((s) => ({ ...s, progress: 0 }));
-    } else if (event.event === 'Progress') {
-      updateState.update((s) => {
-        const newProgress = s.progress + (event.data.chunkLength || 0);
-        return { ...s, progress: newProgress };
-      });
-    } else if (event.event === 'Finished') {
-      updateState.update((s) => ({ ...s, progress: 100 }));
+  try {
+    unlisten = await listen<{ event: string; contentLength?: number; chunkLength?: number }>(
+      'update-download-progress',
+      (event) => {
+        const data = event.payload;
+        if (data.event === 'started' && data.contentLength) {
+          contentLength = data.contentLength;
+          downloaded = 0;
+          updateState.update((s) => ({ ...s, progress: 0 }));
+        } else if (data.event === 'progress' && data.chunkLength) {
+          downloaded += data.chunkLength;
+          const progress = contentLength > 0 ? Math.round((downloaded / contentLength) * 100) : 0;
+          updateState.update((s) => ({ ...s, progress }));
+        } else if (data.event === 'finished') {
+          updateState.update((s) => ({ ...s, progress: 100 }));
+        }
+      }
+    );
+
+    await invoke('download_and_install_update', { allowPrerelease: allowPre });
+  } finally {
+    if (unlisten) {
+      unlisten();
     }
-  });
-
-  await relaunch();
+  }
 }
 
 async function downloadAndInstallAndroid(info: UpdateInfo): Promise<void> {
@@ -252,20 +262,68 @@ async function downloadAndInstallAndroid(info: UpdateInfo): Promise<void> {
     throw new Error('No download URL available');
   }
 
+  const downloadUrl = info.downloadUrl;
   const android = (window as unknown as { AndroidYtDlp: AndroidUpdater }).AndroidYtDlp;
-  if (android?.downloadAndInstallUpdate) {
-    android.downloadAndInstallUpdate(info.downloadUrl);
+  const updateFn = android?.downloadAndInstallUpdate;
+
+  if (updateFn) {
+    return new Promise((resolve, reject) => {
+      const callbackName = `__update_callback_${Date.now()}`;
+      const progressCallbackName = `${callbackName}_progress`;
+
+      // Progress callback
+      (window as unknown as Record<string, unknown>)[progressCallbackName] = (json: string) => {
+        try {
+          const data = JSON.parse(json) as {
+            type: string;
+            downloaded: number;
+            total: number;
+            progress: number;
+            stage: string;
+          };
+          updateState.update((s) => ({
+            ...s,
+            progress: data.progress,
+          }));
+        } catch (e) {
+          console.error('[Updates] Failed to parse progress:', e);
+        }
+      };
+
+      // Completion callback
+      (window as unknown as Record<string, unknown>)[callbackName] = (json: string) => {
+        // Cleanup callbacks
+        delete (window as unknown as Record<string, unknown>)[callbackName];
+        delete (window as unknown as Record<string, unknown>)[progressCallbackName];
+
+        try {
+          const data = JSON.parse(json) as { type: string; success: boolean; error?: string };
+          updateState.update((s) => ({ ...s, downloading: false }));
+
+          if (data.success) {
+            resolve();
+          } else {
+            reject(new Error(data.error || 'Update failed'));
+          }
+        } catch (e) {
+          updateState.update((s) => ({ ...s, downloading: false }));
+          reject(e);
+        }
+      };
+
+      // Start the download with callback name
+      updateFn(downloadUrl, callbackName);
+    });
   } else {
     // Fallback: open URL in browser for manual download
     const opener = await import('@tauri-apps/plugin-opener');
-    await opener.openUrl(info.downloadUrl);
+    await opener.openUrl(downloadUrl);
+    updateState.update((s) => ({ ...s, downloading: false }));
   }
-
-  updateState.update((s) => ({ ...s, downloading: false }));
 }
 
 interface AndroidUpdater {
-  downloadAndInstallUpdate?: (url: string) => void;
+  downloadAndInstallUpdate?: (url: string, callbackName: string) => void;
 }
 
 export function startUpdateChecker(): void {

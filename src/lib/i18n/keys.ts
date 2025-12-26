@@ -365,6 +365,7 @@ export type TranslationKeys =
   | 'settings.app.checkForUpdates'
   | 'settings.app.currentVersion'
   | 'settings.app.disableAnimations'
+  | 'settings.app.downloading'
   | 'settings.app.fileSize'
   | 'settings.app.installUpdate'
   | 'settings.app.installing'
@@ -539,5 +540,6 @@ export type TranslationKeys =
 
   // Window
   | 'window.close'
-  | 'window.maximize';
-('window.minimize');
+  | 'window.maximize'
+  'window.minimize'
+;

@@ -276,6 +276,7 @@
       "updateCheckFailed": "Не удалось проверить обновления",
       "installUpdate": "Установить",
       "installing": "Установка...",
+      "downloading": "Загрузка",
       "whatsNew": "Что нового:",
       "autoUpdate": "Автоматически обновлять приложение",
       "allowPreReleases": "Разрешить предварительные версии",

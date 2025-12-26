@@ -3009,6 +3009,224 @@ async fn clear_cache(_app: AppHandle) -> Result<u32, String> {
     Ok(0)
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct UpdateCheckResult {
+    pub available: bool,
+    pub version: Option<String>,
+    pub body: Option<String>,
+    pub date: Option<String>,
+}
+
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+async fn check_for_update(
+    app: AppHandle,
+    allow_prerelease: bool,
+) -> Result<UpdateCheckResult, String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    info!(
+        "Checking for updates with allow_prerelease={}",
+        allow_prerelease
+    );
+
+    let endpoint_url = if allow_prerelease {
+        let client = reqwest::Client::new();
+        let response = client
+            .get("https://api.github.com/repos/nichind/comine/releases")
+            .header("Accept", "application/vnd.github.v3+json")
+            .header("User-Agent", "comine-updater")
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch releases: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("GitHub API error: {}", response.status()));
+        }
+
+        let releases: Vec<serde_json::Value> = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse releases: {}", e))?;
+
+        let latest = releases.first().ok_or("No releases found")?;
+        let tag = latest["tag_name"]
+            .as_str()
+            .ok_or("No tag_name in release")?;
+
+        format!(
+            "https://github.com/nichind/comine/releases/download/{}/latest.json",
+            tag
+        )
+    } else {
+        "https://github.com/nichind/comine/releases/latest/download/latest.json".to_string()
+    };
+
+    info!("Using update endpoint: {}", endpoint_url);
+
+    let updater = app
+        .updater_builder()
+        .endpoints(vec![endpoint_url.parse().map_err(|e| format!("Invalid URL: {}", e))?])
+        .map_err(|e| format!("Failed to set endpoints: {}", e))?
+        .build()
+        .map_err(|e| format!("Failed to build updater: {}", e))?;
+
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| format!("Update check failed: {}", e))?;
+
+    match update {
+        Some(update) => {
+            info!(
+                "Update available: {} (current: {})",
+                update.version, update.current_version
+            );
+            let date_str = update.date.map(|d| d.to_string());
+            Ok(UpdateCheckResult {
+                available: true,
+                version: Some(update.version.clone()),
+                body: Some(update.body.clone().unwrap_or_default()),
+                date: date_str,
+            })
+        }
+        None => {
+            info!("No update available");
+            Ok(UpdateCheckResult {
+                available: false,
+                version: None,
+                body: None,
+                date: None,
+            })
+        }
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+async fn download_and_install_update(
+    app: AppHandle,
+    window: tauri::Window,
+    allow_prerelease: bool,
+) -> Result<(), String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    info!(
+        "Starting update download with allow_prerelease={}",
+        allow_prerelease
+    );
+
+    let endpoint_url = if allow_prerelease {
+        let client = reqwest::Client::new();
+        let response = client
+            .get("https://api.github.com/repos/nichind/comine/releases")
+            .header("Accept", "application/vnd.github.v3+json")
+            .header("User-Agent", "comine-updater")
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch releases: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("GitHub API error: {}", response.status()));
+        }
+
+        let releases: Vec<serde_json::Value> = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse releases: {}", e))?;
+
+        let latest = releases.first().ok_or("No releases found")?;
+        let tag = latest["tag_name"]
+            .as_str()
+            .ok_or("No tag_name in release")?;
+
+        format!(
+            "https://github.com/nichind/comine/releases/download/{}/latest.json",
+            tag
+        )
+    } else {
+        "https://github.com/nichind/comine/releases/latest/download/latest.json".to_string()
+    };
+
+    info!("Using update endpoint: {}", endpoint_url);
+
+    let updater = app
+        .updater_builder()
+        .endpoints(vec![endpoint_url.parse().map_err(|e| format!("Invalid URL: {}", e))?])
+        .map_err(|e| format!("Failed to set endpoints: {}", e))?
+        .build()
+        .map_err(|e| format!("Failed to build updater: {}", e))?;
+
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| format!("Update check failed: {}", e))?
+        .ok_or("No update available")?;
+
+    info!("Downloading update version {}", update.version);
+
+    let window_for_progress = window.clone();
+    let window_for_finish = window.clone();
+    let mut started = false;
+
+    update
+        .download_and_install(
+            move |chunk_length, content_length| {
+                if !started {
+                    started = true;
+                    let _ = window_for_progress.emit(
+                        "update-download-progress",
+                        serde_json::json!({
+                            "event": "started",
+                            "contentLength": content_length
+                        }),
+                    );
+                }
+
+                let _ = window_for_progress.emit(
+                    "update-download-progress",
+                    serde_json::json!({
+                        "event": "progress",
+                        "chunkLength": chunk_length
+                    }),
+                );
+            },
+            move || {
+                info!("Download finished, installing...");
+                let _ = window_for_finish.emit(
+                    "update-download-progress",
+                    serde_json::json!({
+                        "event": "finished"
+                    }),
+                );
+            },
+        )
+        .await
+        .map_err(|e| format!("Download/install failed: {}", e))?;
+
+    info!("Relaunching app after update");
+    app.restart();
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn check_for_update(
+    _app: AppHandle,
+    _allow_prerelease: bool,
+) -> Result<UpdateCheckResult, String> {
+    Err("Use Android update mechanism".to_string())
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn download_and_install_update(
+    _app: AppHandle,
+    _window: tauri::Window,
+    _allow_prerelease: bool,
+) -> Result<(), String> {
+    Err("Use Android update mechanism".to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
@@ -3053,6 +3271,8 @@ pub fn run() {
             check_ip,
             download_file,
             check_file_url,
+            check_for_update,
+            download_and_install_update,
             deps::check_ytdlp,
             deps::install_ytdlp,
             deps::uninstall_ytdlp,

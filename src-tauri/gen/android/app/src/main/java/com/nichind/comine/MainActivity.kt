@@ -28,6 +28,7 @@ class MainActivity : TauriActivity() {
     private const val TAG = "Comine"
     private const val DOWNLOAD_CHANNEL_ID = "comine_downloads"
     private const val DOWNLOAD_NOTIFICATION_ID = 1001
+    private const val UPDATE_NOTIFICATION_ID = 2001
     private const val MAX_CONCURRENT_DOWNLOADS = 5
     var ytdlInitialized = false
       private set
@@ -401,10 +402,12 @@ class MainActivity : TauriActivity() {
     }
     
     @JavascriptInterface
-    fun downloadAndInstallUpdate(apkUrl: String) {
+    fun downloadAndInstallUpdate(apkUrl: String, callbackName: String) {
       infoExecutor.execute {
+        val notificationId = UPDATE_NOTIFICATION_ID
         try {
           sendLog("info", "Downloading update from: $apkUrl")
+          sendUpdateProgress(callbackName, 0, 0, "connecting")
           
           val url = java.net.URL(apkUrl)
           val connection = url.openConnection() as java.net.HttpURLConnection
@@ -412,18 +415,53 @@ class MainActivity : TauriActivity() {
           connection.readTimeout = 60000
           connection.requestMethod = "GET"
           connection.setRequestProperty("Accept", "application/vnd.android.package-archive")
+          connection.setRequestProperty("User-Agent", "Comine-Android-Update")
+          
+          val contentLength = connection.contentLength.toLong()
+          sendLog("info", "Update size: $contentLength bytes")
           
           val cacheDir = context.externalCacheDir ?: context.cacheDir
           val apkFile = File(cacheDir, "comine-update.apk")
           
+          // Delete old file if exists
+          if (apkFile.exists()) {
+            apkFile.delete()
+          }
+          
+          mainHandler.post { showDownloadNotification(notificationId, "Downloading update...", 0) }
+          sendUpdateProgress(callbackName, 0, contentLength, "downloading")
+          
+          var downloaded: Long = 0
+          var lastProgress = 0
+          val buffer = ByteArray(8192)
+          
           connection.inputStream.use { input ->
             apkFile.outputStream().use { output ->
-              input.copyTo(output)
+              var bytesRead: Int
+              while (input.read(buffer).also { bytesRead = it } != -1) {
+                output.write(buffer, 0, bytesRead)
+                downloaded += bytesRead
+                
+                val progress = if (contentLength > 0) {
+                  ((downloaded * 100) / contentLength).toInt()
+                } else {
+                  -1
+                }
+                
+                // Update progress every 2%
+                if (progress != lastProgress && progress % 2 == 0) {
+                  lastProgress = progress
+                  mainHandler.post { showDownloadNotification(notificationId, "Downloading update...", progress) }
+                  sendUpdateProgress(callbackName, downloaded, contentLength, "downloading")
+                }
+              }
             }
           }
           connection.disconnect()
           
+          mainHandler.post { hideDownloadNotification(notificationId) }
           sendLog("info", "Update downloaded: ${apkFile.length()} bytes")
+          sendUpdateProgress(callbackName, contentLength, contentLength, "installing")
           
           mainHandler.post {
             try {
@@ -440,16 +478,41 @@ class MainActivity : TauriActivity() {
               }
               
               context.startActivity(intent)
+              sendUpdateComplete(callbackName, true, null)
             } catch (e: Exception) {
               Log.e(TAG, "Failed to install update", e)
               sendLog("error", "Failed to install update: ${e.message}")
+              sendUpdateComplete(callbackName, false, e.message)
             }
           }
         } catch (e: Exception) {
           Log.e(TAG, "Failed to download update", e)
           sendLog("error", "Failed to download update: ${e.message}")
+          mainHandler.post { hideDownloadNotification(notificationId) }
+          sendUpdateComplete(callbackName, false, e.message)
         }
       }
+    }
+    
+    private fun sendUpdateProgress(callbackName: String, downloaded: Long, total: Long, stage: String) {
+      val progress = if (total > 0) ((downloaded * 100) / total).toInt() else 0
+      val progressJson = JSONObject().apply {
+        put("type", "progress")
+        put("downloaded", downloaded)
+        put("total", total)
+        put("progress", progress)
+        put("stage", stage)
+      }.toString()
+      sendCallback("${callbackName}_progress", progressJson)
+    }
+    
+    private fun sendUpdateComplete(callbackName: String, success: Boolean, error: String?) {
+      val resultJson = JSONObject().apply {
+        put("type", "complete")
+        put("success", success)
+        if (error != null) put("error", error)
+      }.toString()
+      sendCallback(callbackName, resultJson)
     }
     
     @JavascriptInterface

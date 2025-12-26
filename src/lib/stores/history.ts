@@ -1,6 +1,7 @@
 import { writable, derived, get } from 'svelte/store';
 import { settings } from './settings';
 import { translate, locale } from '$lib/i18n';
+import { load, type Store } from '@tauri-apps/plugin-store';
 
 export interface HistoryItem {
   id: string;
@@ -29,24 +30,39 @@ interface HistoryState {
   sort: SortType;
 }
 
-const STORAGE_KEY = 'comine_history';
+let store: Store | null = null;
+let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 
-function loadFromStorage(): HistoryItem[] {
-  if (typeof localStorage === 'undefined') return [];
-  try {
-    const data = localStorage.getItem(STORAGE_KEY);
-    return data ? JSON.parse(data) : [];
-  } catch {
-    return [];
+// Debounced save to avoid too many writes
+function debouncedSave(items: HistoryItem[]) {
+  if (saveTimeout) {
+    clearTimeout(saveTimeout);
   }
+  saveTimeout = setTimeout(async () => {
+    if (store) {
+      try {
+        await store.set('items', items);
+        await store.save();
+      } catch (e) {
+        console.error('[History] Failed to save:', e);
+      }
+    }
+  }, 300);
 }
 
-function saveToStorage(items: HistoryItem[]) {
-  if (typeof localStorage === 'undefined') return;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-  } catch (e) {
-    console.error('Failed to save history:', e);
+// Force immediate save (for critical operations)
+async function forceSave(items: HistoryItem[]) {
+  if (saveTimeout) {
+    clearTimeout(saveTimeout);
+    saveTimeout = null;
+  }
+  if (store) {
+    try {
+      await store.set('items', items);
+      await store.save();
+    } catch (e) {
+      console.error('[History] Failed to force save:', e);
+    }
   }
 }
 
@@ -58,13 +74,19 @@ function createHistoryStore() {
     sort: 'date',
   });
 
-  if (typeof window !== 'undefined') {
-    const items = loadFromStorage();
-    update((state) => ({ ...state, items }));
-  }
-
   return {
     subscribe,
+
+    async init() {
+      try {
+        store = await load('history.json', { autoSave: false, defaults: {} });
+        const items = ((await store.get('items')) as HistoryItem[]) || [];
+        update((state) => ({ ...state, items }));
+        console.log(`[History] Loaded ${items.length} items`);
+      } catch (e) {
+        console.error('[History] Failed to initialize:', e);
+      }
+    },
 
     add(item: Omit<HistoryItem, 'id' | 'downloadedAt'>) {
       const newItem: HistoryItem = {
@@ -75,7 +97,7 @@ function createHistoryStore() {
 
       update((state) => {
         const items = [newItem, ...state.items];
-        saveToStorage(items);
+        debouncedSave(items);
         return { ...state, items };
       });
 
@@ -85,16 +107,14 @@ function createHistoryStore() {
     remove(id: string) {
       update((state) => {
         const items = state.items.filter((item) => item.id !== id);
-        saveToStorage(items);
+        debouncedSave(items);
         return { ...state, items };
       });
     },
 
-    clear() {
-      update((state) => {
-        saveToStorage([]);
-        return { ...state, items: [] };
-      });
+    async clear() {
+      update((state) => ({ ...state, items: [] }));
+      await forceSave([]);
     },
 
     setSearch(query: string) {
@@ -114,7 +134,7 @@ function createHistoryStore() {
       return JSON.stringify(state.items, null, 2);
     },
 
-    importData(jsonData: string): boolean {
+    async importData(jsonData: string): Promise<boolean> {
       try {
         const items = JSON.parse(jsonData) as HistoryItem[];
         if (!Array.isArray(items)) {
@@ -125,13 +145,11 @@ function createHistoryStore() {
             throw new Error('Invalid item structure');
           }
         }
-        update((state) => {
-          saveToStorage(items);
-          return { ...state, items };
-        });
+        update((state) => ({ ...state, items }));
+        await forceSave(items);
         return true;
       } catch (e) {
-        console.error('Failed to import history:', e);
+        console.error('[History] Failed to import:', e);
         return false;
       }
     },
@@ -143,7 +161,7 @@ function createHistoryStore() {
     updateDuration(id: string, duration: number) {
       update((state) => {
         const items = state.items.map((item) => (item.id === id ? { ...item, duration } : item));
-        saveToStorage(items);
+        debouncedSave(items);
         return { ...state, items };
       });
     },
@@ -151,6 +169,12 @@ function createHistoryStore() {
 }
 
 export const history = createHistoryStore();
+export const historyReady = writable(false);
+
+export async function initHistory(): Promise<void> {
+  await history.init();
+  historyReady.set(true);
+}
 
 export const filteredHistory = derived(history, ($history) => {
   let items = [...$history.items];
