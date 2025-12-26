@@ -846,7 +846,44 @@ class MainActivity : TauriActivity() {
         }
       }
       
-      return true
+      val centerX = width / 2
+      val edgeCheckPoints = listOf(
+        Pair(barWidth + 2, height / 4),
+        Pair(barWidth + 2, height / 2),
+        Pair(barWidth + 2, height * 3 / 4),
+        Pair(width - barWidth - 3, height / 4),
+        Pair(width - barWidth - 3, height / 2),
+        Pair(width - barWidth - 3, height * 3 / 4),
+        Pair(barWidth + barWidth / 4, height / 4),
+        Pair(barWidth + barWidth / 4, height / 2),
+        Pair(barWidth + barWidth / 4, height * 3 / 4),
+        Pair(centerX - height / 2 + 5, height / 4),
+        Pair(centerX - height / 2 + 5, height / 2),
+        Pair(centerX - height / 2 + 5, height * 3 / 4),
+        Pair(centerX + height / 2 - 6, height / 4),
+        Pair(centerX + height / 2 - 6, height / 2),
+        Pair(centerX + height / 2 - 6, height * 3 / 4),
+        Pair(width - barWidth - barWidth / 4 - 1, height / 4),
+        Pair(width - barWidth - barWidth / 4 - 1, height / 2),
+        Pair(width - barWidth - barWidth / 4 - 1, height * 3 / 4)
+      )
+      
+      var edgeMatches = 0
+      for ((x, y) in edgeCheckPoints) {
+        if (x < 0 || x >= width || y < 0 || y >= height) continue
+        val pixel = bitmap.getPixel(x, y)
+        val r = android.graphics.Color.red(pixel)
+        val g = android.graphics.Color.green(pixel)
+        val b = android.graphics.Color.blue(pixel)
+        
+        if (kotlin.math.abs(r - refR) <= tolerance &&
+            kotlin.math.abs(g - refG) <= tolerance &&
+            kotlin.math.abs(b - refB) <= tolerance) {
+          edgeMatches++
+        }
+      }
+      
+      return edgeMatches >= edgeCheckPoints.size / 2
     }
     
     @JavascriptInterface

@@ -1822,7 +1822,49 @@ fn is_letterboxed_thumbnail(img: &DynamicImage) -> bool {
         }
     }
 
-    matches >= required_matches
+    if matches < required_matches {
+        return false;
+    }
+
+    let center_x = width / 2;
+    let edge_check_points = [
+        (bar_width + 2, height / 4),
+        (bar_width + 2, height / 2),
+        (bar_width + 2, height * 3 / 4),
+        (width - bar_width - 3, height / 4),
+        (width - bar_width - 3, height / 2),
+        (width - bar_width - 3, height * 3 / 4),
+        (bar_width + bar_width / 4, height / 4),
+        (bar_width + bar_width / 4, height / 2),
+        (bar_width + bar_width / 4, height * 3 / 4),
+        (center_x - height / 2 + 5, height / 4),
+        (center_x - height / 2 + 5, height / 2),
+        (center_x - height / 2 + 5, height * 3 / 4),
+        (center_x + height / 2 - 6, height / 4),
+        (center_x + height / 2 - 6, height / 2),
+        (center_x + height / 2 - 6, height * 3 / 4),
+        (width - bar_width - bar_width / 4 - 1, height / 4),
+        (width - bar_width - bar_width / 4 - 1, height / 2),
+        (width - bar_width - bar_width / 4 - 1, height * 3 / 4),
+    ];
+
+    let mut edge_matches = 0;
+    for (x, y) in edge_check_points {
+        if x >= width || y >= height {
+            continue;
+        }
+        let pixel = img.get_pixel(x, y);
+
+        let diff_r = (pixel[0] as i16 - ref_color[0] as i16).abs();
+        let diff_g = (pixel[1] as i16 - ref_color[1] as i16).abs();
+        let diff_b = (pixel[2] as i16 - ref_color[2] as i16).abs();
+
+        if diff_r <= tolerance && diff_g <= tolerance && diff_b <= tolerance {
+            edge_matches += 1;
+        }
+    }
+
+    edge_matches >= (edge_check_points.len() / 2)
 }
 
 /// Crop a letterboxed thumbnail to its center square
