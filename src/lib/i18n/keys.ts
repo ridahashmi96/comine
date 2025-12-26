@@ -540,6 +540,5 @@ export type TranslationKeys =
 
   // Window
   | 'window.close'
-  | 'window.maximize'
-  'window.minimize'
-;
+  | 'window.maximize';
+('window.minimize');

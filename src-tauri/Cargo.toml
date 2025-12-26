@@ -1,6 +1,6 @@
 [package]
 name = "comine"
-version = "1.0.3-pre"
+version = "1.0.3-1"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"

@@ -3066,7 +3066,9 @@ async fn check_for_update(
 
     let updater = app
         .updater_builder()
-        .endpoints(vec![endpoint_url.parse().map_err(|e| format!("Invalid URL: {}", e))?])
+        .endpoints(vec![endpoint_url
+            .parse()
+            .map_err(|e| format!("Invalid URL: {}", e))?])
         .map_err(|e| format!("Failed to set endpoints: {}", e))?
         .build()
         .map_err(|e| format!("Failed to build updater: {}", e))?;
@@ -3152,7 +3154,9 @@ async fn download_and_install_update(
 
     let updater = app
         .updater_builder()
-        .endpoints(vec![endpoint_url.parse().map_err(|e| format!("Invalid URL: {}", e))?])
+        .endpoints(vec![endpoint_url
+            .parse()
+            .map_err(|e| format!("Invalid URL: {}", e))?])
         .map_err(|e| format!("Failed to set endpoints: {}", e))?
         .build()
         .map_err(|e| format!("Failed to build updater: {}", e))?;

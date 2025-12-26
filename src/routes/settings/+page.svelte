@@ -1716,7 +1716,8 @@
                 >
                   {#if $updateState.downloading}
                     <span class="btn-spinner"></span>
-                    {$t('settings.app.downloading')} {$updateState.progress}%
+                    {$t('settings.app.downloading')}
+                    {$updateState.progress}%
                   {:else}
                     {$t('settings.app.installUpdate')}
                   {/if}
@@ -1726,10 +1727,7 @@
               {#if $updateState.downloading}
                 <div class="setting-sub-row update-progress">
                   <div class="update-progress-bar">
-                    <div
-                      class="update-progress-fill"
-                      style="width: {$updateState.progress}%"
-                    ></div>
+                    <div class="update-progress-fill" style="width: {$updateState.progress}%"></div>
                   </div>
                 </div>
               {/if}
