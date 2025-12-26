@@ -748,6 +748,12 @@ async fn download_video(
                 downloads.remove(&url);
             }
 
+            if use_custom_cookies {
+                if let Ok(cache_dir) = app.path().app_cache_dir() {
+                    let _ = tokio::fs::remove_file(cache_dir.join("custom_cookies.txt")).await;
+                }
+            }
+
             if let Some(ref path) = final_file_path {
                 if let Some(ref thumb_data) = cropped_thumbnail_data {
                     if thumb_data.starts_with("data:image/") && embed_thumbnail.unwrap_or(false) {
@@ -796,6 +802,13 @@ async fn download_video(
                         downloads.remove(&url);
                     }
 
+                    if use_custom_cookies {
+                        if let Ok(cache_dir) = app.path().app_cache_dir() {
+                            let _ =
+                                tokio::fs::remove_file(cache_dir.join("custom_cookies.txt")).await;
+                        }
+                    }
+
                     let _ = window.emit(
                         "download-file-path",
                         DownloadFilePath {
@@ -812,6 +825,13 @@ async fn download_video(
                 let mut downloads = ACTIVE_DOWNLOADS.lock().unwrap();
                 downloads.remove(&url);
             }
+
+            if use_custom_cookies {
+                if let Ok(cache_dir) = app.path().app_cache_dir() {
+                    let _ = tokio::fs::remove_file(cache_dir.join("custom_cookies.txt")).await;
+                }
+            }
+
             error!("Download failed for: {}", url);
 
             let error_msg = if !error_messages.is_empty() {
@@ -2918,6 +2938,36 @@ async fn check_file_url(
     Err("File URL checking is not supported on Android yet".to_string())
 }
 
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+async fn clear_cache(app: AppHandle) -> Result<u32, String> {
+    let cache_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("Failed to get cache dir: {}", e))?;
+
+    let mut deleted: u32 = 0;
+    let files_to_clean = ["custom_cookies.txt", "cropped_cover.jpg"];
+
+    for file in &files_to_clean {
+        let path = cache_dir.join(file);
+        if path.exists() {
+            if tokio::fs::remove_file(&path).await.is_ok() {
+                deleted += 1;
+                info!("Deleted cache file: {:?}", path);
+            }
+        }
+    }
+
+    Ok(deleted)
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn clear_cache(_app: AppHandle) -> Result<u32, String> {
+    Ok(0)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
@@ -2975,7 +3025,8 @@ pub fn run() {
             deps::uninstall_deno,
             deps::check_quickjs,
             deps::install_quickjs,
-            deps::uninstall_quickjs
+            deps::uninstall_quickjs,
+            clear_cache
         ]);
 
     #[cfg(not(target_os = "android"))]

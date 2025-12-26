@@ -574,6 +574,26 @@
     updateSetting('language', defaultSettings.language);
   }
 
+  let clearingCache = $state(false);
+
+  async function handleClearCache() {
+    if (!onDesktop) return;
+    clearingCache = true;
+    try {
+      const deleted = await invoke<number>('clear_cache');
+      if (deleted > 0) {
+        importMessage = { type: 'success', text: $t('settings.data.clearCacheSuccess') };
+      } else {
+        importMessage = { type: 'success', text: $t('settings.data.clearCacheEmpty') };
+      }
+      setTimeout(() => (importMessage = null), 3000);
+    } catch (err) {
+      console.error('Failed to clear cache:', err);
+    } finally {
+      clearingCache = false;
+    }
+  }
+
   function handleProxyModeChange(value: string) {
     updateSetting('proxyMode', value as ProxyMode);
   }
@@ -2305,6 +2325,26 @@
             </button>
           </div>
         </div>
+
+        <!-- Clear Cache -->
+        {#if onDesktop}
+          <div class="setting-item">
+            <div class="data-item">
+              <div class="data-info">
+                <span class="data-label">{$t('settings.data.clearCache')}</span>
+                <span class="data-description">{$t('settings.data.clearCacheDescription')}</span>
+              </div>
+              <button class="data-btn" onclick={handleClearCache} disabled={clearingCache}>
+                {#if clearingCache}
+                  <span class="btn-spinner"></span>
+                {:else}
+                  <Icon name="trash" size={16} />
+                {/if}
+                {$t('settings.data.clearCache')}
+              </button>
+            </div>
+          </div>
+        {/if}
 
         <!-- Export History -->
         <div class="setting-item">

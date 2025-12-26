@@ -374,7 +374,11 @@
       "importHistoryDescription": "Загрузить историю загрузок из JSON файла",
       "importSuccess": "История успешно импортирована",
       "importError": "Не удалось импортировать историю. Проверьте формат файла.",
-      "noHistoryToExport": "Нет истории для экспорта"
+      "noHistoryToExport": "Нет истории для экспорта",
+      "clearCache": "Очистить кэш",
+      "clearCacheDescription": "Удалить временные файлы (куки, миниатюры)",
+      "clearCacheSuccess": "Кэш очищен",
+      "clearCacheEmpty": "Кэш уже пуст"
     },
     "notifications": {
       "title": "Уведомления",

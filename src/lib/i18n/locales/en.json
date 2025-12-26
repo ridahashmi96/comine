@@ -344,7 +344,11 @@
       "importHistoryDescription": "Load download history from a JSON file",
       "importSuccess": "History imported successfully",
       "importError": "Failed to import history. Please check the file format.",
-      "noHistoryToExport": "No history to export"
+      "noHistoryToExport": "No history to export",
+      "clearCache": "Clear cache",
+      "clearCacheDescription": "Delete temporary files (cookies, thumbnails)",
+      "clearCacheSuccess": "Cache cleared",
+      "clearCacheEmpty": "Cache is already empty"
     },
     "notifications": {
       "title": "Notifications",
