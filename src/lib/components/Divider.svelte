@@ -10,7 +10,7 @@
 
   const marginTop = $derived(mt ?? my ?? 0);
   const marginBottom = $derived(mb ?? my ?? 0);
-  
+
   const style = $derived(`margin-top: ${marginTop}px; margin-bottom: ${marginBottom}px;`);
 </script>
 

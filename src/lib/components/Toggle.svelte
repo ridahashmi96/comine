@@ -6,26 +6,19 @@
     onchange?: (checked: boolean) => void;
   }
 
-  let { 
-    checked = $bindable(false),
-    disabled = false,
-    label = '',
-    onchange
-  }: Props = $props();
+  let { checked = $bindable(false), disabled = false, label = '', onchange }: Props = $props();
 
   function toggle() {
     if (disabled) return;
     const newValue = !checked;
-    // Update local state for bind:checked support
     checked = newValue;
-    // Also call onchange callback if provided
     onchange?.(newValue);
   }
 </script>
 
-<button 
+<button
   type="button"
-  class="toggle-wrapper" 
+  class="toggle-wrapper"
   class:disabled
   class:checked
   onclick={toggle}
@@ -80,7 +73,7 @@
   }
 
   .toggle-wrapper.checked .toggle {
-    background: var(--accent, #6366F1);
+    background: var(--accent, #6366f1);
   }
 
   .toggle-wrapper.checked .slider {

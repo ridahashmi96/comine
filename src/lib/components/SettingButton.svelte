@@ -2,7 +2,7 @@
   let {
     label,
     value,
-    onclick
+    onclick,
   }: {
     label: string;
     value: string;
@@ -10,7 +10,7 @@
   } = $props();
 </script>
 
-<button class="setting-button" onclick={onclick}>
+<button class="setting-button" {onclick}>
   <span class="label">{label}:</span>
   <span class="value">{value}</span>
 </button>
@@ -30,17 +30,17 @@
     transition: all 0.15s;
     white-space: nowrap;
   }
-  
+
   .setting-button:hover {
     background: rgba(255, 255, 255, 0.1);
     border-color: rgba(255, 255, 255, 0.2);
   }
-  
+
   .label {
     color: rgba(255, 255, 255, 0.5);
     font-weight: 400;
   }
-  
+
   .value {
     font-weight: 600;
   }

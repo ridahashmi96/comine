@@ -12,18 +12,11 @@
     external?: boolean;
   }
 
-  let { 
-    href, 
-    icon, 
-    title = '',
-    active = false,
-    badge,
-    external = false
-  }: Props = $props();
+  let { href, icon, title = '', active = false, badge, external = false }: Props = $props();
 </script>
 
 {#if external}
-  <a 
+  <a
     {href}
     target="_blank"
     rel="noopener noreferrer"
@@ -35,7 +28,7 @@
     <Icon name={icon} />
   </a>
 {:else}
-  <a 
+  <a
     {href}
     class="nav-item"
     class:active
@@ -60,7 +53,9 @@
     color: rgba(255, 255, 255, 0.5);
     border-radius: 0 8px 8px 0;
     text-decoration: none;
-    transition: color 0.15s ease, background 0.15s ease;
+    transition:
+      color 0.15s ease,
+      background 0.15s ease;
     position: relative;
     border-left: 2px solid transparent;
   }
@@ -70,8 +65,8 @@
   }
 
   .nav-item.active {
-    color: #FFFFFF;
-    background: #FFFFFF24;
+    color: #ffffff;
+    background: #ffffff24;
     border-left-color: #ffffff24;
   }
 
@@ -79,7 +74,7 @@
     position: absolute;
     bottom: 8px;
     right: 8px;
-    background: var(--accent, #6366F1);
+    background: var(--accent, #6366f1);
     color: white;
     font-size: 10px;
     font-weight: 700;

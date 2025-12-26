@@ -14,26 +14,21 @@
   let autoScroll = $state(true);
   let isMobile = $state(false);
   let isDesktop = $state(false);
-  
-  // Copy confirmation modal state
+
   let showCopyModal = $state(false);
   let copyContentLength = $state(0);
 
-  // Filter states
   let activeFilters = $state<Set<LogLevel>>(new Set(['trace', 'debug', 'info', 'warn', 'error']));
 
   onMount(async () => {
-    // Check if mobile
     isMobile = window.innerWidth < 768;
     window.addEventListener('resize', () => {
       isMobile = window.innerWidth < 768;
     });
 
-    // Check if desktop (not Android/iOS) via user agent
     const ua = navigator.userAgent.toLowerCase();
     isDesktop = !ua.includes('android') && !ua.includes('iphone') && !ua.includes('ipad');
 
-    // Log forwarding is handled in +layout.svelte, we just display the store contents
     logs.info('system', 'Log viewer opened');
   });
 
@@ -87,22 +82,23 @@
   async function downloadLogs() {
     const text = logs.exportAsText();
     const defaultName = `comine-logs-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.txt`;
-    
+
     try {
       const filePath = await save({
         defaultPath: defaultName,
-        filters: [{
-          name: 'Text Files',
-          extensions: ['txt', 'log']
-        }]
+        filters: [
+          {
+            name: 'Text Files',
+            extensions: ['txt', 'log'],
+          },
+        ],
       });
-      
+
       if (filePath) {
         await writeTextFile(filePath, text);
         logs.info('system', `Logs saved to ${filePath}`);
       }
     } catch (e) {
-      // Fallback to browser download if dialog fails
       const blob = new Blob([text], { type: 'text/plain' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -117,28 +113,31 @@
   }
 
   function formatTime(date: Date): string {
-    return date.toLocaleTimeString('en-US', { 
-      hour12: false, 
-      hour: '2-digit', 
-      minute: '2-digit', 
-      second: '2-digit' 
+    return date.toLocaleTimeString('en-US', {
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
     });
   }
 
   function getLevelShort(level: LogLevel): string {
     switch (level) {
-      case 'trace': return 'TRC';
-      case 'debug': return 'DBG';
-      case 'info': return 'INF';
-      case 'warn': return 'WRN';
-      case 'error': return 'ERR';
+      case 'trace':
+        return 'TRC';
+      case 'debug':
+        return 'DBG';
+      case 'info':
+        return 'INF';
+      case 'warn':
+        return 'WRN';
+      case 'error':
+        return 'ERR';
     }
   }
 
   function handleScroll() {
     if (!logContainer) return;
-    // If user scrolls away from top, disable auto-scroll
-    // If they scroll back to top (within 10px threshold), re-enable it
     const isAtTop = logContainer.scrollTop <= 10;
     if (isAtTop && !autoScroll) {
       autoScroll = true;
@@ -194,22 +193,28 @@
     <div class="toolbar-content">
       <div class="search-box">
         <Icon name="search" size={14} />
-        <input 
-          type="text" 
-          placeholder="Search logs..." 
+        <input
+          type="text"
+          placeholder="Search logs..."
           value={searchQuery}
           oninput={handleSearchChange}
         />
         {#if searchQuery}
-          <button class="clear-search" onclick={() => { searchQuery = ''; logs.setSearch(''); }}>
+          <button
+            class="clear-search"
+            onclick={() => {
+              searchQuery = '';
+              logs.setSearch('');
+            }}
+          >
             <Icon name="close" size={12} />
           </button>
         {/if}
       </div>
 
       <div class="filter-chips">
-        <button 
-          class="chip info" 
+        <button
+          class="chip info"
           class:active={activeFilters.has('info')}
           onclick={() => toggleFilter('info')}
           use:tooltip={'Toggle info logs'}
@@ -217,8 +222,8 @@
           INF
           {#if $logStats.info > 0}<span class="chip-count">{$logStats.info}</span>{/if}
         </button>
-        <button 
-          class="chip debug" 
+        <button
+          class="chip debug"
           class:active={activeFilters.has('debug')}
           onclick={() => toggleFilter('debug')}
           use:tooltip={'Toggle debug logs'}
@@ -226,8 +231,8 @@
           DBG
           {#if $logStats.debug > 0}<span class="chip-count">{$logStats.debug}</span>{/if}
         </button>
-        <button 
-          class="chip warn" 
+        <button
+          class="chip warn"
           class:active={activeFilters.has('warn')}
           onclick={() => toggleFilter('warn')}
           use:tooltip={'Toggle warning logs'}
@@ -235,8 +240,8 @@
           WRN
           {#if $logStats.warn > 0}<span class="chip-count">{$logStats.warn}</span>{/if}
         </button>
-        <button 
-          class="chip error" 
+        <button
+          class="chip error"
           class:active={activeFilters.has('error')}
           onclick={() => toggleFilter('error')}
           use:tooltip={'Toggle error logs'}
@@ -258,7 +263,12 @@
         <button class="action-btn" onclick={downloadLogs} use:tooltip={'Download logs'}>
           <Icon name="download" size={16} />
         </button>
-        <button class="action-btn" onclick={() => autoScroll = !autoScroll} class:active={autoScroll} use:tooltip={'Auto-scroll'}>
+        <button
+          class="action-btn"
+          onclick={() => (autoScroll = !autoScroll)}
+          class:active={autoScroll}
+          use:tooltip={'Auto-scroll'}
+        >
           <Icon name="sort" size={16} />
         </button>
         <button class="action-btn danger" onclick={clearLogs} use:tooltip={'Clear all logs'}>
@@ -291,7 +301,7 @@
   </div>
   {#snippet actions()}
     <div class="modal-actions">
-      <Button variant="ghost" onclick={() => showCopyModal = false}>
+      <Button variant="ghost" onclick={() => (showCopyModal = false)}>
         {$t('common.cancel')}
       </Button>
       <Button variant="primary" onclick={confirmCopyLogs}>
@@ -377,11 +387,21 @@
     border-left: 3px solid transparent;
   }
 
-  .log-entry.mobile.info { border-left-color: rgba(34, 197, 94, 0.5); }
-  .log-entry.mobile.debug { border-left-color: rgba(99, 102, 241, 0.5); }
-  .log-entry.mobile.warn { border-left-color: rgba(251, 191, 36, 0.5); }
-  .log-entry.mobile.error { border-left-color: rgba(239, 68, 68, 0.5); }
-  .log-entry.mobile.trace { border-left-color: rgba(156, 163, 175, 0.5); }
+  .log-entry.mobile.info {
+    border-left-color: rgba(34, 197, 94, 0.5);
+  }
+  .log-entry.mobile.debug {
+    border-left-color: rgba(99, 102, 241, 0.5);
+  }
+  .log-entry.mobile.warn {
+    border-left-color: rgba(251, 191, 36, 0.5);
+  }
+  .log-entry.mobile.error {
+    border-left-color: rgba(239, 68, 68, 0.5);
+  }
+  .log-entry.mobile.trace {
+    border-left-color: rgba(156, 163, 175, 0.5);
+  }
 
   .log-header {
     display: flex;
@@ -452,8 +472,12 @@
     padding-left: 2px;
   }
 
-  .log-entry.error .log-message { color: rgba(239, 68, 68, 0.95); }
-  .log-entry.warn .log-message { color: rgba(251, 191, 36, 0.95); }
+  .log-entry.error .log-message {
+    color: rgba(239, 68, 68, 0.95);
+  }
+  .log-entry.warn .log-message {
+    color: rgba(251, 191, 36, 0.95);
+  }
 
   /* Floating toolbar - clean inline style */
   .floating-toolbar {

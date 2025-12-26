@@ -9,25 +9,24 @@
   let isAtBottom = $state(false);
 
   onMount(() => {
-    // Find the scroll container (parent with overflow)
-    // Use local reference to avoid stale closures across navigations
-    let container: HTMLElement | null = document.querySelector('.scroll-area') || document.querySelector('main');
-    
+    let container: HTMLElement | null =
+      document.querySelector('.scroll-area') || document.querySelector('main');
+
     if (container) {
       const checkScroll = () => {
-        if (!container) return; // Guard against stale reference
+        if (!container) return;
         const { scrollTop, scrollHeight, clientHeight } = container;
         isAtBottom = scrollTop + clientHeight >= scrollHeight - 10;
       };
       container.addEventListener('scroll', checkScroll);
-      checkScroll(); // Check initial state
-      
+      checkScroll();
+
       return () => {
         if (container) {
           container.removeEventListener('scroll', checkScroll);
-          container = null; // Clear reference on cleanup
+          container = null;
         }
-        isAtBottom = false; // Reset state on unmount
+        isAtBottom = false;
       };
     }
   });
@@ -39,7 +38,7 @@
   const COMMIT_HASH = typeof __COMMIT_HASH__ !== 'undefined' ? __COMMIT_HASH__ : 'unknown';
   // @ts-ignore - defined by vite
   const BUILD_DATE = typeof __BUILD_DATE__ !== 'undefined' ? __BUILD_DATE__ : 'unknown';
-  
+
   let versionCopied = $state(false);
 
   async function copyVersion() {
@@ -48,7 +47,7 @@
       const info = `Comine v${APP_VERSION} (${hash}) - ${BUILD_TYPE}`;
       await navigator.clipboard.writeText(info);
       versionCopied = true;
-      setTimeout(() => versionCopied = false, 2000);
+      setTimeout(() => (versionCopied = false), 2000);
     } catch (err) {
       console.error('Failed to copy version:', err);
     }
@@ -88,7 +87,9 @@
       </div>
       <div class="setting-item">
         <span class="setting-label">{$t('info.commit')}</span>
-        <span class="setting-value mono">{typeof COMMIT_HASH === 'string' ? COMMIT_HASH.slice(0, 7) : 'unknown'}</span>
+        <span class="setting-value mono"
+          >{typeof COMMIT_HASH === 'string' ? COMMIT_HASH.slice(0, 7) : 'unknown'}</span
+        >
       </div>
       <div class="setting-item">
         <span class="setting-label">{$t('info.buildDate')}</span>
@@ -104,11 +105,17 @@
         <span class="setting-label">{$t('info.website')}</span>
         <span class="setting-value link">comine.app</span>
       </button>
-      <button class="setting-item clickable" onclick={() => openLink('https://github.com/nichind/comine')}>
+      <button
+        class="setting-item clickable"
+        onclick={() => openLink('https://github.com/nichind/comine')}
+      >
         <span class="setting-label">GitHub</span>
         <span class="setting-value link">nichind/comine</span>
       </button>
-      <button class="setting-item clickable" onclick={() => openLink('https://discord.gg/8sfk33Kr2A')}>
+      <button
+        class="setting-item clickable"
+        onclick={() => openLink('https://discord.gg/8sfk33Kr2A')}
+      >
         <span class="setting-label">Discord</span>
         <span class="setting-value link">{$t('info.joinCommunity')}</span>
       </button>
@@ -130,10 +137,18 @@
           <span class="dev-role">{$t('info.madeWith')}</span>
         </div>
         <div class="dev-links">
-          <button class="icon-btn" onclick={() => openLink('https://nichind.dev')} use:tooltip={"nichind.dev"}>
+          <button
+            class="icon-btn"
+            onclick={() => openLink('https://nichind.dev')}
+            use:tooltip={'nichind.dev'}
+          >
             <Icon name="globe" size={16} />
           </button>
-          <button class="icon-btn" onclick={() => openLink('https://github.com/nichind')} use:tooltip={"GitHub"}>
+          <button
+            class="icon-btn"
+            onclick={() => openLink('https://github.com/nichind')}
+            use:tooltip={'GitHub'}
+          >
             <Icon name="github" size={16} />
           </button>
         </div>
@@ -143,7 +158,10 @@
     <!-- Licenses -->
     <section class="info-section">
       <h2 class="section-title">{$t('info.legal')}</h2>
-      <button class="setting-item clickable" onclick={() => openLink('https://github.com/nichind/comine/blob/main/LICENSE')}>
+      <button
+        class="setting-item clickable"
+        onclick={() => openLink('https://github.com/nichind/comine/blob/main/LICENSE')}
+      >
         <span class="setting-label">{$t('info.license')}</span>
         <span class="setting-value link">GPL-3.0</span>
       </button>
@@ -152,7 +170,12 @@
 </div>
 
 <!-- Mascot (fixed position, no portal) -->
-<button class="mascot-container" class:visible={isAtBottom} onclick={() => openLink('https://x.com/Nemurioverdose_')} use:tooltip={$t('info.mascotCredit')}>
+<button
+  class="mascot-container"
+  class:visible={isAtBottom}
+  onclick={() => openLink('https://x.com/Nemurioverdose_')}
+  use:tooltip={$t('info.mascotCredit')}
+>
   <img src="https://nichind.dev/assets/img/peek.webp" alt="Mascot" class="mascot-img" />
 </button>
 
@@ -234,7 +257,7 @@
   }
 
   .setting-value.link {
-    color: var(--accent, #6366F1);
+    color: var(--accent, #6366f1);
   }
 
   .setting-description {
@@ -306,7 +329,7 @@
   .dev-name {
     font-size: 14px;
     font-weight: 500;
-    color: var(--accent, #6366F1);
+    color: var(--accent, #6366f1);
     background: none;
     border: none;
     padding: 0;
@@ -361,7 +384,9 @@
     cursor: pointer;
     opacity: 0;
     transform: translateX(100%);
-    transition: opacity 0.3s ease, transform 0.3s ease;
+    transition:
+      opacity 0.3s ease,
+      transform 0.3s ease;
     pointer-events: none;
   }
 

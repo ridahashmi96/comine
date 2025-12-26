@@ -6,12 +6,7 @@
     onchange?: (checked: boolean) => void;
   }
 
-  let { 
-    checked = $bindable(false),
-    disabled = false,
-    label = '',
-    onchange
-  }: Props = $props();
+  let { checked = $bindable(false), disabled = false, label = '', onchange }: Props = $props();
 
   function toggle() {
     if (disabled) return;
@@ -20,25 +15,25 @@
   }
 </script>
 
-<button 
+<button
   type="button"
-  class="checkbox-wrapper" 
+  class="checkbox-wrapper"
   class:disabled
   class:checked
   onclick={toggle}
   {disabled}
 >
   <span class="checkbox">
-    <svg 
+    <svg
       class="checkmark"
       class:visible={checked}
-      width="12" 
-      height="12" 
-      viewBox="0 0 24 24" 
-      fill="none" 
-      stroke="currentColor" 
-      stroke-width="3" 
-      stroke-linecap="round" 
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="3"
+      stroke-linecap="round"
       stroke-linejoin="round"
     >
       <polyline points="20 6 9 17 4 12"></polyline>
@@ -74,7 +69,7 @@
     height: 20px;
     min-width: 20px;
     min-height: 20px;
-    border: 2px solid rgba(255, 255, 255, 0.0);
+    border: 2px solid rgba(255, 255, 255, 0);
     border-radius: 4px;
     background: rgba(255, 255, 255, 0.05);
     transition: all 0.2s;
@@ -86,7 +81,7 @@
   }
 
   .checkbox-wrapper.checked .checkbox {
-    background: var(--accent, #6366F1);
+    background: var(--accent, #6366f1);
   }
 
   .checkmark {

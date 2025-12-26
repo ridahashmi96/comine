@@ -19,7 +19,7 @@
   const selectOptions = [
     { value: 'en', label: 'English' },
     { value: 'ru', label: 'Русский' },
-    { value: 'es', label: 'Español' }
+    { value: 'es', label: 'Español' },
   ];
 
   async function testNotification() {
@@ -29,9 +29,9 @@
           title: 'Test Notification',
           body: 'This is a test notification with a longer description.',
           thumbnail: null,
-          url: 'https://example.com'
+          url: 'https://example.com',
         },
-        offset: 48
+        offset: 48,
       });
     } catch (e) {
       console.error('Failed to show notification:', e);
@@ -46,9 +46,9 @@
           title: 'Rick Astley - Never Gonna Give You Up',
           body: 'Rick Astley • 3:32',
           thumbnail: 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg',
-          url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+          url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
         },
-        offset: 48
+        offset: 48,
       });
     } catch (e) {
       console.error('Failed to show notification:', e);
@@ -67,7 +67,7 @@
     <!-- Buttons Section -->
     <section class="component-section">
       <h2>Buttons</h2>
-      
+
       <div class="component-group">
         <h3>Variants</h3>
         <div class="showcase">
@@ -95,7 +95,7 @@
             {/snippet}
             Download
           </Button>
-          
+
           <Button variant="secondary">
             Star on GitHub
             {#snippet iconRight()}
@@ -117,7 +117,7 @@
     <!-- Inputs Section -->
     <section class="component-section">
       <h2>Inputs</h2>
-      
+
       <div class="component-group">
         <h3>Basic</h3>
         <div class="showcase">
@@ -135,7 +135,7 @@
               <Icon name="search" size={16} />
             {/snippet}
           </Input>
-          
+
           <Input placeholder="Download path...">
             {#snippet iconRight()}
               <Icon name="folder" size={16} />
@@ -156,7 +156,7 @@
     <!-- Notifications Section -->
     <section class="component-section">
       <h2>OS Notifications</h2>
-      
+
       <div class="component-group">
         <h3>External Notification Windows</h3>
         <p style="color: rgba(255,255,255,0.6); margin-bottom: 12px; font-size: 13px;">
@@ -182,7 +182,7 @@
     <!-- Checkboxes Section -->
     <section class="component-section">
       <h2>Checkboxes</h2>
-      
+
       <div class="component-group">
         <div class="showcase vertical">
           <Checkbox bind:checked={checkboxValue} label="Checkbox with label" />
@@ -196,7 +196,7 @@
     <!-- Toggles Section -->
     <section class="component-section">
       <h2>Toggles</h2>
-      
+
       <div class="component-group">
         <div class="showcase vertical">
           <Toggle bind:checked={toggleValue} label="Enable feature" />
@@ -210,19 +210,15 @@
     <!-- Select Section -->
     <section class="component-section">
       <h2>Select</h2>
-      
+
       <div class="component-group">
         <div class="showcase">
-          <Select 
-            bind:value={selectValue} 
+          <Select
+            bind:value={selectValue}
             options={selectOptions}
             placeholder="Choose language..."
           />
-          <Select 
-            options={selectOptions}
-            placeholder="Disabled"
-            disabled
-          />
+          <Select options={selectOptions} placeholder="Disabled" disabled />
         </div>
       </div>
     </section>
@@ -230,12 +226,14 @@
     <!-- Modal Section -->
     <section class="component-section">
       <h2>Modals</h2>
-      
+
       <div class="component-group">
         <h3>Basic Modal</h3>
         <div class="showcase">
-          <Button onclick={() => showModal = true}>Open Modal</Button>
-          <Button variant="secondary" onclick={() => showConfirmModal = true}>Confirm Dialog</Button>
+          <Button onclick={() => (showModal = true)}>Open Modal</Button>
+          <Button variant="secondary" onclick={() => (showConfirmModal = true)}
+            >Confirm Dialog</Button
+          >
         </div>
       </div>
     </section>
@@ -243,13 +241,19 @@
     <!-- Toast Section -->
     <section class="component-section">
       <h2>Toasts</h2>
-      
+
       <div class="component-group">
         <h3>Toast Types</h3>
         <div class="showcase">
-          <Button variant="ghost" onclick={() => toast.success('Download completed successfully!')}>Success</Button>
-          <Button variant="ghost" onclick={() => toast.error('Failed to connect to server')}>Error</Button>
-          <Button variant="ghost" onclick={() => toast.warning('Storage space is running low')}>Warning</Button>
+          <Button variant="ghost" onclick={() => toast.success('Download completed successfully!')}
+            >Success</Button
+          >
+          <Button variant="ghost" onclick={() => toast.error('Failed to connect to server')}
+            >Error</Button
+          >
+          <Button variant="ghost" onclick={() => toast.warning('Storage space is running low')}
+            >Warning</Button
+          >
           <Button variant="ghost" onclick={() => toast.info('New version available')}>Info</Button>
         </div>
       </div>
@@ -257,8 +261,15 @@
       <div class="component-group">
         <h3>Custom Duration</h3>
         <div class="showcase">
-          <Button variant="secondary" onclick={() => toast('This will disappear in 2 seconds', 'info', 2000)}>Short (2s)</Button>
-          <Button variant="secondary" onclick={() => toast('This will stay for 8 seconds', 'info', 8000)}>Long (8s)</Button>
+          <Button
+            variant="secondary"
+            onclick={() => toast('This will disappear in 2 seconds', 'info', 2000)}
+            >Short (2s)</Button
+          >
+          <Button
+            variant="secondary"
+            onclick={() => toast('This will stay for 8 seconds', 'info', 8000)}>Long (8s)</Button
+          >
         </div>
       </div>
     </section>
@@ -266,7 +277,7 @@
     <!-- Icons Section -->
     <section class="component-section">
       <h2>Icons</h2>
-      
+
       <div class="component-group">
         <h3>Sizes</h3>
         <div class="showcase">
@@ -339,8 +350,14 @@
     Are you sure you want to delete this item? This action cannot be undone.
   </p>
   {#snippet actions()}
-    <Button variant="ghost" onclick={() => showConfirmModal = false}>Cancel</Button>
-    <Button variant="primary" onclick={() => { showConfirmModal = false; toast.success('Item deleted!'); }}>Delete</Button>
+    <Button variant="ghost" onclick={() => (showConfirmModal = false)}>Cancel</Button>
+    <Button
+      variant="primary"
+      onclick={() => {
+        showConfirmModal = false;
+        toast.success('Item deleted!');
+      }}>Delete</Button
+    >
   {/snippet}
 </Modal>
 

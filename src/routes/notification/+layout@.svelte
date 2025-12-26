@@ -17,7 +17,13 @@
   :global(html, body) {
     background: rgb(24, 24, 28) !important;
     overflow: hidden;
-    font-family: 'Jost', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family:
+      'Jost',
+      -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI',
+      Roboto,
+      sans-serif;
     -webkit-font-smoothing: antialiased;
     color: white;
     height: 100%;

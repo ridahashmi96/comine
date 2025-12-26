@@ -11,13 +11,7 @@
     actions?: any;
   }
 
-  let { 
-    open = $bindable(false),
-    title = '',
-    onclose,
-    children,
-    actions
-  }: Props = $props();
+  let { open = $bindable(false), title = '', onclose, children, actions }: Props = $props();
 
   function close() {
     open = false;
@@ -38,8 +32,8 @@
 {#if open}
   <div use:portal>
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-    <div 
-      class="modal-backdrop" 
+    <div
+      class="modal-backdrop"
       transition:fade={{ duration: 150 }}
       onclick={handleBackdropClick}
       onkeydown={(e) => e.key === 'Escape' && close()}
@@ -47,25 +41,25 @@
       aria-modal="true"
       tabindex="0"
     >
-    <div class="modal" transition:scale={{ duration: 150, start: 0.95 }}>
-      <div class="modal-header">
-        <h2>{title}</h2>
-        <button class="close-btn" onclick={close}>
-          <Icon name="close" size={16} />
-        </button>
-      </div>
-      
-      <div class="modal-content">
-        {@render children?.()}
-      </div>
-
-      {#if actions}
-        <div class="modal-actions">
-          {@render actions()}
+      <div class="modal" transition:scale={{ duration: 150, start: 0.95 }}>
+        <div class="modal-header">
+          <h2>{title}</h2>
+          <button class="close-btn" onclick={close}>
+            <Icon name="close" size={16} />
+          </button>
         </div>
-      {/if}
+
+        <div class="modal-content">
+          {@render children?.()}
+        </div>
+
+        {#if actions}
+          <div class="modal-actions">
+            {@render actions()}
+          </div>
+        {/if}
+      </div>
     </div>
-  </div>
   </div>
 {/if}
 

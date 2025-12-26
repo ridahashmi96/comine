@@ -2,7 +2,15 @@
   import { t } from '$lib/i18n';
   import { goto } from '$app/navigation';
   import { revealItemInDir, openUrl, openPath } from '@tauri-apps/plugin-opener';
-  import { history, playlistGroupedHistory, formatDuration, isPlaylistGroup, type FilterType, type HistoryItem, type HistoryPlaylistGroup } from '$lib/stores/history';
+  import {
+    history,
+    playlistGroupedHistory,
+    formatDuration,
+    isPlaylistGroup,
+    type FilterType,
+    type HistoryItem,
+    type HistoryPlaylistGroup,
+  } from '$lib/stores/history';
   import { settings } from '$lib/stores/settings';
   import Icon from '$lib/components/Icon.svelte';
   import Chip from '$lib/components/Chip.svelte';
@@ -10,50 +18,45 @@
   import { tooltip } from '$lib/actions/tooltip';
   import { isAndroid, openFileOnAndroid, openFolderOnAndroid } from '$lib/utils/android';
   import { toast } from '$lib/components/Toast.svelte';
-  
-  // Reactive file size formatter that updates when sizeUnit setting changes
+
   function formatFileSize(bytes: number): string {
     if (bytes === 0) return '0 B';
     const sizeUnit = $settings.sizeUnit;
     const k = sizeUnit === 'binary' ? 1024 : 1000;
-    const sizes = sizeUnit === 'binary' 
-      ? ['B', 'KiB', 'MiB', 'GiB'] 
-      : ['B', 'kB', 'MB', 'GB'];
+    const sizes = sizeUnit === 'binary' ? ['B', 'KiB', 'MiB', 'GiB'] : ['B', 'kB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   }
-  
+
   let searchQuery = $state('');
   let activeFilter = $state<FilterType>('all');
   let viewMode = $state<'list' | 'grid'>('list');
   let hoveredItemId = $state<string | null>(null);
-  
-  // Track expanded playlist groups
+
   let expandedPlaylists = $state<Set<string>>(new Set());
-  
+
   function togglePlaylistExpanded(playlistId: string) {
     if (expandedPlaylists.has(playlistId)) {
-      expandedPlaylists = new Set([...expandedPlaylists].filter(id => id !== playlistId));
+      expandedPlaylists = new Set([...expandedPlaylists].filter((id) => id !== playlistId));
     } else {
       expandedPlaylists = new Set([...expandedPlaylists, playlistId]);
     }
   }
-  
-  // Update store when search changes
+
   $effect(() => {
     history.setSearch(searchQuery);
   });
-  
+
   function setFilter(filter: FilterType) {
     activeFilter = filter;
     history.setFilter(filter);
   }
-  
+
   function handleDelete(e: MouseEvent, id: string) {
     e.stopPropagation();
     history.remove(id);
   }
-  
+
   async function handleOpenLink(e: MouseEvent, url: string) {
     e.stopPropagation();
     try {
@@ -62,13 +65,12 @@
       console.error('Failed to open URL:', err);
     }
   }
-  
+
   function handleRedownload(e: MouseEvent, url: string) {
     e.stopPropagation();
-    // Navigate to download page with URL as query param
     goto(`/?url=${encodeURIComponent(url)}`);
   }
-  
+
   async function handleOpenFile(e: MouseEvent, filePath: string) {
     e.stopPropagation();
     if (!filePath) {
@@ -89,7 +91,7 @@
       toast.error('Failed to open file location');
     }
   }
-  
+
   async function handlePlayFile(e: MouseEvent, filePath: string) {
     e.stopPropagation();
     if (!filePath) {
@@ -110,13 +112,17 @@
       toast.error('Failed to play file');
     }
   }
-  
+
   function getTypeIcon(type: string): 'video' | 'music' | 'image' {
     switch (type) {
-      case 'video': return 'video';
-      case 'audio': return 'music';
-      case 'image': return 'image';
-      default: return 'video';
+      case 'video':
+        return 'video';
+      case 'audio':
+        return 'music';
+      case 'image':
+        return 'image';
+      default:
+        return 'video';
     }
   }
 </script>
@@ -132,68 +138,52 @@
   <!-- Search Bar -->
   <div class="search-bar">
     <Icon name="search" size={18} />
-    <input 
-      type="text" 
+    <input
+      type="text"
       placeholder="Search by title, author, date, file extension, etc."
       bind:value={searchQuery}
     />
   </div>
-  
+
   <!-- Toolbar -->
   <div class="toolbar">
     <!-- Filter Chips -->
     <div class="filters">
-      <Chip 
-        selected={activeFilter === 'all'} 
-        icon="date"
-        onclick={() => setFilter('all')}
-      >
+      <Chip selected={activeFilter === 'all'} icon="date" onclick={() => setFilter('all')}>
         All
       </Chip>
-      <Chip 
-        selected={activeFilter === 'video'}
-        icon="video"
-        onclick={() => setFilter('video')}
-      >
+      <Chip selected={activeFilter === 'video'} icon="video" onclick={() => setFilter('video')}>
         Video
       </Chip>
-      <Chip 
-        selected={activeFilter === 'audio'}
-        icon="music"
-        onclick={() => setFilter('audio')}
-      >
+      <Chip selected={activeFilter === 'audio'} icon="music" onclick={() => setFilter('audio')}>
         Music
       </Chip>
-      <Chip 
-        selected={activeFilter === 'image'}
-        icon="image"
-        onclick={() => setFilter('image')}
-      >
+      <Chip selected={activeFilter === 'image'} icon="image" onclick={() => setFilter('image')}>
         Image
       </Chip>
     </div>
-    
+
     <!-- View Toggle -->
     <div class="view-toggle">
-      <button 
-        class="view-btn" 
+      <button
+        class="view-btn"
         class:active={viewMode === 'list'}
-        onclick={() => viewMode = 'list'}
+        onclick={() => (viewMode = 'list')}
         title="List view"
       >
         <Icon name="checklist" size={18} />
       </button>
-      <button 
-        class="view-btn" 
+      <button
+        class="view-btn"
         class:active={viewMode === 'grid'}
-        onclick={() => viewMode = 'grid'}
+        onclick={() => (viewMode = 'grid')}
         title="Grid view"
       >
         <Icon name="gallery" size={18} />
       </button>
     </div>
   </div>
-  
+
   <!-- Table Header (list view only) -->
   {#if viewMode === 'list'}
     <div class="table-header">
@@ -206,7 +196,7 @@
       <span></span>
     </div>
   {/if}
-  
+
   <!-- History List -->
   <div class="history-list" class:grid-view={viewMode === 'grid'}>
     {#if $playlistGroupedHistory.length === 0}
@@ -219,7 +209,7 @@
       {#each $playlistGroupedHistory as group}
         <div class="date-group">
           <span class="date-label">{group.label}</span>
-          
+
           {#if viewMode === 'grid'}
             <!-- Grid View -->
             <div class="grid-items">
@@ -233,7 +223,7 @@
                   <div class="playlist-group-card" class:expanded={isExpanded}>
                     <!-- svelte-ignore a11y_no_static_element_interactions -->
                     <!-- svelte-ignore a11y_click_events_have_key_events -->
-                    <div 
+                    <div
                       class="playlist-header"
                       onclick={() => togglePlaylistExpanded(playlistGroup.playlistId)}
                     >
@@ -252,20 +242,22 @@
                       <div class="playlist-info">
                         <span class="playlist-title">{playlistGroup.playlistTitle}</span>
                         <span class="playlist-meta">
-                          {formatFileSize(playlistGroup.totalSize)} • {formatDuration(playlistGroup.totalDuration)}
+                          {formatFileSize(playlistGroup.totalSize)} • {formatDuration(
+                            playlistGroup.totalDuration
+                          )}
                         </span>
                       </div>
                       <Icon name={isExpanded ? 'chevron_up' : 'chevron_down'} size={20} />
                     </div>
-                    
+
                     {#if isExpanded}
                       <div class="playlist-items-grid">
                         {#each playlistGroup.items as subItem (subItem.id)}
                           <!-- svelte-ignore a11y_no_static_element_interactions -->
-                          <div 
+                          <div
                             class="grid-card nested"
-                            onmouseenter={() => hoveredItemId = subItem.id}
-                            onmouseleave={() => hoveredItemId = null}
+                            onmouseenter={() => (hoveredItemId = subItem.id)}
+                            onmouseleave={() => (hoveredItemId = null)}
                           >
                             <div class="card-thumbnail">
                               {#if subItem.thumbnail}
@@ -276,13 +268,15 @@
                                 </div>
                               {/if}
                               {#if subItem.duration > 0}
-                                <span class="duration-badge">{formatDuration(subItem.duration)}</span>
+                                <span class="duration-badge"
+                                  >{formatDuration(subItem.duration)}</span
+                                >
                               {/if}
                               {#if hoveredItemId === subItem.id}
                                 <div class="card-overlay">
                                   <div class="card-actions">
-                                    <button 
-                                      class="card-action-btn primary" 
+                                    <button
+                                      class="card-action-btn primary"
                                       title="Open file"
                                       onclick={(e) => handleOpenFile(e, subItem.filePath)}
                                     >
@@ -304,10 +298,10 @@
                   <!-- Single Item Card -->
                   {@const singleItem = item as HistoryItem}
                   <!-- svelte-ignore a11y_no_static_element_interactions -->
-                  <div 
+                  <div
                     class="grid-card"
-                    onmouseenter={() => hoveredItemId = singleItem.id}
-                    onmouseleave={() => hoveredItemId = null}
+                    onmouseenter={() => (hoveredItemId = singleItem.id)}
+                    onmouseleave={() => (hoveredItemId = null)}
                   >
                     <div class="card-thumbnail">
                       {#if singleItem.thumbnail}
@@ -317,39 +311,39 @@
                           <Icon name={getTypeIcon(singleItem.type)} size={32} />
                         </div>
                       {/if}
-                      
+
                       {#if singleItem.duration > 0}
                         <span class="duration-badge">{formatDuration(singleItem.duration)}</span>
                       {/if}
-                      
+
                       <span class="type-badge">{singleItem.extension.toUpperCase()}</span>
-                      
+
                       {#if hoveredItemId === singleItem.id}
                         <div class="card-overlay">
                           <div class="card-actions">
-                            <button 
-                              class="card-action-btn primary" 
+                            <button
+                              class="card-action-btn primary"
                               title="Open file"
                               onclick={(e) => handleOpenFile(e, singleItem.filePath)}
                             >
                               <Icon name="folder" size={20} />
                             </button>
-                            <button 
-                              class="card-action-btn" 
+                            <button
+                              class="card-action-btn"
                               title="Download again"
                               onclick={(e) => handleRedownload(e, singleItem.url)}
                             >
                               <Icon name="download" size={18} />
                             </button>
-                            <button 
-                              class="card-action-btn" 
+                            <button
+                              class="card-action-btn"
                               title="Open link"
                               onclick={(e) => handleOpenLink(e, singleItem.url)}
                             >
                               <Icon name="link" size={18} />
                             </button>
-                            <button 
-                              class="card-action-btn delete" 
+                            <button
+                              class="card-action-btn delete"
                               title="Delete"
                               onclick={(e) => handleDelete(e, singleItem.id)}
                             >
@@ -359,7 +353,7 @@
                         </div>
                       {/if}
                     </div>
-                    
+
                     <div class="card-info">
                       <span class="card-title">{singleItem.title}</span>
                       <span class="card-author">{singleItem.author}</span>
@@ -379,7 +373,7 @@
                 <div class="playlist-group" class:expanded={isExpanded}>
                   <!-- svelte-ignore a11y_no_static_element_interactions -->
                   <!-- svelte-ignore a11y_click_events_have_key_events -->
-                  <div 
+                  <div
                     class="playlist-row"
                     onclick={() => togglePlaylistExpanded(playlistGroup.playlistId)}
                   >
@@ -394,51 +388,58 @@
                         </div>
                       {/if}
                     </div>
-                    
+
                     <!-- Metadata -->
                     <div class="col-metadata">
-                      <span class="item-title playlist-title-text">{playlistGroup.playlistTitle}</span>
-                      <span class="item-author">{playlistGroup.items.length} items from playlist</span>
+                      <span class="item-title playlist-title-text"
+                        >{playlistGroup.playlistTitle}</span
+                      >
+                      <span class="item-author"
+                        >{playlistGroup.items.length} items from playlist</span
+                      >
                     </div>
-                    
+
                     <!-- Expand button -->
                     <div class="col-expand">
                       <Icon name={isExpanded ? 'chevron_up' : 'chevron_down'} size={18} />
                     </div>
-                    
+
                     <!-- Extension (mixed) -->
                     <div class="col-ext">
                       <span class="ext-badge">PLAYLIST</span>
                     </div>
-                    
+
                     <!-- Total Size -->
                     <div class="col-size">
                       {formatFileSize(playlistGroup.totalSize)}
                     </div>
-                    
+
                     <!-- Total Length -->
                     <div class="col-length">
                       {formatDuration(playlistGroup.totalDuration)}
                     </div>
-                    
+
                     <!-- Open folder (first item) -->
-                    <button 
-                      class="open-file-btn" 
+                    <button
+                      class="open-file-btn"
                       title="Open folder"
-                      onclick={(e) => { e.stopPropagation(); handleOpenFile(e, playlistGroup.items[0]?.filePath); }}
+                      onclick={(e) => {
+                        e.stopPropagation();
+                        handleOpenFile(e, playlistGroup.items[0]?.filePath);
+                      }}
                     >
                       <Icon name="folder" size={16} />
                     </button>
                   </div>
-                  
+
                   {#if isExpanded}
                     <div class="playlist-children">
                       {#each playlistGroup.items as subItem (subItem.id)}
                         <!-- svelte-ignore a11y_no_static_element_interactions -->
-                        <div 
+                        <div
                           class="history-item nested"
-                          onmouseenter={() => hoveredItemId = subItem.id}
-                          onmouseleave={() => hoveredItemId = null}
+                          onmouseenter={() => (hoveredItemId = subItem.id)}
+                          onmouseleave={() => (hoveredItemId = null)}
                         >
                           <div class="col-thumb">
                             {#if subItem.thumbnail}
@@ -449,17 +450,17 @@
                               </div>
                             {/if}
                           </div>
-                          
+
                           <div class="col-metadata">
                             <span class="item-title">{subItem.title}</span>
                             <span class="item-author">{subItem.author}</span>
                           </div>
-                          
+
                           <div class="col-actions">
                             {#if hoveredItemId === subItem.id}
                               <div class="action-buttons">
-                                <button 
-                                  class="action-btn" 
+                                <button
+                                  class="action-btn"
                                   title="Download again"
                                   onclick={(e) => handleRedownload(e, subItem.url)}
                                 >
@@ -467,15 +468,15 @@
                                 </button>
                               </div>
                               <div class="action-buttons secondary">
-                                <button 
-                                  class="action-btn" 
+                                <button
+                                  class="action-btn"
                                   title="Open original link"
                                   onclick={(e) => handleOpenLink(e, subItem.url)}
                                 >
                                   <Icon name="link" size={16} />
                                 </button>
-                                <button 
-                                  class="action-btn delete" 
+                                <button
+                                  class="action-btn delete"
                                   title="Delete from history"
                                   onclick={(e) => handleDelete(e, subItem.id)}
                                 >
@@ -484,21 +485,21 @@
                               </div>
                             {/if}
                           </div>
-                          
+
                           <div class="col-ext">
                             <span class="ext-badge">{subItem.extension.toUpperCase()}</span>
                           </div>
-                          
+
                           <div class="col-size">
                             {formatFileSize(subItem.size)}
                           </div>
-                          
+
                           <div class="col-length">
                             {formatDuration(subItem.duration)}
                           </div>
-                          
-                          <button 
-                            class="open-file-btn" 
+
+                          <button
+                            class="open-file-btn"
                             title="Open file location"
                             onclick={(e) => handleOpenFile(e, subItem.filePath)}
                           >
@@ -513,10 +514,10 @@
                 <!-- Single Item Row -->
                 {@const singleItem = item as HistoryItem}
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
-                <div 
+                <div
                   class="history-item"
-                  onmouseenter={() => hoveredItemId = singleItem.id}
-                  onmouseleave={() => hoveredItemId = null}
+                  onmouseenter={() => (hoveredItemId = singleItem.id)}
+                  onmouseleave={() => (hoveredItemId = null)}
                 >
                   <div class="col-thumb">
                     {#if singleItem.thumbnail}
@@ -527,17 +528,17 @@
                       </div>
                     {/if}
                   </div>
-                  
+
                   <div class="col-metadata">
                     <span class="item-title">{singleItem.title}</span>
                     <span class="item-author">{singleItem.author}</span>
                   </div>
-                  
+
                   <div class="col-actions">
                     {#if hoveredItemId === singleItem.id}
                       <div class="action-buttons">
-                        <button 
-                          class="action-btn" 
+                        <button
+                          class="action-btn"
                           title="Download again"
                           onclick={(e) => handleRedownload(e, singleItem.url)}
                         >
@@ -548,15 +549,15 @@
                         </button>
                       </div>
                       <div class="action-buttons secondary">
-                        <button 
-                          class="action-btn" 
+                        <button
+                          class="action-btn"
                           title="Open original link"
                           onclick={(e) => handleOpenLink(e, singleItem.url)}
                         >
                           <Icon name="link" size={16} />
                         </button>
-                        <button 
-                          class="action-btn delete" 
+                        <button
+                          class="action-btn delete"
                           title="Delete from history"
                           onclick={(e) => handleDelete(e, singleItem.id)}
                         >
@@ -565,21 +566,21 @@
                       </div>
                     {/if}
                   </div>
-                  
+
                   <div class="col-ext">
                     <span class="ext-badge">{singleItem.extension.toUpperCase()}</span>
                   </div>
-                  
+
                   <div class="col-size">
                     {formatFileSize(singleItem.size)}
                   </div>
-                  
+
                   <div class="col-length">
                     {formatDuration(singleItem.duration)}
                   </div>
-                  
-                  <button 
-                    class="open-file-btn" 
+
+                  <button
+                    class="open-file-btn"
                     title="Open file location"
                     onclick={(e) => handleOpenFile(e, singleItem.filePath)}
                   >
@@ -591,7 +592,7 @@
           {/if}
         </div>
       {/each}
-      
+
       <p class="end-message">That's everything you downloaded so far!</p>
     {/if}
   </div>
@@ -631,12 +632,12 @@
     border-radius: 10px;
     margin-bottom: 16px;
   }
-  
+
   .search-bar :global(svg) {
     color: rgba(255, 255, 255, 0.4);
     flex-shrink: 0;
   }
-  
+
   .search-bar input {
     flex: 1;
     background: transparent;
@@ -645,7 +646,7 @@
     font-size: 14px;
     outline: none;
   }
-  
+
   .search-bar input::placeholder {
     color: rgba(255, 255, 255, 0.4);
   }
@@ -985,8 +986,12 @@
   }
 
   @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
   }
 
   .card-actions {

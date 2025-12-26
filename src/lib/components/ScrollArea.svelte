@@ -7,46 +7,44 @@
     maskSize?: number;
   }
 
-  let { 
-    children, 
-    class: className = '',
-    maskSize = 25
-  }: Props = $props();
+  let { children, class: className = '', maskSize = 25 }: Props = $props();
 
   let scrollContainer: HTMLDivElement;
   let maskStyle = $state('');
 
   function updateScrollState() {
     if (!scrollContainer) return;
-    
+
     const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
     const maxScroll = scrollHeight - clientHeight;
-    
+
     if (maxScroll <= 0) {
-      // No scrolling needed, no mask
       maskStyle = '';
       return;
     }
-    
+
     const topProgress = Math.min(scrollTop / maskSize, 1);
     const bottomProgress = Math.min((maxScroll - scrollTop) / maskSize, 1);
-    
-    // Create gradient mask: fade at top if scrolled, fade at bottom if more content
-    const topFade = topProgress > 0 ? `transparent, black ${maskSize * topProgress}px` : 'black, black 0px';
-    const bottomFade = bottomProgress > 0 ? `black calc(100% - ${maskSize * bottomProgress}px), transparent` : 'black 100%, black 100%';
-    
+
+    const topFade =
+      topProgress > 0 ? `transparent, black ${maskSize * topProgress}px` : 'black, black 0px';
+    const bottomFade =
+      bottomProgress > 0
+        ? `black calc(100% - ${maskSize * bottomProgress}px), transparent`
+        : 'black 100%, black 100%';
+
     maskStyle = `mask-image: linear-gradient(to bottom, ${topFade}, ${bottomFade}); -webkit-mask-image: linear-gradient(to bottom, ${topFade}, ${bottomFade});`;
   }
 
   onMount(() => {
     setTimeout(updateScrollState, 100);
-    
+
     const resizeObserver = new ResizeObserver(() => {
       updateScrollState();
     });
-    
+
     resizeObserver.observe(scrollContainer);
-    
+
     return () => {
       resizeObserver.disconnect();
     };
@@ -54,7 +52,7 @@
 </script>
 
 <div class="scroll-area-wrapper {className}">
-  <div 
+  <div
     class="scroll-area"
     bind:this={scrollContainer}
     onscroll={updateScrollState}

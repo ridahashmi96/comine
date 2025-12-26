@@ -24,14 +24,11 @@ export function portal(node: HTMLElement, target: HTMLElement | string = 'body')
   return {
     update,
     destroy() {
-      // Remove node from its current parent (which is the portal target)
       try {
         if (node && node.parentNode) {
           node.parentNode.removeChild(node);
         }
-      } catch (e) {
-        // Ignore errors during cleanup - element may already be removed
-      }
-    }
+      } catch (e) {}
+    },
   };
 }

@@ -11,23 +11,18 @@
     iconRight?: any;
   }
 
-  let { 
-    variant = 'primary', 
-    size = 'md', 
+  let {
+    variant = 'primary',
+    size = 'md',
     disabled = false,
     onclick,
     children,
     iconLeft,
-    iconRight
+    iconRight,
   }: Props = $props();
 </script>
 
-<button 
-  class="btn {variant} {size}" 
-  {disabled}
-  onclick={onclick}
-  use:spotlight
->
+<button class="btn {variant} {size}" {disabled} {onclick} use:spotlight>
   {#if iconLeft}
     <span class="icon-left">
       {@render iconLeft()}
@@ -64,7 +59,7 @@
   }
 
   .primary {
-    background: var(--accent, #6366F1);
+    background: var(--accent, #6366f1);
     color: white;
   }
 

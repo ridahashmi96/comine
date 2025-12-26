@@ -4,8 +4,18 @@
   import { invoke } from '@tauri-apps/api/core';
   import { portal } from '$lib/actions/portal';
   import { t } from '$lib/i18n';
-  import { settings, type VideoQuality, type DownloadMode, type AudioQuality, getProxyConfig } from '$lib/stores/settings';
-  import { isAndroid, getPlaylistInfoOnAndroid, type PlaylistInfo as AndroidPlaylistInfo } from '$lib/utils/android';
+  import {
+    settings,
+    type VideoQuality,
+    type DownloadMode,
+    type AudioQuality,
+    getProxyConfig,
+  } from '$lib/stores/settings';
+  import {
+    isAndroid,
+    getPlaylistInfoOnAndroid,
+    type PlaylistInfo as AndroidPlaylistInfo,
+  } from '$lib/utils/android';
   import Icon from './Icon.svelte';
   import Checkbox from './Checkbox.svelte';
   import Select from './Select.svelte';
@@ -45,7 +55,10 @@
     customCookies?: string;
     defaultDownloadMode?: DownloadMode;
     onclose?: () => void;
-    ondownload?: (entries: SelectedEntry[], playlistInfo: { id: string; title: string; usePlaylistFolder: boolean }) => void;
+    ondownload?: (
+      entries: SelectedEntry[],
+      playlistInfo: { id: string; title: string; usePlaylistFolder: boolean }
+    ) => void;
   }
 
   export interface SelectedEntry {
@@ -53,69 +66,57 @@
     settings: EntrySettings;
   }
 
-  let { 
+  let {
     open = $bindable(false),
     url = '',
     cookiesFromBrowser = '',
     customCookies = '',
     defaultDownloadMode = 'auto',
     onclose,
-    ondownload
+    ondownload,
   }: Props = $props();
 
-  // Playlist data
   let playlistInfo = $state<PlaylistInfo | null>(null);
   let loading = $state(false);
   let loadingMore = $state(false);
   let loadingAll = $state(false);
   let loadingStatus = $state<string>('');
   let error = $state<string | null>(null);
-  
-  // Selection state - use array for better Svelte reactivity with Set operations
+
   let selectedIdsArray = $state<string[]>([]);
   let selectedIds = $derived(new Set(selectedIdsArray));
   let perItemSettings = $state<Map<string, EntrySettings>>(new Map());
-  
-  // Search
+
   let searchQuery = $state('');
-  
-  // Download order
+
   type DownloadOrder = 'queue' | 'reverse' | 'shuffle';
   let downloadOrder = $state<DownloadOrder>('queue');
-  
-  // Playlist folder option (initialized from settings, can be overridden per-download)
+
   let usePlaylistFolder = $state(true);
-  
-  // Global settings (defaults from props or settings store)
+
   let globalVideoQuality = $state<VideoQuality>($settings.defaultVideoQuality ?? 'max');
-  // Reactive initial download mode from prop
   let globalDownloadMode = $derived(defaultDownloadMode ?? $settings.defaultDownloadMode ?? 'auto');
-  // Mutable override for when user changes in modal
   let downloadModeOverride = $state<DownloadMode | null>(null);
   let effectiveDownloadMode = $derived(downloadModeOverride ?? globalDownloadMode);
-  
-  // Infinite scroll (bind: refs don't need $state)
+
   let scrollContainer: HTMLDivElement;
   let sentinel: HTMLDivElement;
-  
-  // Filtered entries based on search
+
   let filteredEntries = $derived(
-    playlistInfo?.entries.filter(e => 
-      !searchQuery || 
-      e.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      e.uploader?.toLowerCase().includes(searchQuery.toLowerCase())
+    playlistInfo?.entries.filter(
+      (e) =>
+        !searchQuery ||
+        e.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        e.uploader?.toLowerCase().includes(searchQuery.toLowerCase())
     ) ?? []
   );
-  
-  // Selection counts
+
   let selectedCount = $derived(selectedIds.size);
   let allSelected = $derived(
-    filteredEntries.length > 0 && 
-    filteredEntries.every(e => selectedIds.has(e.id))
+    filteredEntries.length > 0 && filteredEntries.every((e) => selectedIds.has(e.id))
   );
   let someSelected = $derived(selectedCount > 0 && !allSelected);
 
-  // Reset override when modal opens with new URL
   $effect(() => {
     if (open && url) {
       downloadModeOverride = null;
@@ -124,10 +125,9 @@
     }
   });
 
-  // Setup intersection observer for infinite scroll
   $effect(() => {
     if (!sentinel || !playlistInfo?.has_more) return;
-    
+
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting && !loadingMore && playlistInfo?.has_more) {
@@ -136,7 +136,7 @@
       },
       { rootMargin: '200px' }
     );
-    
+
     observer.observe(sentinel);
     return () => observer.disconnect();
   });
@@ -148,34 +148,37 @@
     selectedIdsArray = [];
     perItemSettings = new Map();
     loadingStatus = $t('playlist.loading');
-    
+
     try {
       let info: PlaylistInfo;
-      
+
       if (isAndroid()) {
-        // Android: Use native bridge - returns all entries at once
         loadingStatus = $t('playlist.fetchingEntries');
-        info = await getPlaylistInfoOnAndroid(url) as PlaylistInfo;
+        info = (await getPlaylistInfoOnAndroid(url)) as PlaylistInfo;
       } else {
-        // Desktop: Use Rust backend - fetch entries in batches
-        // Fetch first batch quickly, then load more in background
         loadingStatus = $t('playlist.fetchingInfo');
         console.log('[PlaylistModal] Invoking get_playlist_info...');
         info = await invoke<PlaylistInfo>('get_playlist_info', {
           url,
           offset: 0,
-          limit: 100, // Smaller initial batch for faster response
+          limit: 100,
           cookiesFromBrowser: cookiesFromBrowser || null,
           customCookies: customCookies || null,
-          proxyConfig: getProxyConfig()
+          proxyConfig: getProxyConfig(),
         });
-        console.log('[PlaylistModal] First batch returned, entries:', info?.entries?.length, 'has_more:', info?.has_more);
-        
-        // Load remaining entries if there are more
+        console.log(
+          '[PlaylistModal] First batch returned, entries:',
+          info?.entries?.length,
+          'has_more:',
+          info?.has_more
+        );
+
         while (info.has_more && info.total_count > 0) {
           const currentOffset = info.entries.length;
-          loadingStatus = $t('playlist.loadingEntries').replace('{loaded}', String(currentOffset)).replace('{total}', String(info.total_count));
-          
+          loadingStatus = $t('playlist.loadingEntries')
+            .replace('{loaded}', String(currentOffset))
+            .replace('{total}', String(info.total_count));
+
           console.log('[PlaylistModal] Fetching more entries at offset:', currentOffset);
           const moreInfo = await invoke<PlaylistInfo>('get_playlist_info', {
             url,
@@ -183,40 +186,42 @@
             limit: 100,
             cookiesFromBrowser: cookiesFromBrowser || null,
             customCookies: customCookies || null,
-            proxyConfig: getProxyConfig()
+            proxyConfig: getProxyConfig(),
           });
-          console.log('[PlaylistModal] Got more entries:', moreInfo?.entries?.length, 'has_more:', moreInfo?.has_more);
-          
+          console.log(
+            '[PlaylistModal] Got more entries:',
+            moreInfo?.entries?.length,
+            'has_more:',
+            moreInfo?.has_more
+          );
+
           info = {
             ...info,
             entries: [...info.entries, ...moreInfo.entries],
-            has_more: moreInfo.has_more
+            has_more: moreInfo.has_more,
           };
         }
         console.log('[PlaylistModal] Loop complete, total entries:', info.entries.length);
       }
-      
+
       playlistInfo = info;
       console.log('[PlaylistModal] Loaded playlist with', info.entries.length, 'entries');
-      
-      // Auto-select all entries initially
-      selectedIdsArray = info.entries.map(e => e.id);
+
+      selectedIdsArray = info.entries.map((e) => e.id);
       console.log('[PlaylistModal] Selected', selectedIdsArray.length, 'entries');
-      
-      // Set suggested mode for music entries
+
       const newSettings = new Map<string, EntrySettings>();
-      info.entries.forEach(e => {
+      info.entries.forEach((e) => {
         if (e.is_music) {
           newSettings.set(e.id, {
             videoQuality: globalVideoQuality,
-            downloadMode: 'audio'
+            downloadMode: 'audio',
           });
         }
       });
       perItemSettings = newSettings;
       console.log('[PlaylistModal] Set per-item settings for', newSettings.size, 'music entries');
       console.log('[PlaylistModal] SUCCESS - About to set loading=false');
-      
     } catch (e) {
       console.error('[PlaylistModal] ERROR:', e);
       error = String(e);
@@ -228,44 +233,39 @@
   }
 
   async function loadMoreEntries() {
-    // On Android, we get all entries at once, so no need to load more
     if (isAndroid()) return;
-    
+
     if (!playlistInfo || loadingMore || !playlistInfo.has_more) return;
-    
+
     loadingMore = true;
-    
+
     try {
       const info = await invoke<PlaylistInfo>('get_playlist_info', {
         url,
         offset: playlistInfo.entries.length,
-        limit: 200, // Load in larger batches
+        limit: 200,
         cookiesFromBrowser: cookiesFromBrowser || null,
         customCookies: customCookies || null,
-        proxyConfig: getProxyConfig()
+        proxyConfig: getProxyConfig(),
       });
-      
-      // Merge new entries
+
       playlistInfo = {
         ...playlistInfo,
         entries: [...playlistInfo.entries, ...info.entries],
-        has_more: info.has_more
+        has_more: info.has_more,
       };
-      
-      // Auto-select new entries too
-      selectedIdsArray = [...selectedIdsArray, ...info.entries.map(e => e.id)];
-      
-      // Set suggested mode for music entries
-      info.entries.forEach(e => {
+
+      selectedIdsArray = [...selectedIdsArray, ...info.entries.map((e) => e.id)];
+
+      info.entries.forEach((e) => {
         if (e.is_music && !perItemSettings.has(e.id)) {
           perItemSettings.set(e.id, {
             videoQuality: globalVideoQuality,
-            downloadMode: 'audio'
+            downloadMode: 'audio',
           });
         }
       });
       perItemSettings = perItemSettings;
-      
     } catch (e) {
       console.error('Failed to load more entries:', e);
     } finally {
@@ -274,7 +274,6 @@
   }
 
   async function toggleSelectAll() {
-    // If there are more entries to load and we're selecting all, load them first
     if (!allSelected && playlistInfo?.has_more && !loadingAll) {
       loadingAll = true;
       try {
@@ -285,38 +284,38 @@
         loadingAll = false;
       }
     }
-    
+
     if (allSelected) {
-      // Deselect all filtered
-      const filteredIds = new Set(filteredEntries.map(e => e.id));
-      selectedIdsArray = selectedIdsArray.filter(id => !filteredIds.has(id));
+      const filteredIds = new Set(filteredEntries.map((e) => e.id));
+      selectedIdsArray = selectedIdsArray.filter((id) => !filteredIds.has(id));
     } else {
-      // Select all filtered (now includes all loaded entries)
       const currentSet = new Set(selectedIdsArray);
-      const newIds = filteredEntries.filter(e => !currentSet.has(e.id)).map(e => e.id);
+      const newIds = filteredEntries.filter((e) => !currentSet.has(e.id)).map((e) => e.id);
       selectedIdsArray = [...selectedIdsArray, ...newIds];
     }
   }
 
   function toggleEntry(id: string) {
     if (selectedIds.has(id)) {
-      selectedIdsArray = selectedIdsArray.filter(i => i !== id);
+      selectedIdsArray = selectedIdsArray.filter((i) => i !== id);
     } else {
       selectedIdsArray = [...selectedIdsArray, id];
     }
   }
 
   function getEntrySettings(entry: PlaylistEntry): EntrySettings {
-    return perItemSettings.get(entry.id) ?? {
-      videoQuality: globalVideoQuality,
-      downloadMode: entry.is_music ? 'audio' : effectiveDownloadMode
-    };
+    return (
+      perItemSettings.get(entry.id) ?? {
+        videoQuality: globalVideoQuality,
+        downloadMode: entry.is_music ? 'audio' : effectiveDownloadMode,
+      }
+    );
   }
 
   function setEntrySettings(id: string, settings: Partial<EntrySettings>) {
     const current = perItemSettings.get(id) ?? {
       videoQuality: globalVideoQuality,
-      downloadMode: effectiveDownloadMode
+      downloadMode: effectiveDownloadMode,
     };
     perItemSettings.set(id, { ...current, ...settings });
     perItemSettings = perItemSettings;
@@ -336,16 +335,14 @@
 
   function handleDownload() {
     if (!playlistInfo) return;
-    
-    // Get selected entries with their settings
+
     let entries = playlistInfo.entries
-      .filter(e => selectedIds.has(e.id))
-      .map(e => ({
+      .filter((e) => selectedIds.has(e.id))
+      .map((e) => ({
         entry: e,
-        settings: getEntrySettings(e)
+        settings: getEntrySettings(e),
       }));
-    
-    // Apply download order
+
     switch (downloadOrder) {
       case 'reverse':
         entries = entries.reverse();
@@ -353,13 +350,12 @@
       case 'shuffle':
         entries = entries.sort(() => Math.random() - 0.5);
         break;
-      // 'queue' - keep original order
     }
-    
+
     ondownload?.(entries, {
       id: playlistInfo?.id ?? '',
       title: playlistInfo?.title ?? 'Playlist',
-      usePlaylistFolder
+      usePlaylistFolder,
     });
     close();
   }
@@ -377,7 +373,6 @@
     if (e.target === e.currentTarget) close();
   }
 
-  // Quality/mode options for selects
   const videoQualityOptions = [
     { value: 'max', label: $t('download.quality.max') },
     { value: '4k', label: '4K' },
@@ -386,13 +381,13 @@
     { value: '720p', label: '720p' },
     { value: '480p', label: '480p' },
   ];
-  
+
   const downloadModeOptions = [
     { value: 'auto', label: $t('download.mode.auto') },
     { value: 'audio', label: $t('download.mode.audio') },
     { value: 'mute', label: $t('download.mode.mute') },
   ];
-  
+
   const downloadOrderOptions = [
     { value: 'queue', label: $t('playlist.order.queue') },
     { value: 'reverse', label: $t('playlist.order.reverse') },
@@ -405,8 +400,8 @@
 {#if open}
   <div use:portal>
     <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <div 
-      class="modal-backdrop" 
+    <div
+      class="modal-backdrop"
       transition:fade={{ duration: 150 }}
       onclick={handleBackdropClick}
       onkeydown={handleKeydown}
@@ -422,7 +417,7 @@
             <Icon name="close" size={16} />
           </button>
         </div>
-        
+
         {#if loading}
           <div class="loading-state">
             <div class="spinner"></div>
@@ -457,25 +452,25 @@
               </p>
             </div>
           </div>
-          
+
           <!-- Controls Bar -->
           <div class="controls-bar">
             <!-- Search -->
             <div class="search-wrapper">
               <Icon name="search" size={16} />
-              <input 
-                type="text" 
+              <input
+                type="text"
                 bind:value={searchQuery}
                 placeholder={$t('playlist.search')}
                 class="search-input"
               />
               {#if searchQuery}
-                <button class="search-clear" onclick={() => searchQuery = ''}>
+                <button class="search-clear" onclick={() => (searchQuery = '')}>
                   <Icon name="close" size={14} />
                 </button>
               {/if}
             </div>
-            
+
             <!-- Select All -->
             <button class="select-all-btn" onclick={toggleSelectAll} disabled={loadingAll}>
               {#if loadingAll}
@@ -483,44 +478,41 @@
                 <span>{$t('playlist.loadingAll')}</span>
               {:else}
                 <Checkbox checked={allSelected} disabled />
-                <span>{allSelected ? $t('playlist.deselectAll') : $t('playlist.selectAll')} ({playlistInfo?.total_count ?? 0})</span>
+                <span
+                  >{allSelected ? $t('playlist.deselectAll') : $t('playlist.selectAll')} ({playlistInfo?.total_count ??
+                    0})</span
+                >
               {/if}
             </button>
           </div>
-          
+
           <!-- Global Settings -->
           <div class="global-settings">
             <div class="setting-item">
               <span class="setting-label">{$t('download.options.videoQuality')}</span>
-              <Select
-                bind:value={globalVideoQuality}
-                options={videoQualityOptions}
-              />
+              <Select bind:value={globalVideoQuality} options={videoQualityOptions} />
             </div>
             <div class="setting-item">
               <span class="setting-label">{$t('download.options.downloadMode')}</span>
               <Select
                 value={effectiveDownloadMode}
                 options={downloadModeOptions}
-                onchange={(val) => downloadModeOverride = val as DownloadMode}
+                onchange={(val) => (downloadModeOverride = val as DownloadMode)}
               />
             </div>
             <div class="setting-item">
               <span class="setting-label">{$t('playlist.downloadOrder')}</span>
-              <Select
-                bind:value={downloadOrder}
-                options={downloadOrderOptions}
-              />
+              <Select bind:value={downloadOrder} options={downloadOrderOptions} />
             </div>
             <div class="setting-item checkbox-setting">
-              <Checkbox 
-                checked={usePlaylistFolder} 
-                label={$t('playlist.createFolder')} 
-                onchange={(v: boolean) => usePlaylistFolder = v}
+              <Checkbox
+                checked={usePlaylistFolder}
+                label={$t('playlist.createFolder')}
+                onchange={(v: boolean) => (usePlaylistFolder = v)}
               />
             </div>
           </div>
-          
+
           <!-- Entries List -->
           <div class="entries-container" bind:this={scrollContainer}>
             {#if filteredEntries.length === 0}
@@ -536,7 +528,7 @@
                   <button class="entry-select" onclick={() => toggleEntry(entry.id)}>
                     <Checkbox checked={isSelected} />
                   </button>
-                  
+
                   <div class="entry-thumb-wrapper">
                     {#if entry.thumbnail}
                       <img src={entry.thumbnail} alt="" class="entry-thumb" />
@@ -547,7 +539,7 @@
                     {/if}
                     <span class="entry-duration">{formatDuration(entry.duration)}</span>
                   </div>
-                  
+
                   <div class="entry-info">
                     <p class="entry-title" title={entry.title}>{entry.title}</p>
                     <p class="entry-author">{entry.uploader ?? ''}</p>
@@ -558,7 +550,7 @@
                       </span>
                     {/if}
                   </div>
-                  
+
                   <!-- Per-item settings (compact) -->
                   <div class="entry-settings">
                     <Select
@@ -566,15 +558,16 @@
                       options={[
                         { value: 'auto', label: $t('download.mode.auto') },
                         { value: 'audio', label: $t('download.mode.audio') },
-                        { value: 'mute', label: $t('download.mode.mute') }
+                        { value: 'mute', label: $t('download.mode.mute') },
                       ]}
                       disabled={!isSelected}
-                      onchange={(val) => setEntrySettings(entry.id, { downloadMode: val as DownloadMode })}
+                      onchange={(val) =>
+                        setEntrySettings(entry.id, { downloadMode: val as DownloadMode })}
                     />
                   </div>
                 </div>
               {/each}
-              
+
               <!-- Infinite scroll sentinel -->
               {#if playlistInfo.has_more}
                 <div class="load-more-sentinel" bind:this={sentinel}>
@@ -588,17 +581,13 @@
               {/if}
             {/if}
           </div>
-          
+
           <!-- Footer Actions -->
           <div class="modal-footer">
             <button class="btn secondary" onclick={close}>
               {$t('common.cancel')}
             </button>
-            <button 
-              class="btn primary" 
-              onclick={handleDownload}
-              disabled={selectedCount === 0}
-            >
+            <button class="btn primary" onclick={handleDownload} disabled={selectedCount === 0}>
               <Icon name="download" size={16} />
               {$t('playlist.downloadSelected')} ({selectedCount})
             </button>
@@ -672,7 +661,8 @@
   }
 
   /* Loading & Error States */
-  .loading-state, .error-state {
+  .loading-state,
+  .error-state {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -686,7 +676,7 @@
     width: 32px;
     height: 32px;
     border: 3px solid rgba(255, 255, 255, 0.1);
-    border-top-color: var(--accent, #6366F1);
+    border-top-color: var(--accent, #6366f1);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }
@@ -698,12 +688,14 @@
   }
 
   @keyframes spin {
-    to { transform: rotate(360deg); }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .retry-btn {
     padding: 8px 16px;
-    background: var(--accent, #6366F1);
+    background: var(--accent, #6366f1);
     border: none;
     border-radius: 8px;
     color: white;
@@ -837,7 +829,7 @@
   .select-all-btn:hover:not(:disabled) {
     background: rgba(255, 255, 255, 0.08);
   }
-  
+
   .select-all-btn:disabled {
     opacity: 0.7;
     cursor: wait;
@@ -986,7 +978,7 @@
     background: rgba(99, 102, 241, 0.2);
     border-radius: 4px;
     font-size: 10px;
-    color: var(--accent, #6366F1);
+    color: var(--accent, #6366f1);
   }
 
   .entry-settings {
@@ -1052,7 +1044,7 @@
   }
 
   .btn.primary {
-    background: var(--accent, #6366F1);
+    background: var(--accent, #6366f1);
     color: white;
   }
 

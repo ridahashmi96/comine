@@ -9,14 +9,14 @@
     iconRight?: any;
   }
 
-  let { 
+  let {
     value = $bindable(''),
     placeholder = '',
     type = 'text',
     disabled = false,
     oninput,
     iconLeft,
-    iconRight
+    iconRight,
   }: Props = $props();
 </script>
 
@@ -26,7 +26,7 @@
       {@render iconLeft()}
     </span>
   {/if}
-  <input 
+  <input
     class="input"
     class:has-icon-left={iconLeft}
     class:has-icon-right={iconRight}
@@ -34,7 +34,7 @@
     {type}
     {placeholder}
     {disabled}
-    oninput={oninput}
+    {oninput}
   />
   {#if iconRight}
     <span class="icon-right">
@@ -57,7 +57,7 @@
     font-family: inherit;
     font-size: 14px;
     background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.0);
+    border: 1px solid rgba(255, 255, 255, 0);
     border-radius: 8px;
     color: white;
     outline: none;

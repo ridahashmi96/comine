@@ -33,17 +33,6 @@ android {
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
     }
     
-    // Split APKs by architecture for smaller downloads (release only)
-    // Disabled: causes APK naming issues with Tauri dev command
-    // splits {
-    //     abi {
-    //         isEnable = true
-    //         reset()
-    //         include("arm64-v8a", "armeabi-v7a", "x86_64")
-    //         isUniversalApk = true
-    //     }
-    // }
-    
     signingConfigs {
         create("release") {
             // Use keystore.properties if available (CI), otherwise skip signing
@@ -77,7 +66,8 @@ android {
             isDebuggable = true
             isJniDebuggable = true
             isMinifyEnabled = false
-            packaging {                jniLibs.keepDebugSymbols.add("*/arm64-v8a/*.so")
+            packaging {                
+                jniLibs.keepDebugSymbols.add("*/arm64-v8a/*.so")
                 jniLibs.keepDebugSymbols.add("*/armeabi-v7a/*.so")
                 jniLibs.keepDebugSymbols.add("*/x86/*.so")
                 jniLibs.keepDebugSymbols.add("*/x86_64/*.so")

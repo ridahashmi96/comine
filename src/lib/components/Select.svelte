@@ -15,12 +15,12 @@
     onchange?: (value: string) => void;
   }
 
-  let { 
+  let {
     value = $bindable(''),
     options = [],
     placeholder = 'Select...',
     disabled = false,
-    onchange
+    onchange,
   }: Props = $props();
 
   let isOpen = $state(false);
@@ -28,9 +28,7 @@
   let dropdownStyle = $state('');
   let scrollParent: HTMLElement | null = null;
 
-  const selectedLabel = $derived(
-    options.find(o => o.value === value)?.label ?? placeholder
-  );
+  const selectedLabel = $derived(options.find((o) => o.value === value)?.label ?? placeholder);
 
   function toggle() {
     if (disabled) return;
@@ -46,33 +44,29 @@
   function positionDropdown() {
     if (!triggerEl) return;
     const rect = triggerEl.getBoundingClientRect();
-    
-    // Check if dropdown would go below viewport
+
     const spaceBelow = window.innerHeight - rect.bottom - 8;
     const spaceAbove = rect.top - 8;
-    const dropdownHeight = Math.min(240, options.length * 42 + 8); // Estimate height
-    
+    const dropdownHeight = Math.min(240, options.length * 42 + 8);
+
     let top: number;
     let maxHeight: number;
-    
+
     if (spaceBelow >= dropdownHeight || spaceBelow >= spaceAbove) {
-      // Position below
       top = rect.bottom + 4;
       maxHeight = Math.min(240, spaceBelow - 4);
     } else {
-      // Position above
       top = rect.top - dropdownHeight - 4;
       maxHeight = Math.min(240, spaceAbove - 4);
     }
-    
-    // Ensure left doesn't go off-screen
+
     let left = rect.left;
     const dropdownWidth = rect.width;
     if (left + dropdownWidth > window.innerWidth - 8) {
       left = window.innerWidth - dropdownWidth - 8;
     }
     if (left < 8) left = 8;
-    
+
     dropdownStyle = `
       top: ${top}px;
       left: ${left}px;
@@ -84,8 +78,12 @@
   function findScrollParent(element: HTMLElement | null): HTMLElement | null {
     if (!element) return null;
     const style = getComputedStyle(element);
-    if (style.overflow === 'auto' || style.overflow === 'scroll' || 
-        style.overflowY === 'auto' || style.overflowY === 'scroll') {
+    if (
+      style.overflow === 'auto' ||
+      style.overflow === 'scroll' ||
+      style.overflowY === 'auto' ||
+      style.overflowY === 'scroll'
+    ) {
       return element;
     }
     return findScrollParent(element.parentElement);
@@ -110,7 +108,6 @@
   }
 
   function handleScroll() {
-    // Close on scroll - simpler and less buggy than trying to follow
     if (isOpen) {
       isOpen = false;
       removeScrollListener();
@@ -141,7 +138,7 @@
 
 <svelte:window onkeydown={handleKeydown} onclick={handleClickOutside} />
 
-<button 
+<button
   bind:this={triggerEl}
   class="select-trigger"
   class:open={isOpen}
@@ -158,7 +155,7 @@
   <div use:portal>
     <div class="select-dropdown" style={dropdownStyle}>
       {#each options as option}
-        <button 
+        <button
           class="select-option"
           class:selected={option.value === value}
           onclick={() => select(option)}
@@ -270,6 +267,6 @@
   }
 
   .select-option.selected :global(svg) {
-    color: var(--accent, #6366F1);
+    color: var(--accent, #6366f1);
   }
 </style>

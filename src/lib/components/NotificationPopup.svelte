@@ -20,16 +20,15 @@
   export function show(notification: NotificationInput): string {
     const id = crypto.randomUUID();
     const notif: Notification = { id, ...notification };
-    
-    notificationsStore.update(n => [...n, notif]);
-    
-    // Auto dismiss after duration (default 8 seconds)
+
+    notificationsStore.update((n) => [...n, notif]);
+
     const duration = notification.duration ?? 8000;
     if (duration > 0) {
       const timeout = setTimeout(() => dismiss(id), duration);
       timeoutsMap.set(id, timeout);
     }
-    
+
     return id;
   }
 
@@ -39,15 +38,15 @@
       clearTimeout(timeout);
       timeoutsMap.delete(id);
     }
-    notificationsStore.update(n => n.filter(notif => notif.id !== id));
+    notificationsStore.update((n) => n.filter((notif) => notif.id !== id));
   }
 
   export function dismissAll() {
-    timeoutsMap.forEach(t => clearTimeout(t));
+    timeoutsMap.forEach((t) => clearTimeout(t));
     timeoutsMap.clear();
     notificationsStore.set([]);
   }
-  
+
   export { notificationsStore };
 </script>
 
@@ -59,7 +58,7 @@
 
   let notifications = $state<Notification[]>([]);
 
-  const unsubscribe = notificationsStore.subscribe(value => {
+  const unsubscribe = notificationsStore.subscribe((value) => {
     notifications = value;
   });
 
@@ -77,15 +76,11 @@
 
 <div class="notification-container">
   {#each notifications as notif (notif.id)}
-    <div 
-      class="notification"
-      in:fly={{ x: 320, duration: 300 }}
-      out:fade={{ duration: 200 }}
-    >
+    <div class="notification" in:fly={{ x: 320, duration: 300 }} out:fade={{ duration: 200 }}>
       <button class="close-btn" onclick={() => dismiss(notif.id)}>
         <Icon name="close" size={14} />
       </button>
-      
+
       <div class="notification-content">
         {#if notif.thumbnail}
           <img src={notif.thumbnail} alt="" class="thumbnail" />
@@ -94,21 +89,19 @@
             <Icon name="download" size={24} />
           </div>
         {/if}
-        
+
         <div class="text-content">
           <h4 class="title">{notif.title}</h4>
           <p class="body">{notif.body}</p>
         </div>
       </div>
-      
+
       {#if notif.onAction}
         <div class="notification-actions">
           <Button size="sm" variant="primary" onclick={() => handleAction(notif)}>
             {notif.actionLabel || 'Download'}
           </Button>
-          <Button size="sm" variant="ghost" onclick={() => dismiss(notif.id)}>
-            Dismiss
-          </Button>
+          <Button size="sm" variant="ghost" onclick={() => dismiss(notif.id)}>Dismiss</Button>
         </div>
       {/if}
     </div>
@@ -134,7 +127,7 @@
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 12px;
     padding: 16px;
-    box-shadow: 
+    box-shadow:
       0 8px 32px rgba(0, 0, 0, 0.4),
       0 2px 8px rgba(0, 0, 0, 0.2);
     pointer-events: all;

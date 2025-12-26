@@ -1,5 +1,3 @@
-// Custom tooltip action - replaces native title with styled tooltip
-
 let tooltipEl: HTMLDivElement | null = null;
 let currentTarget: HTMLElement | null = null;
 let showTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -38,13 +36,12 @@ function isElementInDOM(element: HTMLElement): boolean {
 
 function showTooltip(target: HTMLElement, text: string) {
   if (!text) return;
-  
-  // Check if target element is still in the DOM
+
   if (!isElementInDOM(target)) {
     hideTooltip();
     return;
   }
-  
+
   createTooltip();
   if (!tooltipEl) return;
 
@@ -52,37 +49,29 @@ function showTooltip(target: HTMLElement, text: string) {
   tooltipEl.textContent = text;
 
   const rect = target.getBoundingClientRect();
-  
-  // If element is not visible (at 0,0 with no size), don't show tooltip
+
   if (rect.width === 0 && rect.height === 0) {
     hideTooltip();
     return;
   }
-  
-  // Need to get tooltip dimensions after setting content
-  // Temporarily show it off-screen to measure
+
   tooltipEl.style.visibility = 'hidden';
   tooltipEl.style.opacity = '0';
   tooltipEl.style.top = '-9999px';
   tooltipEl.style.left = '-9999px';
-  
-  // Force a reflow to get accurate dimensions
+
   const tooltipRect = tooltipEl.getBoundingClientRect();
 
-  // Position below by default, above if not enough space
   let top = rect.bottom + 8;
   let left = rect.left + (rect.width - tooltipRect.width) / 2;
 
-  // Keep within viewport vertically
   if (top + tooltipRect.height > window.innerHeight - 8) {
     top = rect.top - tooltipRect.height - 8;
   }
-  // If still not enough space above, position below anyway
   if (top < 8) {
     top = rect.bottom + 8;
   }
-  
-  // Keep within viewport horizontally
+
   if (left < 8) left = 8;
   if (left + tooltipRect.width > window.innerWidth - 8) {
     left = window.innerWidth - tooltipRect.width - 8;
@@ -104,22 +93,19 @@ function hideTooltip() {
 
 export function tooltip(node: HTMLElement, text?: string) {
   let tooltipText = text || node.getAttribute('title') || '';
-  
-  // Remove native title to prevent double tooltip
+
   if (node.hasAttribute('title')) {
     node.removeAttribute('title');
   }
 
   function onEnter() {
-    // Don't show if element is being removed or not visible
     if (!isElementInDOM(node)) return;
-    
+
     if (hideTimeout) {
       clearTimeout(hideTimeout);
       hideTimeout = null;
     }
     showTimeout = setTimeout(() => {
-      // Double-check element is still in DOM when timeout fires
       if (isElementInDOM(node)) {
         showTooltip(node, tooltipText);
       }
@@ -153,10 +139,9 @@ export function tooltip(node: HTMLElement, text?: string) {
       node.removeEventListener('blur', onLeave);
       if (showTimeout) clearTimeout(showTimeout);
       if (hideTimeout) clearTimeout(hideTimeout);
-      // Always hide tooltip when the node is destroyed
       if (currentTarget === node) {
         hideTooltip();
       }
-    }
+    },
   };
 }

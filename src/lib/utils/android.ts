@@ -3,20 +3,23 @@
  * Handles the bridge to the native youtubedl-android library
  */
 
-// Type definitions for the Android JavaScript interface
 interface AndroidYtDlp {
   isReady(): boolean;
   getVersion(): string;
-  getVideoInfo(url: string, callbackName: string): void; // Async with callback
-  getPlaylistInfo(url: string, callbackName: string): void; // Playlist info with entries
-  download(url: string, format: string | null, playlistFolder: string | null, callbackName: string): void;
+  getVideoInfo(url: string, callbackName: string): void;
+  getPlaylistInfo(url: string, callbackName: string): void;
+  download(
+    url: string,
+    format: string | null,
+    playlistFolder: string | null,
+    callbackName: string
+  ): void;
   openFile(filePath: string): boolean;
   openFolder(filePath: string): boolean;
-  pickFile(mimeTypes: string, callbackName: string): void; // File picker
-  processYtmThumbnail(thumbnailUrl: string, callbackName: string): void; // YTM thumbnail cropping
+  pickFile(mimeTypes: string, callbackName: string): void;
+  processYtmThumbnail(thumbnailUrl: string, callbackName: string): void;
 }
 
-// Extend window to include the Android interface
 declare global {
   interface Window {
     AndroidYtDlp?: AndroidYtDlp;
@@ -25,8 +28,11 @@ declare global {
   }
 }
 
-// Log handler type for dependency injection
-type LogHandler = (level: 'trace' | 'debug' | 'info' | 'warn' | 'error', source: string, message: string) => void;
+type LogHandler = (
+  level: 'trace' | 'debug' | 'info' | 'warn' | 'error',
+  source: string,
+  message: string
+) => void;
 let logHandler: LogHandler | null = null;
 
 /**
@@ -36,8 +42,8 @@ export function setupAndroidLogHandler(handler: LogHandler): void {
   logHandler = handler;
   if (typeof window !== 'undefined') {
     window.__androidLog = (level: string, source: string, message: string) => {
-      const validLevel = ['trace', 'debug', 'info', 'warn', 'error'].includes(level) 
-        ? level as 'trace' | 'debug' | 'info' | 'warn' | 'error'
+      const validLevel = ['trace', 'debug', 'info', 'warn', 'error'].includes(level)
+        ? (level as 'trace' | 'debug' | 'info' | 'warn' | 'error')
         : 'debug';
       handler(validLevel, source, message);
     };
@@ -103,7 +109,6 @@ export interface DownloadResult {
   fileSize?: number;
 }
 
-// Counter for generating unique callback names
 let callbackCounter = 0;
 
 /**
@@ -129,8 +134,7 @@ export function downloadOnAndroid(
 
     const callbackName = `ytdlp_cb_${++callbackCounter}`;
     let hasCompleted = false;
-    
-    // Set up timeout to prevent hanging
+
     const timeout = setTimeout(() => {
       if (!hasCompleted) {
         hasCompleted = true;
@@ -138,34 +142,27 @@ export function downloadOnAndroid(
         logHandler?.('error', 'Android', 'Download timeout - no response from Android bridge');
         reject(new Error('Download timeout - no response from Android bridge'));
       }
-    }, 300000); // 5 minute timeout
-    
+    }, 300000);
+
     const cleanup = () => {
       clearTimeout(timeout);
       delete (window as unknown as Record<string, unknown>)[`${callbackName}_progress`];
       delete (window as unknown as Record<string, unknown>)[callbackName];
     };
-    
-    // Track max progress to prevent flickering when yt-dlp switches stages
-    // (e.g., download video -> download audio -> merge)
+
     let maxProgress = 0;
-    
-    // Set up progress callback
+
     (window as unknown as Record<string, unknown>)[`${callbackName}_progress`] = (json: string) => {
       try {
         const data = JSON.parse(json);
-        // youtubedl-android reports -1 for indeterminate progress
         let progressValue = typeof data.progress === 'number' ? data.progress : 0;
-        
-        // Never decrease progress - this prevents flickering when stages change
-        // Each stage (video download, audio download, merge) starts at 0%
+
         if (progressValue >= 0 && progressValue > maxProgress) {
           maxProgress = progressValue;
         }
-        // Use the max progress seen, unless we're at 100% (stage complete)
-        // or progress is -1 (indeterminate)
-        const effectiveProgress = progressValue < 0 ? progressValue : Math.max(progressValue, maxProgress);
-        
+        const effectiveProgress =
+          progressValue < 0 ? progressValue : Math.max(progressValue, maxProgress);
+
         onProgress?.({
           progress: effectiveProgress,
           etaSeconds: data.eta || 0,
@@ -175,22 +172,25 @@ export function downloadOnAndroid(
         logHandler?.('warn', 'Android', `Failed to parse progress: ${e}`);
       }
     };
-    
-    // Set up completion callback
+
     (window as unknown as Record<string, unknown>)[callbackName] = (json: string) => {
       if (hasCompleted) return;
       hasCompleted = true;
-      
+
       logHandler?.('debug', 'Android', `Download callback received: ${json.substring(0, 200)}...`);
       cleanup();
-      
+
       try {
         const data = JSON.parse(json);
         if (data.error) {
           logHandler?.('error', 'Android', `Download error: ${data.error}`);
           reject(new Error(data.error));
         } else {
-          logHandler?.('info', 'Android', `Download completed: success=${data.success}, filePath=${data.filePath}, fileSize=${data.fileSize}`);
+          logHandler?.(
+            'info',
+            'Android',
+            `Download completed: success=${data.success}, filePath=${data.filePath}, fileSize=${data.fileSize}`
+          );
           resolve({
             success: data.success || false,
             output: data.output,
@@ -200,13 +200,21 @@ export function downloadOnAndroid(
           });
         }
       } catch (e) {
-        logHandler?.('error', 'Android', `Failed to parse download result: ${e}, raw: ${json.substring(0, 100)}`);
+        logHandler?.(
+          'error',
+          'Android',
+          `Failed to parse download result: ${e}, raw: ${json.substring(0, 100)}`
+        );
         reject(new Error(`Failed to parse result: ${e}`));
       }
     };
 
     try {
-      logHandler?.('info', 'Android', `Starting download via bridge: ${url}${playlistFolder ? ` (folder: ${playlistFolder})` : ''}`);
+      logHandler?.(
+        'info',
+        'Android',
+        `Starting download via bridge: ${url}${playlistFolder ? ` (folder: ${playlistFolder})` : ''}`
+      );
       window.AndroidYtDlp.download(url, format || null, playlistFolder || null, callbackName);
     } catch (error) {
       hasCompleted = true;
@@ -234,8 +242,7 @@ export function getVideoInfoOnAndroid(url: string): Promise<Record<string, unkno
 
     const callbackName = `ytdlp_info_cb_${++callbackCounter}`;
     let hasCompleted = false;
-    
-    // Timeout for info fetch (60 seconds should be enough)
+
     const timeout = setTimeout(() => {
       if (!hasCompleted) {
         hasCompleted = true;
@@ -244,16 +251,14 @@ export function getVideoInfoOnAndroid(url: string): Promise<Record<string, unkno
         reject(new Error('Video info fetch timeout'));
       }
     }, 60000);
-    
-    // Set up completion callback
+
     (window as unknown as Record<string, unknown>)[callbackName] = (json: string) => {
       if (hasCompleted) return;
       hasCompleted = true;
       clearTimeout(timeout);
-      
-      // Clean up callback
+
       delete (window as unknown as Record<string, unknown>)[callbackName];
-      
+
       try {
         const data = JSON.parse(json);
         if (data.error) {
@@ -264,7 +269,11 @@ export function getVideoInfoOnAndroid(url: string): Promise<Record<string, unkno
           resolve(data);
         }
       } catch (e) {
-        logHandler?.('error', 'Android', `Failed to parse video info: ${e}, raw: ${json.substring(0, 100)}`);
+        logHandler?.(
+          'error',
+          'Android',
+          `Failed to parse video info: ${e}, raw: ${json.substring(0, 100)}`
+        );
         reject(new Error(`Failed to parse video info: ${e}`));
       }
     };
@@ -326,8 +335,7 @@ export function getPlaylistInfoOnAndroid(url: string): Promise<PlaylistInfo> {
 
     const callbackName = `ytdlp_playlist_cb_${++callbackCounter}`;
     let hasCompleted = false;
-    
-    // Timeout for playlist info fetch (120 seconds for large playlists)
+
     const timeout = setTimeout(() => {
       if (!hasCompleted) {
         hasCompleted = true;
@@ -336,27 +344,33 @@ export function getPlaylistInfoOnAndroid(url: string): Promise<PlaylistInfo> {
         reject(new Error('Playlist info fetch timeout'));
       }
     }, 120000);
-    
-    // Set up completion callback
+
     (window as unknown as Record<string, unknown>)[callbackName] = (json: string) => {
       if (hasCompleted) return;
       hasCompleted = true;
       clearTimeout(timeout);
-      
-      // Clean up callback
+
       delete (window as unknown as Record<string, unknown>)[callbackName];
-      
+
       try {
         const data = JSON.parse(json);
         if (data.error) {
           logHandler?.('warn', 'Android', `Failed to get playlist info: ${data.error}`);
           reject(new Error(data.error));
         } else {
-          logHandler?.('info', 'Android', `Got playlist info: ${data.title} with ${data.total_count} entries`);
+          logHandler?.(
+            'info',
+            'Android',
+            `Got playlist info: ${data.title} with ${data.total_count} entries`
+          );
           resolve(data as PlaylistInfo);
         }
       } catch (e) {
-        logHandler?.('error', 'Android', `Failed to parse playlist info: ${e}, raw: ${json.substring(0, 100)}`);
+        logHandler?.(
+          'error',
+          'Android',
+          `Failed to parse playlist info: ${e}, raw: ${json.substring(0, 100)}`
+        );
         reject(new Error(`Failed to parse playlist info: ${e}`));
       }
     };
@@ -383,15 +397,13 @@ export function waitForAndroidYtDlp(): Promise<void> {
       resolve();
       return;
     }
-    
-    // Listen for the ready event from MainActivity
+
     const handler = () => {
       window.removeEventListener('ytdlp-ready', handler);
       resolve();
     };
     window.addEventListener('ytdlp-ready', handler);
-    
-    // Also poll in case the event was missed
+
     const interval = setInterval(() => {
       if (isAndroidYtDlpReady()) {
         clearInterval(interval);
@@ -399,12 +411,11 @@ export function waitForAndroidYtDlp(): Promise<void> {
         resolve();
       }
     }, 500);
-    
-    // Timeout after 30 seconds
+
     setTimeout(() => {
       clearInterval(interval);
       window.removeEventListener('ytdlp-ready', handler);
-      resolve(); // Resolve anyway, let the actual call fail
+      resolve();
     }, 30000);
   });
 }
@@ -425,7 +436,7 @@ export function onShareIntent(callback: (url: string) => void): () => void {
   if (!isAndroid()) {
     return () => {}; // No-op on desktop
   }
-  
+
   const handler = (event: Event) => {
     const customEvent = event as CustomEvent<ShareIntentEvent>;
     const url = customEvent.detail?.url;
@@ -433,7 +444,7 @@ export function onShareIntent(callback: (url: string) => void): () => void {
       callback(url);
     }
   };
-  
+
   window.addEventListener('share-intent', handler);
   return () => window.removeEventListener('share-intent', handler);
 }
@@ -481,14 +492,12 @@ export function pickFileOnAndroid(mimeTypes: string): Promise<string | null> {
     }
 
     const callbackName = `file_pick_cb_${++callbackCounter}`;
-    
-    // Timeout for file picker (5 minutes - user interaction)
+
     const timeout = setTimeout(() => {
       delete (window as unknown as Record<string, unknown>)[callbackName];
       resolve(null);
     }, 300000);
-    
-    // Set up completion callback
+
     (window as unknown as Record<string, unknown>)[callbackName] = (uri: string | null) => {
       clearTimeout(timeout);
       delete (window as unknown as Record<string, unknown>)[callbackName];
@@ -519,19 +528,17 @@ export function processYtmThumbnailOnAndroid(thumbnailUrl: string): Promise<stri
     }
 
     const callbackName = `thumb_process_cb_${++callbackCounter}`;
-    
-    // Timeout for thumbnail processing (30 seconds)
+
     const timeout = setTimeout(() => {
       delete (window as unknown as Record<string, unknown>)[callbackName];
       logHandler?.('warn', 'Android', 'Thumbnail processing timeout');
-      resolve(thumbnailUrl); // Return original on timeout
+      resolve(thumbnailUrl);
     }, 30000);
-    
-    // Set up completion callback
+
     (window as unknown as Record<string, unknown>)[callbackName] = (json: string) => {
       clearTimeout(timeout);
       delete (window as unknown as Record<string, unknown>)[callbackName];
-      
+
       try {
         const data = JSON.parse(json);
         const resultUrl = data.url || thumbnailUrl;

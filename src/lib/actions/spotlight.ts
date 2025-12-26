@@ -1,12 +1,10 @@
-// Minimal spotlight effect - tracks mouse globally, updates CSS vars on elements
-
 let mouseX = 0;
 let mouseY = 0;
 let isTracking = false;
 const elements = new Set<HTMLElement>();
 
 function updateElements() {
-  elements.forEach(el => {
+  elements.forEach((el) => {
     const rect = el.getBoundingClientRect();
     const x = ((mouseX - rect.left) / rect.width) * 100;
     const y = ((mouseY - rect.top) / rect.height) * 100;
@@ -43,7 +41,7 @@ export function spotlight(node: HTMLElement) {
       elements.delete(node);
       node.classList.remove('spotlight');
       stopTracking();
-    }
+    },
   };
 }
 
@@ -57,6 +55,6 @@ export function spotlightBorder(node: HTMLElement) {
       elements.delete(node);
       node.classList.remove('spotlight-border');
       stopTracking();
-    }
+    },
   };
 }
