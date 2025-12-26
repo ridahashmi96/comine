@@ -1,13 +1,21 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "comine",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "identifier": "com.nichind.comine",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../build"
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/nichind/comine/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY2QjEwOTIwNzdGOERFMzMKUldRejN2aDNJQW14OWl1VUZNM2kyMHRsR0xWQVIwQ1RIU0VnMWxQa2hVVUR1MU50VmljSzRwM3cK"
+    }
   },
   "app": {
     "withGlobalTauri": true,

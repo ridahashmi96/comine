@@ -391,6 +391,68 @@ class MainActivity : TauriActivity() {
     }
     
     @JavascriptInterface
+    fun getAppVersion(): String {
+      return try {
+        val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+        pInfo.versionName ?: "unknown"
+      } catch (e: Exception) {
+        "unknown"
+      }
+    }
+    
+    @JavascriptInterface
+    fun downloadAndInstallUpdate(apkUrl: String) {
+      infoExecutor.execute {
+        try {
+          sendLog("info", "Downloading update from: $apkUrl")
+          
+          val url = java.net.URL(apkUrl)
+          val connection = url.openConnection() as java.net.HttpURLConnection
+          connection.connectTimeout = 30000
+          connection.readTimeout = 60000
+          connection.requestMethod = "GET"
+          connection.setRequestProperty("Accept", "application/vnd.android.package-archive")
+          
+          val cacheDir = context.externalCacheDir ?: context.cacheDir
+          val apkFile = File(cacheDir, "comine-update.apk")
+          
+          connection.inputStream.use { input ->
+            apkFile.outputStream().use { output ->
+              input.copyTo(output)
+            }
+          }
+          connection.disconnect()
+          
+          sendLog("info", "Update downloaded: ${apkFile.length()} bytes")
+          
+          mainHandler.post {
+            try {
+              val uri = androidx.core.content.FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                apkFile
+              )
+              
+              val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+              }
+              
+              context.startActivity(intent)
+            } catch (e: Exception) {
+              Log.e(TAG, "Failed to install update", e)
+              sendLog("error", "Failed to install update: ${e.message}")
+            }
+          }
+        } catch (e: Exception) {
+          Log.e(TAG, "Failed to download update", e)
+          sendLog("error", "Failed to download update: ${e.message}")
+        }
+      }
+    }
+    
+    @JavascriptInterface
     fun getVersion(): String {
       return try {
         if (!ytdlInitialized) return "not_initialized"

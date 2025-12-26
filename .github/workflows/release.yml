@@ -1,0 +1,486 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create_release.outputs.id }}
+      version: ${{ steps.get_version.outputs.version }}
+      is_prerelease: ${{ steps.get_version.outputs.is_prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version from tag
+        id: get_version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          if [[ "$VERSION" == *-* ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Comine v${{ steps.get_version.outputs.version }}
+          draft: true
+          prerelease: ${{ steps.get_version.outputs.is_prerelease == 'true' }}
+          generate_release_notes: true
+
+  build-linux:
+    needs: create-release
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      - name: Build Tauri app
+        run: pnpm tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/appimage/*.AppImage.sig
+
+  build-windows:
+    needs: create-release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      - name: Build Tauri app
+        run: pnpm tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Create portable exe
+        shell: pwsh
+        run: |
+          $version = "${{ needs.create-release.outputs.version }}"
+          $exePath = "src-tauri/target/release/comine.exe"
+          if (Test-Path $exePath) {
+            Copy-Item $exePath "src-tauri/target/release/comine_${version}_x64-portable.exe"
+          }
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/msi/*.msi.sig
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/*.exe.sig
+            src-tauri/target/release/comine_*_x64-portable.exe
+
+  build-macos:
+    needs: create-release
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      - name: Build Tauri app
+        run: pnpm tauri build --target ${{ matrix.target }}
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Rename macOS artifacts
+        run: |
+          cd src-tauri/target/${{ matrix.target }}/release/bundle/macos
+          if [ "${{ matrix.target }}" = "x86_64-apple-darwin" ]; then
+            for f in *.app.tar.gz; do mv "$f" "${f%.app.tar.gz}_x64.app.tar.gz"; done
+            for f in *.app.tar.gz.sig; do mv "$f" "${f%.app.tar.gz.sig}_x64.app.tar.gz.sig" 2>/dev/null || true; done
+          fi
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz.sig
+
+  build-android:
+    needs: create-release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: aarch64
+            rust_target: aarch64-linux-android
+            artifact_name: arm64-v8a
+          - target: armv7
+            rust_target: armv7-linux-androideabi
+            artifact_name: armeabi-v7a
+          - target: x86_64
+            rust_target: x86_64-linux-android
+            artifact_name: x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: |
+          sdkmanager --install "ndk;27.0.11718014"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.0.11718014" >> $GITHUB_ENV
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2.5" --locked
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: android-${{ matrix.target }}
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      - name: Build frontend
+        run: pnpm build
+
+      - name: Decode Keystore
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > src-tauri/gen/android/app/release.keystore
+
+      - name: Create keystore properties
+        run: |
+          cat > src-tauri/gen/android/app/keystore.properties << EOF
+          storeFile=release.keystore
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          EOF
+
+      - name: Build Android APK
+        run: |
+          cd src-tauri
+          cargo tauri android build --target ${{ matrix.target }}
+
+      - name: Rename APK
+        run: |
+          VERSION=${{ needs.create-release.outputs.version }}
+          mkdir -p release-assets
+          find src-tauri/gen/android/app/build/outputs/apk -name "*.apk" -exec cp {} release-assets/comine-${VERSION}-${{ matrix.artifact_name }}.apk \;
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: release-assets/*.apk
+
+  build-android-universal:
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: |
+          sdkmanager --install "ndk;27.0.11718014"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.0.11718014" >> $GITHUB_ENV
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2.5" --locked
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: android-universal
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      - name: Build frontend
+        run: pnpm build
+
+      - name: Decode Keystore
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > src-tauri/gen/android/app/release.keystore
+
+      - name: Create keystore properties
+        run: |
+          cat > src-tauri/gen/android/app/keystore.properties << EOF
+          storeFile=release.keystore
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          EOF
+
+      - name: Build Universal Android APK
+        run: |
+          cd src-tauri
+          cargo tauri android build --apk true
+
+      - name: Rename Universal APK
+        run: |
+          VERSION=${{ needs.create-release.outputs.version }}
+          mkdir -p release-assets
+          # Find the release APK (fat APK with all ABIs)
+          APK=$(find src-tauri/gen/android/app/build/outputs/apk/release -name "*.apk" -type f | head -1)
+          if [ -n "$APK" ]; then
+            cp "$APK" "release-assets/comine-${VERSION}-universal.apk"
+          else
+            # Fallback: find any APK
+            APK=$(find src-tauri/gen/android/app/build/outputs/apk -name "*.apk" -type f | head -1)
+            cp "$APK" "release-assets/comine-${VERSION}-universal.apk"
+          fi
+          ls -la release-assets/
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: release-assets/*.apk
+
+  generate-update-manifest:
+    needs: [create-release, build-linux, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Wait for release artifacts
+        run: |
+          VERSION=${{ needs.create-release.outputs.version }}
+          echo "Waiting for release assets to be available..."
+          sleep 60
+
+      - name: Generate latest.json
+        run: |
+          VERSION=${{ needs.create-release.outputs.version }}
+          PRERELEASE=${{ needs.create-release.outputs.is_prerelease }}
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          REPO="https://github.com/nichind/comine/releases/download/v${VERSION}"
+
+          cat > latest.json << EOF
+          {
+            "version": "${VERSION}",
+            "notes": "See release notes at https://github.com/nichind/comine/releases/tag/v${VERSION}",
+            "pub_date": "${DATE}",
+            "platforms": {
+              "linux-x86_64": {
+                "signature": "",
+                "url": "${REPO}/comine_${VERSION}_amd64.AppImage"
+              },
+              "windows-x86_64": {
+                "signature": "",
+                "url": "${REPO}/comine_${VERSION}_x64-setup.exe"
+              },
+              "darwin-aarch64": {
+                "signature": "",
+                "url": "${REPO}/comine.app.tar.gz"
+              },
+              "darwin-x86_64": {
+                "signature": "",
+                "url": "${REPO}/comine_x64.app.tar.gz"
+              }
+            }
+          }
+          EOF
+
+      - name: Download signatures
+        run: |
+          VERSION=${{ needs.create-release.outputs.version }}
+          REPO="https://github.com/nichind/comine/releases/download/v${VERSION}"
+
+          # Wait and retry for Linux signature
+          for i in {1..30}; do
+            if curl -sLf "${REPO}/comine_${VERSION}_amd64.AppImage.sig" -o linux.sig 2>/dev/null; then
+              echo "Downloaded Linux signature"
+              break
+            fi
+            echo "Waiting for Linux signature... attempt $i"
+            sleep 10
+          done
+
+          curl -sLf "${REPO}/comine_${VERSION}_x64-setup.exe.sig" -o windows.sig 2>/dev/null && echo "Downloaded Windows signature" || true
+          curl -sLf "${REPO}/comine.app.tar.gz.sig" -o darwin-arm.sig 2>/dev/null && echo "Downloaded macOS ARM signature" || true
+          curl -sLf "${REPO}/comine_x64.app.tar.gz.sig" -o darwin-x64.sig 2>/dev/null && echo "Downloaded macOS x64 signature" || true
+
+      - name: Update manifest with signatures
+        run: |
+          if [ -f linux.sig ]; then
+            SIG=$(cat linux.sig)
+            jq --arg sig "$SIG" '.platforms["linux-x86_64"].signature = $sig' latest.json > tmp.json && mv tmp.json latest.json
+          fi
+          if [ -f windows.sig ]; then
+            SIG=$(cat windows.sig)
+            jq --arg sig "$SIG" '.platforms["windows-x86_64"].signature = $sig' latest.json > tmp.json && mv tmp.json latest.json
+          fi
+          if [ -f darwin-arm.sig ]; then
+            SIG=$(cat darwin-arm.sig)
+            jq --arg sig "$SIG" '.platforms["darwin-aarch64"].signature = $sig' latest.json > tmp.json && mv tmp.json latest.json
+          fi
+          if [ -f darwin-x64.sig ]; then
+            SIG=$(cat darwin-x64.sig)
+            jq --arg sig "$SIG" '.platforms["darwin-x86_64"].signature = $sig' latest.json > tmp.json && mv tmp.json latest.json
+          fi
+
+      - name: Upload manifest to release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: latest.json
+
+  publish-release:
+    needs:
+      [
+        create-release,
+        build-linux,
+        build-windows,
+        build-macos,
+        build-android,
+        build-android-universal,
+        generate-update-manifest,
+      ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: ${{ needs.create-release.outputs.release_id }},
+              draft: false
+            });

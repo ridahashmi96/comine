@@ -43,6 +43,7 @@
     setupAndroidLogHandler,
     processYtmThumbnailOnAndroid,
   } from '$lib/utils/android';
+  import { startUpdateChecker, stopUpdateChecker } from '$lib/stores/updates';
 
   let { children }: { children: Snippet } = $props();
 
@@ -209,6 +210,8 @@
     if (!isAndroid()) {
       startClipboardWatcher();
     }
+
+    startUpdateChecker();
 
     if (isAndroid()) {
       cleanupShareIntent = onShareIntent(handleAndroidShareIntent);
@@ -413,6 +416,7 @@
     if (clipboardCheckInterval) {
       clearInterval(clipboardCheckInterval);
     }
+    stopUpdateChecker();
     if (unlistenClose) {
       unlistenClose();
     }

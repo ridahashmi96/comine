@@ -71,6 +71,7 @@ export interface AppSettings {
   defaultProcessor: ProcessorId;
 
   autoUpdate: boolean;
+  allowPreReleases: boolean;
   sendStats: boolean;
   acrylicBackground: boolean;
   disableAnimations: boolean;
@@ -171,6 +172,7 @@ export const defaultSettings: AppSettings = {
   defaultProcessor: 'auto',
 
   autoUpdate: true,
+  allowPreReleases: false,
   sendStats: false,
   acrylicBackground: true,
   disableAnimations: false,

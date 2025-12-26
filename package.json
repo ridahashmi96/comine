@@ -1,6 +1,6 @@
 {
   "name": "comine",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "A cross-platform media downloader",
   "author": "nichind",
   "homepage": "https://comine.app",
@@ -33,11 +33,13 @@
   "dependencies": {
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
+    "@tauri-apps/plugin-updater": "^2",
     "@tauri-apps/plugin-dialog": "^2.4.2",
     "@tauri-apps/plugin-fs": "^2.4.4",
     "@tauri-apps/plugin-log": "^2.7.1",
     "@tauri-apps/plugin-notification": "^2.3.3",
     "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-process": "^2",
     "@tauri-apps/plugin-store": "^2.4.1"
   },
   "devDependencies": {

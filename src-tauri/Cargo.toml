@@ -1,6 +1,6 @@
 [package]
 name = "comine"
-version = "1.0.1"
+version = "1.0.2"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -34,6 +34,8 @@ tauri-plugin-log = "2.7.1"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-notification = "2"
+tauri-plugin-updater = { version = "2", features = ["rustls-tls"] }
+tauri-plugin-process = "2"
 urlencoding = "2"
 log = "0.4.29"
 lazy_static = "1.5"

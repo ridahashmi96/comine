@@ -1,6 +1,6 @@
 ﻿# comine <img src="static\icon.png" align="right" height="200" alt="Comine logo (icon)" />
 
-Cross-platform media downloader powered by yt-dlp.
+Cross-platform media and file downloader.
 
 ## Tech Stack
 

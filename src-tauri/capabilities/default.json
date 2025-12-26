@@ -7,9 +7,7 @@
     "core:default",
     {
       "identifier": "opener:default",
-      "allow": [
-        { "path": "**" }
-      ]
+      "allow": [{ "path": "**" }]
     },
     "opener:allow-open-path",
     "opener:allow-open-url",
@@ -18,9 +16,7 @@
     "dialog:default",
     {
       "identifier": "fs:default",
-      "allow": [
-        { "path": "**" }
-      ]
+      "allow": [{ "path": "**" }]
     },
     "fs:allow-exists",
     "fs:allow-read",
@@ -33,6 +29,10 @@
     "notification:allow-is-permission-granted",
     "notification:allow-request-permission",
     "notification:allow-notify",
+    "updater:default",
+    "updater:allow-check",
+    "updater:allow-download",
+    "updater:allow-download-and-install",
     "core:window:allow-start-dragging",
     "core:window:allow-minimize",
     "core:window:allow-maximize",

@@ -14,6 +14,7 @@ keystore_base64.txt
 *.keystore
 *.jks
 keystore.properties
+src-tauri/.tauri-private.key
 
 # Development context
 PROJECT_CONTEXT.md

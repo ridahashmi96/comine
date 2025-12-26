@@ -30,4 +30,29 @@ const tauri = JSON.parse(fs.readFileSync(tauriPath, 'utf8'));
 tauri.version = version;
 fs.writeFileSync(tauriPath, JSON.stringify(tauri, null, 2) + '\n');
 
+// gradle.properties (Android version)
+const gradlePath = path.join(root, 'src-tauri', 'gen', 'android', 'gradle.properties');
+if (fs.existsSync(gradlePath)) {
+  const baseVersion = version.split('-')[0];
+  const parts = baseVersion.split('.').map(Number);
+  const versionCode = parts[0] * 1000000 + parts[1] * 1000 + parts[2];
+
+  let gradle = fs.readFileSync(gradlePath, 'utf8');
+
+  if (gradle.includes('tauri.android.versionName')) {
+    gradle = gradle.replace(
+      /tauri\.android\.versionName=.*/g,
+      `tauri.android.versionName=${version}`
+    );
+    gradle = gradle.replace(
+      /tauri\.android\.versionCode=.*/g,
+      `tauri.android.versionCode=${versionCode}`
+    );
+  } else {
+    gradle += `\ntauri.android.versionName=${version}\ntauri.android.versionCode=${versionCode}\n`;
+  }
+
+  fs.writeFileSync(gradlePath, gradle);
+}
+
 console.log(`v${version}`);

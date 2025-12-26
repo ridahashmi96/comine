@@ -29,6 +29,12 @@
   import { toast } from '$lib/components/Toast.svelte';
   import { tooltip } from '$lib/actions/tooltip';
   import { isAndroid, isDesktop } from '$lib/utils/android';
+  import {
+    updateState,
+    checkForUpdates,
+    downloadAndInstall,
+    getCurrentVersion,
+  } from '$lib/stores/updates';
 
   let searchQuery = $state('');
 
@@ -576,6 +582,23 @@
   }
 
   let clearingCache = $state(false);
+  let checkingUpdate = $state(false);
+
+  async function handleCheckForUpdates() {
+    checkingUpdate = true;
+    try {
+      const update = await checkForUpdates(true);
+      if (update) {
+        toast.success($t('settings.app.updateAvailable', { version: update.version }));
+      } else {
+        toast.info($t('settings.app.noUpdates'));
+      }
+    } catch (e) {
+      toast.error($t('settings.app.updateCheckFailed'));
+    } finally {
+      checkingUpdate = false;
+    }
+  }
 
   async function handleClearCache() {
     if (!onDesktop) return;
@@ -1654,20 +1677,91 @@
 
         {#if matchesSearch('autoUpdate')}
           <div class="setting-item">
-            <div class="setting-with-undo">
-              <Checkbox
-                checked={$settings.autoUpdate}
-                label={$t('settings.app.autoUpdate')}
-                onchange={handleAutoUpdateChange}
-              />
-              <button
-                class="undo-btn"
-                class:hidden={$settings.autoUpdate === defaultSettings.autoUpdate}
-                onclick={() => updateSetting('autoUpdate', defaultSettings.autoUpdate)}
-                use:tooltip={$t('settings.app.resetToDefault')}
-              >
-                <Icon name="undo" size={18} />
-              </button>
+            <div class="setting-row">
+              <div class="setting-label-group">
+                <span class="setting-label">{$t('settings.app.updates')}</span>
+                <span class="setting-description"
+                  >{$t('settings.app.currentVersion', { version: getCurrentVersion() })}</span
+                >
+              </div>
+              <div class="setting-controls">
+                <button class="dep-btn" onclick={handleCheckForUpdates} disabled={checkingUpdate}>
+                  {#if checkingUpdate}
+                    <span class="btn-spinner"></span>
+                  {:else}
+                    <Icon name="download" size={14} />
+                  {/if}
+                  {$t('settings.app.checkForUpdates')}
+                </button>
+              </div>
+            </div>
+
+            {#if $updateState.available && $updateState.info}
+              <div class="setting-sub-row update-available">
+                <div class="update-info">
+                  <Icon name="download" size={16} />
+                  <span
+                    >{$t('settings.app.updateAvailable', {
+                      version: $updateState.info.version,
+                    })}</span
+                  >
+                  {#if $updateState.info.isPreRelease}
+                    <span class="update-badge pre">Pre-release</span>
+                  {/if}
+                </div>
+                <button
+                  class="dep-btn primary"
+                  onclick={downloadAndInstall}
+                  disabled={$updateState.downloading}
+                >
+                  {#if $updateState.downloading}
+                    <span class="btn-spinner"></span>
+                    {$t('settings.app.installing')}
+                  {:else}
+                    {$t('settings.app.installUpdate')}
+                  {/if}
+                </button>
+              </div>
+            {/if}
+
+            <div class="setting-sub-row">
+              <div class="setting-with-undo">
+                <Checkbox
+                  checked={$settings.autoUpdate}
+                  label={$t('settings.app.autoUpdate')}
+                  onchange={handleAutoUpdateChange}
+                />
+                <button
+                  class="undo-btn"
+                  class:hidden={$settings.autoUpdate === defaultSettings.autoUpdate}
+                  onclick={() => updateSetting('autoUpdate', defaultSettings.autoUpdate)}
+                  use:tooltip={$t('settings.app.resetToDefault')}
+                >
+                  <Icon name="undo" size={18} />
+                </button>
+              </div>
+            </div>
+
+            <div class="setting-sub-row">
+              <div class="setting-with-info">
+                <Checkbox
+                  checked={$settings.allowPreReleases}
+                  label={$t('settings.app.allowPreReleases')}
+                  onchange={(checked: boolean) => updateSetting('allowPreReleases', checked)}
+                />
+                <button class="info-btn" use:tooltip={$t('settings.app.allowPreReleasesTooltip')}>
+                  <Icon name="info" size={18} />
+                </button>
+                <button
+                  class="undo-btn"
+                  class:hidden={$settings.allowPreReleases === defaultSettings.allowPreReleases}
+                  onclick={() =>
+                    updateSetting('allowPreReleases', defaultSettings.allowPreReleases)}
+                  use:tooltip={$t('settings.app.resetToDefault')}
+                >
+                  <Icon name="undo" size={18} />
+                </button>
+              </div>
             </div>
           </div>
         {/if}
@@ -2635,6 +2729,32 @@
     margin-top: 12px;
     padding-left: 16px;
     border-left: 2px solid var(--accent-alpha, rgba(99, 102, 241, 0.3));
+  }
+
+  .setting-sub-row.update-available {
+    background: rgba(34, 197, 94, 0.1);
+    border-left-color: #22c55e;
+    padding: 12px 16px;
+    border-radius: 8px;
+  }
+
+  .update-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #22c55e;
+  }
+
+  .update-badge {
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 500;
+  }
+
+  .update-badge.pre {
+    background: rgba(234, 179, 8, 0.2);
+    color: #eab308;
   }
 
   .setting-hint {
