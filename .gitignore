@@ -17,6 +17,7 @@ keystore.properties
 src-tauri/.tauri-private.key
 ~/.tauri/
 *.key
+*-key*
 
 # Development context
 PROJECT_CONTEXT.md

@@ -77,9 +77,11 @@ jobs:
         run: pnpm install
 
       - name: Build Tauri app
-        run: pnpm tauri build
+        run: |
+          export TAURI_SIGNING_PRIVATE_KEY=$(echo "$TAURI_KEY_RAW" | sed 's/\(untrusted comment: [^R]*\)\(RW\)/\1\n\2/')
+          pnpm tauri build
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Upload to release
@@ -122,16 +124,22 @@ jobs:
 
       - name: Build Tauri app (pre-release - NSIS only)
         if: needs.create-release.outputs.is_prerelease == 'true'
-        run: pnpm tauri build --bundles nsis
+        shell: pwsh
+        run: |
+          $env:TAURI_SIGNING_PRIVATE_KEY = "$env:TAURI_KEY_RAW" -replace '(untrusted comment: [^R]*)(RW)', "`$1`n`$2"
+          pnpm tauri build --bundles nsis
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Build Tauri app (stable - all bundles)
         if: needs.create-release.outputs.is_prerelease != 'true'
-        run: pnpm tauri build
+        shell: pwsh
+        run: |
+          $env:TAURI_SIGNING_PRIVATE_KEY = "$env:TAURI_KEY_RAW" -replace '(untrusted comment: [^R]*)(RW)', "`$1`n`$2"
+          pnpm tauri build
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Create portable exe
@@ -188,22 +196,12 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install
 
-      - name: Debug signing key
-        run: |
-          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            echo "Key is set"
-            echo "Key length: ${#TAURI_SIGNING_PRIVATE_KEY}"
-            echo "First 30 chars: ${TAURI_SIGNING_PRIVATE_KEY:0:30}"
-          else
-            echo "KEY IS EMPTY!"
-          fi
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-
       - name: Build Tauri app
-        run: pnpm tauri build --target ${{ matrix.target }}
+        run: |
+          export TAURI_SIGNING_PRIVATE_KEY=$(echo "$TAURI_KEY_RAW" | sed 's/\(untrusted comment: [^R]*\)\(RW\)/\1\n\2/')
+          pnpm tauri build --target ${{ matrix.target }}
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Rename macOS artifacts

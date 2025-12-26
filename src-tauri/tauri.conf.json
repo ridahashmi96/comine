@@ -12,7 +12,7 @@
   "plugins": {
     "updater": {
       "endpoints": ["https://github.com/nichind/comine/releases/latest/download/latest.json"],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY2QjEwOTIwNzdGOERFMzMKUldRejN2aDNJQW14OWl1VUZNM2kyMHRsR0xWQVIwQ1RIU0VnMWxQa2hVVUR1MU50VmljSzRwM3cK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlEOTc0RkQ5RDk5NUE2Q0IKUldUTHBwWFoyVStYbmRUL3l5M0U1S3lvOUFLQ2xMR3J6d0hyWXpoWHV6S0FpYzVaekN6MDFtNWIK"
     }
   },
   "app": {
