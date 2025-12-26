@@ -198,8 +198,12 @@ jobs:
         run: |
           cd src-tauri/target/${{ matrix.target }}/release/bundle/macos
           if [ "${{ matrix.target }}" = "x86_64-apple-darwin" ]; then
-            for f in *.app.tar.gz; do mv "$f" "${f%.app.tar.gz}_x64.app.tar.gz"; done
-            for f in *.app.tar.gz.sig; do mv "$f" "${f%.app.tar.gz.sig}_x64.app.tar.gz.sig" 2>/dev/null || true; done
+            for f in *.app.tar.gz; do
+              [ -e "$f" ] && mv "$f" "${f%.app.tar.gz}_x64.app.tar.gz" || true
+            done
+            for f in *.app.tar.gz.sig; do
+              [ -e "$f" ] && mv "$f" "${f%.app.tar.gz.sig}_x64.app.tar.gz.sig" || true
+            done
           fi
 
       - name: Upload to release
