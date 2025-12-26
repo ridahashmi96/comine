@@ -177,7 +177,7 @@ export type TranslationKeys =
   | 'history.title'
 
   // Info
-  | 'info.build'
+  | 'info.branch'
   | 'info.buildDate'
   | 'info.clickToCopy'
   | 'info.comingSoon'

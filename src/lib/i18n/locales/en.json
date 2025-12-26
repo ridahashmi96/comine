@@ -413,7 +413,7 @@
     "comingSoon": "Info page coming soon...",
     "clickToCopy": "Click to copy version",
     "version": "Version",
-    "build": "Build",
+    "branch": "Branch",
     "commit": "Commit",
     "buildDate": "Build date",
     "links": "Links",

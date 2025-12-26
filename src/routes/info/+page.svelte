@@ -31,9 +31,10 @@
     }
   });
 
-  const APP_VERSION = '1.0.0';
   // @ts-ignore - defined by vite
-  const BUILD_TYPE = typeof __DEV__ !== 'undefined' && __DEV__ ? 'Development' : 'Release';
+  const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0';
+  // @ts-ignore - defined by vite
+  const GIT_BRANCH = typeof __GIT_BRANCH__ !== 'undefined' ? __GIT_BRANCH__ : 'unknown';
   // @ts-ignore - defined by vite
   const COMMIT_HASH = typeof __COMMIT_HASH__ !== 'undefined' ? __COMMIT_HASH__ : 'unknown';
   // @ts-ignore - defined by vite
@@ -44,7 +45,7 @@
   async function copyVersion() {
     try {
       const hash = typeof COMMIT_HASH === 'string' ? COMMIT_HASH.slice(0, 7) : 'unknown';
-      const info = `Comine v${APP_VERSION} (${hash}) - ${BUILD_TYPE}`;
+      const info = `comine v${APP_VERSION} (${hash}) [${GIT_BRANCH}]`;
       await navigator.clipboard.writeText(info);
       versionCopied = true;
       setTimeout(() => (versionCopied = false), 2000);
@@ -82,8 +83,8 @@
         </button>
       </div>
       <div class="setting-item">
-        <span class="setting-label">{$t('info.build')}</span>
-        <span class="setting-value mono">{BUILD_TYPE}</span>
+        <span class="setting-label">{$t('info.branch')}</span>
+        <span class="setting-value mono">{GIT_BRANCH}</span>
       </div>
       <div class="setting-item">
         <span class="setting-label">{$t('info.commit')}</span>

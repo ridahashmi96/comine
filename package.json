@@ -1,6 +1,6 @@
 {
   "name": "comine",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A cross-platform media downloader",
   "author": "nichind",
   "homepage": "https://comine.app",
@@ -26,7 +26,8 @@
     "format": "prettier --write \"src/**/*.{ts,js,svelte,json}\"",
     "format:rust": "cd src-tauri && cargo fmt",
     "format:all": "pnpm format && pnpm format:rust",
-    "generate:i18n-keys": "node scripts/generate-i18n-keys.js"
+    "generate:i18n-keys": "node scripts/generate-i18n-keys.js",
+    "version:set": "node scripts/bump-version.js"
   },
   "license": "MIT",
   "dependencies": {
