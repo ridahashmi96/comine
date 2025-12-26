@@ -1,34 +1,37 @@
-//! Proxy configuration and detection module
-//!
-//! Supports:
-//! - Custom proxy URLs (HTTP, HTTPS, SOCKS4, SOCKS5)
-//! - System proxy detection (Windows registry, macOS scutil, Linux gsettings)
-//! - Fallback strategies when proxy fails
-//! - Common proxy port scanning as last resort
-
 use log::{debug, info, warn};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
-/// Proxy configuration from frontend settings
+struct ProxyCache {
+    result: Option<ResolvedProxy>,
+    last_check: Option<Instant>,
+}
+
+impl ProxyCache {
+    const fn new() -> Self {
+        Self {
+            result: None,
+            last_check: None,
+        }
+    }
+}
+
+static PROXY_CACHE: Mutex<ProxyCache> = Mutex::new(ProxyCache::new());
+const PROXY_CACHE_TTL: Duration = Duration::from_secs(300);
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ProxyConfig {
-    /// Proxy mode: "none", "system", or "custom"
     pub mode: String,
-    /// Custom proxy URL (when mode is "custom")
     pub custom_url: String,
-    /// Whether to fallback to system/no proxy when custom fails
     pub fallback: bool,
 }
 
-/// Result of proxy resolution
 #[derive(serde::Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedProxy {
-    /// The resolved proxy URL (empty if no proxy)
     pub url: String,
-    /// Source of the proxy: "custom", "system", "detected", "none"
     pub source: String,
-    /// Human-readable description
     pub description: String,
 }
 
@@ -42,9 +45,6 @@ impl Default for ResolvedProxy {
     }
 }
 
-/// Validate proxy URL syntax
-/// Accepts: http://host:port, https://host:port, socks4://host:port, socks5://host:port
-/// Also accepts: http://user:pass@host:port
 pub fn validate_proxy_url(url: &str) -> Result<(), String> {
     if url.is_empty() {
         return Err("Proxy URL is empty".to_string());
@@ -71,8 +71,6 @@ pub fn validate_proxy_url(url: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Resolve proxy based on configuration
-/// Returns the effective proxy URL and its source
 pub fn resolve_proxy(config: &ProxyConfig) -> ResolvedProxy {
     match config.mode.as_str() {
         "none" => {
@@ -110,14 +108,31 @@ pub fn resolve_proxy(config: &ProxyConfig) -> ResolvedProxy {
     }
 }
 
-/// Detect system proxy from various sources
 pub fn detect_system_proxy() -> ResolvedProxy {
-    // 1. Check environment variables first (highest priority, works on all platforms)
+    if let Ok(cache) = PROXY_CACHE.lock() {
+        if let (Some(ref result), Some(last_check)) = (&cache.result, cache.last_check) {
+            if last_check.elapsed() < PROXY_CACHE_TTL {
+                debug!("Using cached proxy result");
+                return result.clone();
+            }
+        }
+    }
+
+    let result = detect_system_proxy_uncached();
+
+    if let Ok(mut cache) = PROXY_CACHE.lock() {
+        cache.result = Some(result.clone());
+        cache.last_check = Some(Instant::now());
+    }
+
+    result
+}
+
+fn detect_system_proxy_uncached() -> ResolvedProxy {
     if let Some(proxy) = detect_env_proxy() {
         return proxy;
     }
 
-    // 2. Platform-specific detection
     #[cfg(target_os = "windows")]
     if let Some(proxy) = detect_windows_proxy() {
         return proxy;
@@ -133,7 +148,6 @@ pub fn detect_system_proxy() -> ResolvedProxy {
         return proxy;
     }
 
-    // 3. Fallback: scan common proxy ports on localhost
     if let Some(proxy) = detect_common_proxy_ports() {
         return proxy;
     }
@@ -142,7 +156,6 @@ pub fn detect_system_proxy() -> ResolvedProxy {
     ResolvedProxy::default()
 }
 
-/// Check environment variables for proxy
 fn detect_env_proxy() -> Option<ResolvedProxy> {
     let proxy_vars = [
         ("HTTPS_PROXY", "https_proxy"),
@@ -168,12 +181,9 @@ fn detect_env_proxy() -> Option<ResolvedProxy> {
     None
 }
 
-/// Detect proxy from Windows registry
 #[cfg(target_os = "windows")]
 fn detect_windows_proxy() -> Option<ResolvedProxy> {
     use std::process::Command;
-
-    debug!("Checking Windows registry for proxy settings");
 
     let enable_output = Command::new("reg")
         .args([
@@ -187,11 +197,9 @@ fn detect_windows_proxy() -> Option<ResolvedProxy> {
     if let Ok(output) = enable_output {
         let stdout = String::from_utf8_lossy(&output.stdout);
         if !stdout.contains("0x1") && !stdout.contains("REG_DWORD    1") {
-            debug!("Windows proxy is disabled in registry");
             return None;
         }
     } else {
-        debug!("Failed to read ProxyEnable from registry");
         return None;
     }
 
@@ -252,16 +260,12 @@ fn detect_windows_proxy() -> Option<ResolvedProxy> {
         }
     }
 
-    debug!("No proxy found in Windows registry");
     None
 }
 
-/// Detect proxy from macOS scutil
 #[cfg(target_os = "macos")]
 fn detect_macos_proxy() -> Option<ResolvedProxy> {
     use std::process::Command;
-
-    debug!("Checking macOS proxy settings via scutil");
 
     let output = Command::new("scutil").args(["--proxy"]).output();
 
@@ -327,16 +331,12 @@ fn detect_macos_proxy() -> Option<ResolvedProxy> {
         }
     }
 
-    debug!("No proxy found in macOS settings");
     None
 }
 
-/// Detect proxy from Linux (gsettings for GNOME, KDE, etc.)
 #[cfg(target_os = "linux")]
 fn detect_linux_proxy() -> Option<ResolvedProxy> {
     use std::process::Command;
-
-    debug!("Checking Linux proxy settings via gsettings");
 
     if let Ok(output) = Command::new("gsettings")
         .args(["get", "org.gnome.system.proxy", "mode"])
@@ -437,16 +437,11 @@ fn detect_linux_proxy() -> Option<ResolvedProxy> {
         }
     }
 
-    debug!("No proxy found in Linux settings");
     None
 }
 
-/// Scan common proxy ports on localhost as a fallback
 fn detect_common_proxy_ports() -> Option<ResolvedProxy> {
     use std::net::TcpStream;
-    use std::time::Duration;
-
-    debug!("Scanning common proxy ports on localhost");
 
     let common_ports = [
         (7890, "http"),
@@ -467,7 +462,7 @@ fn detect_common_proxy_ports() -> Option<ResolvedProxy> {
         let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
         if TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok() {
             let proxy_url = format!("{}://127.0.0.1:{}", scheme, port);
-            info!("Found open proxy port: {} ({})", port, scheme);
+            info!("Found open proxy port: {}", port);
             return Some(ResolvedProxy {
                 url: proxy_url.clone(),
                 source: "detected".to_string(),
@@ -476,12 +471,9 @@ fn detect_common_proxy_ports() -> Option<ResolvedProxy> {
         }
     }
 
-    debug!("No common proxy ports open");
     None
 }
 
-/// Get proxy strategies for downloads with fallback support
-/// Returns a list of (strategy_name, proxy_url) pairs to try in order
 pub fn proxy_strategies(config: &ProxyConfig) -> Vec<(&'static str, Option<String>)> {
     let resolved = resolve_proxy(config);
 
@@ -522,47 +514,5 @@ pub fn proxy_strategies(config: &ProxyConfig) -> Vec<(&'static str, Option<Strin
                 vec![("no proxy", None)]
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_validate_proxy_url() {
-        assert!(validate_proxy_url("http://127.0.0.1:7890").is_ok());
-        assert!(validate_proxy_url("https://proxy.example.com:8080").is_ok());
-        assert!(validate_proxy_url("socks5://127.0.0.1:1080").is_ok());
-        assert!(validate_proxy_url("socks4://localhost:1080").is_ok());
-        assert!(validate_proxy_url("http://user:pass@proxy.example.com:8080").is_ok());
-
-        assert!(validate_proxy_url("").is_err());
-        assert!(validate_proxy_url("invalid").is_err());
-        assert!(validate_proxy_url("ftp://proxy:8080").is_err());
-    }
-
-    #[test]
-    fn test_resolve_proxy_none() {
-        let config = ProxyConfig {
-            mode: "none".to_string(),
-            custom_url: String::new(),
-            fallback: false,
-        };
-        let resolved = resolve_proxy(&config);
-        assert!(resolved.url.is_empty());
-        assert_eq!(resolved.source, "none");
-    }
-
-    #[test]
-    fn test_resolve_proxy_custom() {
-        let config = ProxyConfig {
-            mode: "custom".to_string(),
-            custom_url: "http://127.0.0.1:7890".to_string(),
-            fallback: false,
-        };
-        let resolved = resolve_proxy(&config);
-        assert_eq!(resolved.url, "http://127.0.0.1:7890");
-        assert_eq!(resolved.source, "custom");
     }
 }

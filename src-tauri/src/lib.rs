@@ -1080,7 +1080,7 @@ async fn get_playlist_info(
         if is_youtube {
             args.extend([
                 "--extractor-args".to_string(),
-                "youtube:player_client=tv,mweb,android_sdkless,web".to_string(),
+                "youtube:player_client=android_sdkless".to_string(),
             ]);
         }
 
@@ -1426,7 +1426,7 @@ async fn get_video_info(
         if is_youtube {
             args.extend([
                 "--extractor-args".to_string(),
-                "youtube:player_client=tv,mweb,android_sdkless,web".to_string(),
+                "youtube:player_client=android_sdkless".to_string(),
             ]);
         }
 

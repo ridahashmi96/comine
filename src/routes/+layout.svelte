@@ -81,7 +81,7 @@
   }
 
   const MOBILE_BREAKPOINT = 480;
-  const CLIPBOARD_CHECK_INTERVAL = 500;
+  const CLIPBOARD_CHECK_INTERVAL = 250;
 
   let cleanupResize: (() => void) | null = null;
   let cleanupKeyboard: (() => void) | null = null;
