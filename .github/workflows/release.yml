@@ -76,16 +76,6 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install
 
-      - name: Debug secrets
-        run: |
-          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            echo "TAURI_SIGNING_PRIVATE_KEY is set (length: ${#TAURI_SIGNING_PRIVATE_KEY})"
-          else
-            echo "TAURI_SIGNING_PRIVATE_KEY is NOT set or empty"
-          fi
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-
       - name: Build Tauri app
         run: pnpm tauri build
         env:
@@ -198,6 +188,18 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install
 
+      - name: Debug signing key
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "Key is set"
+            echo "Key length: ${#TAURI_SIGNING_PRIVATE_KEY}"
+            echo "First 30 chars: ${TAURI_SIGNING_PRIVATE_KEY:0:30}"
+          else
+            echo "KEY IS EMPTY!"
+          fi
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+
       - name: Build Tauri app
         run: pnpm tauri build --target ${{ matrix.target }}
         env:
@@ -208,12 +210,8 @@ jobs:
         run: |
           cd src-tauri/target/${{ matrix.target }}/release/bundle/macos
           if [ "${{ matrix.target }}" = "x86_64-apple-darwin" ]; then
-            for f in *.app.tar.gz; do
-              [ -e "$f" ] && mv "$f" "${f%.app.tar.gz}_x64.app.tar.gz" || true
-            done
-            for f in *.app.tar.gz.sig; do
-              [ -e "$f" ] && mv "$f" "${f%.app.tar.gz.sig}_x64.app.tar.gz.sig" || true
-            done
+            for f in *.app.tar.gz; do mv "$f" "${f%.app.tar.gz}_x64.app.tar.gz"; done
+            for f in *.app.tar.gz.sig; do mv "$f" "${f%.app.tar.gz.sig}_x64.app.tar.gz.sig" 2>/dev/null || true; done
           fi
 
       - name: Upload to release
