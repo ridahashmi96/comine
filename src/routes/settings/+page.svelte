@@ -26,6 +26,7 @@
   import Select from '$lib/components/Select.svelte';
   import Modal from '$lib/components/Modal.svelte';
   import Button from '$lib/components/Button.svelte';
+  import { toast } from '$lib/components/Toast.svelte';
   import { tooltip } from '$lib/actions/tooltip';
   import { isAndroid, isDesktop } from '$lib/utils/android';
 
@@ -582,11 +583,10 @@
     try {
       const deleted = await invoke<number>('clear_cache');
       if (deleted > 0) {
-        importMessage = { type: 'success', text: $t('settings.data.clearCacheSuccess') };
+        toast.success($t('settings.data.clearCacheSuccess'));
       } else {
-        importMessage = { type: 'success', text: $t('settings.data.clearCacheEmpty') };
+        toast.info($t('settings.data.clearCacheEmpty'));
       }
-      setTimeout(() => (importMessage = null), 3000);
     } catch (err) {
       console.error('Failed to clear cache:', err);
     } finally {
