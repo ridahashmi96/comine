@@ -512,6 +512,13 @@
     "downloadComplete": "Download Complete",
     "downloadFailed": "Download Failed"
   },
+  "updates": {
+    "notificationTitle": "Update Available",
+    "notificationBody": "Version {version} is ready to install",
+    "notificationBodyPreRelease": "Pre-release {version} is ready to install",
+    "installNow": "Install Now",
+    "later": "Later"
+  },
   "onboarding": {
     "back": "Back",
     "next": "Continue",

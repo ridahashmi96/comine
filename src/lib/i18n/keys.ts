@@ -539,6 +539,13 @@ export type TranslationKeys =
   | 'tray.quit'
   | 'tray.show'
 
+  // Updates
+  | 'updates.installNow'
+  | 'updates.later'
+  | 'updates.notificationBody'
+  | 'updates.notificationBodyPreRelease'
+  | 'updates.notificationTitle'
+
   // Window
   | 'window.close'
   | 'window.maximize';

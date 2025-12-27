@@ -3196,7 +3196,7 @@ async fn download_and_install_update(
                 );
             },
             move || {
-                info!("Download finished, installing...");
+                info!("Download finished, verifying and installing...");
                 let _ = window_for_finish.emit(
                     "update-download-progress",
                     serde_json::json!({
@@ -3206,9 +3206,18 @@ async fn download_and_install_update(
             },
         )
         .await
-        .map_err(|e| format!("Download/install failed: {}", e))?;
+        .map_err(|e| {
+            let err_str = e.to_string();
+            error!("Update install failed: {}", err_str);
+            if err_str.contains("signature") || err_str.contains("Signature") {
+                "Update signature verification failed. The release may not be properly signed."
+                    .to_string()
+            } else {
+                format!("Update failed: {}", err_str)
+            }
+        })?;
 
-    info!("Relaunching app after update");
+    info!("Update installed successfully, restarting app...");
     app.restart();
 }
 

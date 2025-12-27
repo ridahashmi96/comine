@@ -44,7 +44,12 @@
     setupAndroidLogHandler,
     processYtmThumbnailOnAndroid,
   } from '$lib/utils/android';
-  import { startUpdateChecker, stopUpdateChecker } from '$lib/stores/updates';
+  import {
+    startUpdateChecker,
+    stopUpdateChecker,
+    clearDismissedVersionIfUpdated,
+  } from '$lib/stores/updates';
+  import NotificationPopup from '$lib/components/NotificationPopup.svelte';
 
   let { children }: { children: Snippet } = $props();
 
@@ -214,6 +219,7 @@
     }
 
     startUpdateChecker();
+    clearDismissedVersionIfUpdated();
 
     if (isAndroid()) {
       cleanupShareIntent = onShareIntent(handleAndroidShareIntent);
@@ -864,6 +870,7 @@
   </div>
 
   <Toast />
+  <NotificationPopup />
   <Onboarding open={showOnboarding} />
 {/if}
 

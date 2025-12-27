@@ -1,7 +1,13 @@
 import { writable, get } from 'svelte/store';
-import { settings } from './settings';
+import { settings, updateSetting } from './settings';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import {
+  show as showNotification,
+  dismiss as dismissNotification,
+} from '$lib/components/NotificationPopup.svelte';
+import { toast } from '$lib/components/Toast.svelte';
+import { t } from '$lib/i18n';
 
 declare const __GIT_BRANCH__: string;
 declare const __APP_VERSION__: string;
@@ -46,6 +52,7 @@ const defaultState: UpdateState = {
 export const updateState = writable<UpdateState>(defaultState);
 
 let checkInterval: ReturnType<typeof setInterval> | null = null;
+let activeUpdateNotificationId: string | null = null;
 
 export function shouldAllowPreReleases(): boolean {
   const s = get(settings);
@@ -65,11 +72,18 @@ export async function checkForUpdates(manual = false): Promise<UpdateInfo | null
   }));
 
   try {
+    let info: UpdateInfo | null;
     if (isAndroid()) {
-      return await checkForUpdatesAndroid();
+      info = await checkForUpdatesAndroid();
     } else {
-      return await checkForUpdatesDesktop();
+      info = await checkForUpdatesDesktop();
     }
+
+    if (info && !manual) {
+      showUpdateNotificationIfNeeded(info);
+    }
+
+    return info;
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     console.error('[Updates] Check failed:', error);
@@ -205,10 +219,51 @@ function isNewerVersion(remote: string, local: string): boolean {
     if (rv < lv) return false;
   }
 
+  // Same base version - compare pre-release status
+  // 1.0.0 > 1.0.0-beta (stable is newer than pre-release of same version)
   if (l.pre && !r.pre) return true;
-  if (!l.pre && r.pre) return false;
+  // 1.0.0-beta.2 > 1.0.0-beta.1 (compare pre-release strings)
+  if (l.pre && r.pre) return r.pre > l.pre;
+  // 1.0.0-beta > 1.0.0 would be handled by allowPreReleases setting
+  // at the API level, not here
 
   return false;
+}
+
+function showUpdateNotificationIfNeeded(info: UpdateInfo): void {
+  const s = get(settings);
+
+  if (s.dismissedUpdateVersion === info.version) {
+    return;
+  }
+
+  if (activeUpdateNotificationId) {
+    dismissNotification(activeUpdateNotificationId);
+  }
+
+  const translate = get(t);
+  const bodyKey = info.isPreRelease
+    ? 'updates.notificationBodyPreRelease'
+    : 'updates.notificationBody';
+
+  activeUpdateNotificationId = showNotification({
+    title: translate('updates.notificationTitle'),
+    body: translate(bodyKey, { version: info.version }),
+    duration: 0,
+    actionLabel: translate('updates.installNow'),
+    onAction: () => {
+      activeUpdateNotificationId = null;
+      downloadAndInstall();
+    },
+  });
+}
+
+export async function dismissUpdateNotification(version: string): Promise<void> {
+  if (activeUpdateNotificationId) {
+    dismissNotification(activeUpdateNotificationId);
+    activeUpdateNotificationId = null;
+  }
+  await updateSetting('dismissedUpdateVersion', version);
 }
 
 export async function downloadAndInstall(): Promise<void> {
@@ -227,6 +282,7 @@ export async function downloadAndInstall(): Promise<void> {
     const error = e instanceof Error ? e.message : String(e);
     console.error('[Updates] Install failed:', error);
     updateState.update((s) => ({ ...s, downloading: false, error }));
+    toast.error(`Update failed: ${error}`);
   }
 }
 
@@ -311,7 +367,6 @@ async function downloadAndInstallAndroid(info: UpdateInfo): Promise<void> {
           const data = JSON.parse(json) as { type: string; success: boolean; error?: string };
 
           if (data.success) {
-            // Install was triggered successfully - mark it so UI can show appropriate state
             updateState.update((s) => ({ ...s, downloading: false, installTriggered: true }));
             resolve();
           } else {
@@ -324,7 +379,6 @@ async function downloadAndInstallAndroid(info: UpdateInfo): Promise<void> {
         }
       };
 
-      // Start the download with callback name - call method on android object directly
       try {
         android.downloadAndInstallUpdate!(downloadUrl, callbackName);
         console.log('[Updates] Called android.downloadAndInstallUpdate successfully');
@@ -376,4 +430,11 @@ export function getCurrentVersion(): string {
 
 export function getCurrentBranch(): string {
   return GIT_BRANCH;
+}
+
+export async function clearDismissedVersionIfUpdated(): Promise<void> {
+  const s = get(settings);
+  if (s.dismissedUpdateVersion && s.dismissedUpdateVersion !== APP_VERSION) {
+    await updateSetting('dismissedUpdateVersion', '');
+  }
 }

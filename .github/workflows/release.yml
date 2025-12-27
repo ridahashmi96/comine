@@ -78,11 +78,19 @@ jobs:
 
       - name: Build Tauri app
         run: |
-          export TAURI_SIGNING_PRIVATE_KEY=$(echo "$TAURI_KEY_RAW" | sed 's/\(untrusted comment: [^R]*\)\(RW\)/\1\n\2/')
           pnpm tauri build
         env:
-          TAURI_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Verify signatures were generated
+        run: |
+          echo "Looking for signature files..."
+          find src-tauri/target/release/bundle -name "*.sig" -type f
+          if [ $(find src-tauri/target/release/bundle -name "*.sig" -type f | wc -l) -eq 0 ]; then
+            echo "ERROR: No .sig files found! Signing may have failed."
+            exit 1
+          fi
 
       - name: Upload to release
         uses: softprops/action-gh-release@v1
@@ -127,21 +135,30 @@ jobs:
         if: needs.create-release.outputs.is_prerelease == 'true'
         shell: pwsh
         run: |
-          $env:TAURI_SIGNING_PRIVATE_KEY = "$env:TAURI_KEY_RAW" -replace '(untrusted comment: [^R]*)(RW)', "`$1`n`$2"
           pnpm tauri build --bundles nsis
         env:
-          TAURI_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Build Tauri app (stable - all bundles)
         if: needs.create-release.outputs.is_prerelease != 'true'
         shell: pwsh
         run: |
-          $env:TAURI_SIGNING_PRIVATE_KEY = "$env:TAURI_KEY_RAW" -replace '(untrusted comment: [^R]*)(RW)', "`$1`n`$2"
           pnpm tauri build
         env:
-          TAURI_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Verify signatures were generated
+        shell: pwsh
+        run: |
+          $sigFiles = Get-ChildItem -Path "src-tauri/target/release/bundle" -Recurse -Filter "*.sig"
+          if ($sigFiles.Count -eq 0) {
+            Write-Error "No .sig files found! Signing may have failed."
+            exit 1
+          }
+          Write-Host "Found signature files:"
+          $sigFiles | ForEach-Object { Write-Host $_.FullName }
 
       - name: Create portable exe
         shell: pwsh
@@ -200,11 +217,19 @@ jobs:
 
       - name: Build Tauri app
         run: |
-          export TAURI_SIGNING_PRIVATE_KEY=$(echo "$TAURI_KEY_RAW" | sed 's/\(untrusted comment: [^R]*\)\(RW\)/\1\n\2/')
           pnpm tauri build --target ${{ matrix.target }}
         env:
-          TAURI_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Verify signatures were generated
+        run: |
+          echo "Looking for signature files..."
+          find src-tauri/target/${{ matrix.target }}/release/bundle -name "*.sig" -type f
+          if [ $(find src-tauri/target/${{ matrix.target }}/release/bundle -name "*.sig" -type f | wc -l) -eq 0 ]; then
+            echo "ERROR: No .sig files found! Signing may have failed."
+            exit 1
+          fi
 
       - name: Rename macOS artifacts
         run: |
@@ -417,81 +442,139 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Wait for release artifacts
+      - name: Download signatures from draft release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=${{ needs.create-release.outputs.version }}
-          echo "Waiting for release assets to be available..."
-          sleep 60
+          RELEASE_ID=${{ needs.create-release.outputs.release_id }}
+
+          echo "Fetching assets from release ID: $RELEASE_ID"
+
+          # Wait for all uploads to complete
+          sleep 30
+
+          # Get release assets
+          ASSETS=$(curl -sL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/nichind/comine/releases/$RELEASE_ID/assets")
+
+          echo "Found assets:"
+          echo "$ASSETS" | jq -r '.[].name'
+
+          download_asset() {
+            local asset_name=$1
+            local output_file=$2
+            
+            # Get asset download URL
+            ASSET_URL=$(echo "$ASSETS" | jq -r ".[] | select(.name == \"$asset_name\") | .url")
+            
+            if [ -z "$ASSET_URL" ] || [ "$ASSET_URL" = "null" ]; then
+              echo "Asset $asset_name not found, waiting..."
+              return 1
+            fi
+            
+            # Download the asset (need to follow redirects with proper auth)
+            curl -sL \
+              -H "Accept: application/octet-stream" \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              "$ASSET_URL" -o "$output_file"
+            
+            if [ -s "$output_file" ]; then
+              echo "Downloaded $asset_name"
+              return 0
+            else
+              echo "Failed to download $asset_name"
+              return 1
+            fi
+          }
+
+          # Retry logic for each signature
+          for attempt in {1..10}; do
+            echo ""
+            echo "=== Attempt $attempt/10 ==="
+            
+            # Refresh assets list
+            ASSETS=$(curl -sL \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              "https://api.github.com/repos/nichind/comine/releases/$RELEASE_ID/assets")
+            
+            ALL_FOUND=true
+            
+            download_asset "comine_${VERSION}_amd64.AppImage.sig" "linux.sig" || ALL_FOUND=false
+            download_asset "comine_${VERSION}_x64-setup.exe.sig" "windows.sig" || ALL_FOUND=false
+            download_asset "comine.app.tar.gz.sig" "darwin-arm.sig" || ALL_FOUND=false
+            download_asset "comine_x64.app.tar.gz.sig" "darwin-x64.sig" || ALL_FOUND=false
+            
+            if [ "$ALL_FOUND" = true ]; then
+              echo ""
+              echo "All signatures downloaded successfully!"
+              break
+            fi
+            
+            echo "Some signatures missing, waiting 30 seconds..."
+            sleep 30
+          done
+
+          echo ""
+          echo "Downloaded signature files:"
+          ls -la *.sig 2>/dev/null || echo "No .sig files found!"
 
       - name: Generate latest.json
         run: |
           VERSION=${{ needs.create-release.outputs.version }}
-          PRERELEASE=${{ needs.create-release.outputs.is_prerelease }}
           DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           REPO="https://github.com/nichind/comine/releases/download/v${VERSION}"
 
-          cat > latest.json << EOF
-          {
-            "version": "${VERSION}",
-            "notes": "See release notes at https://github.com/nichind/comine/releases/tag/v${VERSION}",
-            "pub_date": "${DATE}",
-            "platforms": {
-              "linux-x86_64": {
-                "signature": "",
-                "url": "${REPO}/comine_${VERSION}_amd64.AppImage"
-              },
-              "windows-x86_64": {
-                "signature": "",
-                "url": "${REPO}/comine_${VERSION}_x64-setup.exe"
-              },
-              "darwin-aarch64": {
-                "signature": "",
-                "url": "${REPO}/comine.app.tar.gz"
-              },
-              "darwin-x86_64": {
-                "signature": "",
-                "url": "${REPO}/comine_x64.app.tar.gz"
+          # Read signatures
+          LINUX_SIG=""
+          WINDOWS_SIG=""
+          DARWIN_ARM_SIG=""
+          DARWIN_X64_SIG=""
+
+          [ -f linux.sig ] && LINUX_SIG=$(cat linux.sig)
+          [ -f windows.sig ] && WINDOWS_SIG=$(cat windows.sig)
+          [ -f darwin-arm.sig ] && DARWIN_ARM_SIG=$(cat darwin-arm.sig)
+          [ -f darwin-x64.sig ] && DARWIN_X64_SIG=$(cat darwin-x64.sig)
+
+          # Generate JSON with jq to properly escape signatures
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "See release notes at https://github.com/nichind/comine/releases/tag/v${VERSION}" \
+            --arg pub_date "$DATE" \
+            --arg linux_url "${REPO}/comine_${VERSION}_amd64.AppImage" \
+            --arg linux_sig "$LINUX_SIG" \
+            --arg windows_url "${REPO}/comine_${VERSION}_x64-setup.exe" \
+            --arg windows_sig "$WINDOWS_SIG" \
+            --arg darwin_arm_url "${REPO}/comine.app.tar.gz" \
+            --arg darwin_arm_sig "$DARWIN_ARM_SIG" \
+            --arg darwin_x64_url "${REPO}/comine_x64.app.tar.gz" \
+            --arg darwin_x64_sig "$DARWIN_X64_SIG" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "linux-x86_64": { signature: $linux_sig, url: $linux_url },
+                "windows-x86_64": { signature: $windows_sig, url: $windows_url },
+                "darwin-aarch64": { signature: $darwin_arm_sig, url: $darwin_arm_url },
+                "darwin-x86_64": { signature: $darwin_x64_sig, url: $darwin_x64_url }
               }
-            }
-          }
-          EOF
+            }' > latest.json
 
-      - name: Download signatures
-        run: |
-          VERSION=${{ needs.create-release.outputs.version }}
-          REPO="https://github.com/nichind/comine/releases/download/v${VERSION}"
+          echo "Generated latest.json:"
+          cat latest.json
 
-          # Wait and retry for Linux signature
-          for i in {1..30}; do
-            if curl -sLf "${REPO}/comine_${VERSION}_amd64.AppImage.sig" -o linux.sig 2>/dev/null; then
-              echo "Downloaded Linux signature"
-              break
-            fi
-            echo "Waiting for Linux signature... attempt $i"
-            sleep 10
-          done
-
-          curl -sLf "${REPO}/comine_${VERSION}_x64-setup.exe.sig" -o windows.sig 2>/dev/null && echo "Downloaded Windows signature" || true
-          curl -sLf "${REPO}/comine.app.tar.gz.sig" -o darwin-arm.sig 2>/dev/null && echo "Downloaded macOS ARM signature" || true
-          curl -sLf "${REPO}/comine_x64.app.tar.gz.sig" -o darwin-x64.sig 2>/dev/null && echo "Downloaded macOS x64 signature" || true
-
-      - name: Update manifest with signatures
-        run: |
-          if [ -f linux.sig ]; then
-            SIG=$(cat linux.sig)
-            jq --arg sig "$SIG" '.platforms["linux-x86_64"].signature = $sig' latest.json > tmp.json && mv tmp.json latest.json
-          fi
-          if [ -f windows.sig ]; then
-            SIG=$(cat windows.sig)
-            jq --arg sig "$SIG" '.platforms["windows-x86_64"].signature = $sig' latest.json > tmp.json && mv tmp.json latest.json
-          fi
-          if [ -f darwin-arm.sig ]; then
-            SIG=$(cat darwin-arm.sig)
-            jq --arg sig "$SIG" '.platforms["darwin-aarch64"].signature = $sig' latest.json > tmp.json && mv tmp.json latest.json
-          fi
-          if [ -f darwin-x64.sig ]; then
-            SIG=$(cat darwin-x64.sig)
-            jq --arg sig "$SIG" '.platforms["darwin-x86_64"].signature = $sig' latest.json > tmp.json && mv tmp.json latest.json
+          # Verify signatures are present
+          echo ""
+          EMPTY_SIGS=$(jq -r '.platforms | to_entries[] | select(.value.signature == "") | .key' latest.json)
+          if [ -n "$EMPTY_SIGS" ]; then
+            echo "The following platforms have empty signatures:"
+            echo "$EMPTY_SIGS"
+          else
+            echo "All platforms have valid signatures!"
           fi
 
       - name: Upload manifest to release

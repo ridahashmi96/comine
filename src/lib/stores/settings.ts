@@ -122,6 +122,8 @@ export interface AppSettings {
   customProxyUrl: string;
   proxyFallback: boolean;
 
+  dismissedUpdateVersion: string;
+
   aria2Connections: number;
   aria2Splits: number;
   aria2MinSplitSize: string;
@@ -221,6 +223,8 @@ export const defaultSettings: AppSettings = {
   proxyMode: 'system',
   customProxyUrl: '',
   proxyFallback: true,
+
+  dismissedUpdateVersion: '',
 
   aria2Connections: 16,
   aria2Splits: 16,

@@ -536,6 +536,13 @@
     "downloadComplete": "Загрузка завершена",
     "downloadFailed": "Ошибка загрузки"
   },
+  "updates": {
+    "notificationTitle": "Доступно обновление",
+    "notificationBody": "Версия {version} готова к установке",
+    "notificationBodyPreRelease": "Пре-релиз {version} готов к установке",
+    "installNow": "Установить",
+    "later": "Позже"
+  },
   "onboarding": {
     "back": "Назад",
     "next": "Далее",
