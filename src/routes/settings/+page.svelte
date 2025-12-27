@@ -1712,12 +1712,15 @@
                 <button
                   class="dep-btn primary"
                   onclick={downloadAndInstall}
-                  disabled={$updateState.downloading}
+                  disabled={$updateState.downloading || $updateState.installTriggered}
                 >
                   {#if $updateState.downloading}
                     <span class="btn-spinner"></span>
                     {$t('settings.app.downloading')}
                     {$updateState.progress}%
+                  {:else if $updateState.installTriggered}
+                    <Icon name="check" size={14} />
+                    {$t('settings.app.installTriggered')}
                   {:else}
                     {$t('settings.app.installUpdate')}
                   {/if}

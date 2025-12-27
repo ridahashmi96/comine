@@ -272,6 +272,7 @@
       "noUpdates": "You're up to date!",
       "updateCheckFailed": "Failed to check for updates",
       "installUpdate": "Install Update",
+      "installTriggered": "Install Started",
       "installing": "Installing...",
       "downloading": "Downloading",
       "whatsNew": "What's new:",

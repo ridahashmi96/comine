@@ -367,6 +367,7 @@ export type TranslationKeys =
   | 'settings.app.disableAnimations'
   | 'settings.app.downloading'
   | 'settings.app.fileSize'
+  | 'settings.app.installTriggered'
   | 'settings.app.installUpdate'
   | 'settings.app.installing'
   | 'settings.app.largeFileWarningAndroid'

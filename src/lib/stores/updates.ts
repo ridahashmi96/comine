@@ -25,6 +25,7 @@ export interface UpdateState {
   available: boolean;
   checking: boolean;
   downloading: boolean;
+  installTriggered: boolean;
   progress: number;
   info: UpdateInfo | null;
   lastCheck: number;
@@ -35,6 +36,7 @@ const defaultState: UpdateState = {
   available: false,
   checking: false,
   downloading: false,
+  installTriggered: false,
   progress: 0,
   info: null,
   lastCheck: 0,
@@ -55,7 +57,12 @@ export async function checkForUpdates(manual = false): Promise<UpdateInfo | null
   const s = get(settings);
   if (!manual && !s.autoUpdate) return null;
 
-  updateState.update((state) => ({ ...state, checking: true, error: null }));
+  updateState.update((state) => ({
+    ...state,
+    checking: true,
+    error: null,
+    installTriggered: false,
+  }));
 
   try {
     if (isAndroid()) {
@@ -264,16 +271,19 @@ async function downloadAndInstallAndroid(info: UpdateInfo): Promise<void> {
 
   const downloadUrl = info.downloadUrl;
   const android = (window as unknown as { AndroidYtDlp: AndroidUpdater }).AndroidYtDlp;
-  const updateFn = android?.downloadAndInstallUpdate;
 
-  if (updateFn) {
+  if (android?.downloadAndInstallUpdate) {
     return new Promise((resolve, reject) => {
       const callbackName = `__update_callback_${Date.now()}`;
       const progressCallbackName = `${callbackName}_progress`;
 
+      console.log('[Updates] Starting Android update download:', downloadUrl);
+      console.log('[Updates] Callback name:', callbackName);
+
       // Progress callback
       (window as unknown as Record<string, unknown>)[progressCallbackName] = (json: string) => {
         try {
+          console.log('[Updates] Progress callback received:', json);
           const data = JSON.parse(json) as {
             type: string;
             downloaded: number;
@@ -292,17 +302,20 @@ async function downloadAndInstallAndroid(info: UpdateInfo): Promise<void> {
 
       // Completion callback
       (window as unknown as Record<string, unknown>)[callbackName] = (json: string) => {
+        console.log('[Updates] Completion callback received:', json);
         // Cleanup callbacks
         delete (window as unknown as Record<string, unknown>)[callbackName];
         delete (window as unknown as Record<string, unknown>)[progressCallbackName];
 
         try {
           const data = JSON.parse(json) as { type: string; success: boolean; error?: string };
-          updateState.update((s) => ({ ...s, downloading: false }));
 
           if (data.success) {
+            // Install was triggered successfully - mark it so UI can show appropriate state
+            updateState.update((s) => ({ ...s, downloading: false, installTriggered: true }));
             resolve();
           } else {
+            updateState.update((s) => ({ ...s, downloading: false }));
             reject(new Error(data.error || 'Update failed'));
           }
         } catch (e) {
@@ -311,10 +324,19 @@ async function downloadAndInstallAndroid(info: UpdateInfo): Promise<void> {
         }
       };
 
-      // Start the download with callback name
-      updateFn(downloadUrl, callbackName);
+      // Start the download with callback name - call method on android object directly
+      try {
+        android.downloadAndInstallUpdate!(downloadUrl, callbackName);
+        console.log('[Updates] Called android.downloadAndInstallUpdate successfully');
+      } catch (e) {
+        console.error('[Updates] Failed to call downloadAndInstallUpdate:', e);
+        delete (window as unknown as Record<string, unknown>)[callbackName];
+        delete (window as unknown as Record<string, unknown>)[progressCallbackName];
+        reject(e);
+      }
     });
   } else {
+    console.log('[Updates] Android update method not available, falling back to browser');
     // Fallback: open URL in browser for manual download
     const opener = await import('@tauri-apps/plugin-opener');
     await opener.openUrl(downloadUrl);

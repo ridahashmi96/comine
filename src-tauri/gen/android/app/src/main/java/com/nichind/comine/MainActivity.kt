@@ -43,6 +43,8 @@ class MainActivity : TauriActivity() {
   private val mainHandler = Handler(Looper.getMainLooper())
   private var pendingShareUrl: String? = null
   private var notificationManager: NotificationManager? = null
+  private var pendingUpdateApk: File? = null
+  private var pendingUpdateCallback: String? = null
   
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
@@ -51,6 +53,78 @@ class MainActivity : TauriActivity() {
     requestNotificationPermission()
     initYoutubeDL()
     handleIntent(intent)
+  }
+  
+  override fun onResume() {
+    super.onResume()
+    tryInstallPendingUpdate()
+  }
+  
+  private fun tryInstallPendingUpdate() {
+    val apkFile = pendingUpdateApk ?: return
+    val callbackName = pendingUpdateCallback ?: return
+    
+    if (!apkFile.exists()) {
+      Log.w(TAG, "Pending update APK no longer exists")
+      pendingUpdateApk = null
+      pendingUpdateCallback = null
+      return
+    }
+    
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      if (!packageManager.canRequestPackageInstalls()) {
+        return
+      }
+    }
+    
+    Log.i(TAG, "Attempting to install pending update APK")
+    pendingUpdateApk = null
+    pendingUpdateCallback = null
+    
+    try {
+      val uri = androidx.core.content.FileProvider.getUriForFile(
+        this,
+        "${packageName}.fileprovider",
+        apkFile
+      )
+      
+      val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, "application/vnd.android.package-archive")
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      }
+      
+      startActivity(intent)
+      
+      mainHandler.post {
+        val resultJson = JSONObject().apply {
+          put("type", "complete")
+          put("success", true)
+        }.toString()
+        
+        val base64Json = android.util.Base64.encodeToString(resultJson.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
+        val script = """
+          (function() {
+            try {
+              if (window.$callbackName) {
+                var binaryStr = atob('$base64Json');
+                var bytes = new Uint8Array(binaryStr.length);
+                for (var i = 0; i < binaryStr.length; i++) {
+                  bytes[i] = binaryStr.charCodeAt(i);
+                }
+                var decoded = new TextDecoder('utf-8').decode(bytes);
+                window.$callbackName(decoded);
+              }
+            } catch(e) {
+              console.error('Callback error:', e);
+            }
+          })();
+        """.trimIndent()
+        evaluateJavascript(script)
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to install pending update", e)
+    }
   }
   
   private fun requestNotificationPermission() {
@@ -465,11 +539,28 @@ class MainActivity : TauriActivity() {
           
           mainHandler.post {
             try {
+              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                if (!context.packageManager.canRequestPackageInstalls()) {
+                  sendLog("info", "Requesting install permission from user")
+                  pendingUpdateApk = apkFile
+                  pendingUpdateCallback = callbackName
+                  val settingsIntent = Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                    data = android.net.Uri.parse("package:${context.packageName}")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                  }
+                  context.startActivity(settingsIntent)
+                  sendLog("info", "APK saved, will auto-install when user returns with permission granted")
+                  return@post
+                }
+              }
+              
               val uri = androidx.core.content.FileProvider.getUriForFile(
                 context,
                 "${context.packageName}.fileprovider",
                 apkFile
               )
+              
+              sendLog("info", "Starting APK install with URI: $uri")
               
               val intent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, "application/vnd.android.package-archive")
