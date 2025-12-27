@@ -2,6 +2,8 @@
 
 Cross-platform media and file downloader.
 
+<img width="750" align="center" alt="App preview" src="https://github.com/user-attachments/assets/d0c95796-99f3-4f98-9ab8-d53c6fde2019" />
+
 ## Tech Stack
 
 - **Frontend:** Svelte 5 + SvelteKit
