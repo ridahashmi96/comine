@@ -1,4 +1,4 @@
-﻿# comine <img src="static\icon.png" align="right" height="200" alt="Comine logo (icon)" />
+﻿# comine <img src="static\icon.png" align="right" height="90" alt="Comine logo (icon)" />
 
 Cross-platform media and file downloader.
 
