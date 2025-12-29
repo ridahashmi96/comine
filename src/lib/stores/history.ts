@@ -50,6 +50,8 @@ function debouncedSave(items: HistoryItem[]) {
   }, 300);
 }
 
+const MAX_HISTORY_ITEMS = 1000;
+
 // Force immediate save (for critical operations)
 async function forceSave(items: HistoryItem[]) {
   if (saveTimeout) {
@@ -96,7 +98,7 @@ function createHistoryStore() {
       };
 
       update((state) => {
-        const items = [newItem, ...state.items];
+        const items = [newItem, ...state.items].slice(0, MAX_HISTORY_ITEMS);
         debouncedSave(items);
         return { ...state, items };
       });

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
+  import { beforeNavigate } from '$app/navigation';
   import { t } from '$lib/i18n';
   import { goto } from '$app/navigation';
   import { invoke } from '@tauri-apps/api/core';
@@ -18,7 +19,7 @@
     type HistoryPlaylistGroup,
   } from '$lib/stores/history';
   import { isAndroid, openFileOnAndroid, openFolderOnAndroid } from '$lib/utils/android';
-  import { settings } from '$lib/stores/settings';
+  import { settings, updateSetting } from '$lib/stores/settings';
   import {
     activeDownloads as queueActiveDownloads,
     queue,
@@ -33,6 +34,27 @@
   import ScrollArea from '$lib/components/ScrollArea.svelte';
   import { tooltip } from '$lib/actions/tooltip';
   import { extractDominantColor, generateColorVars, type RGB } from '$lib/utils/color';
+  import { saveScrollPosition, getScrollPosition } from '$lib/stores/scroll';
+
+  const ROUTE_PATH = '/downloads';
+
+  let scrollAreaRef: ScrollArea | undefined = $state(undefined);
+
+  beforeNavigate(() => {
+    const pos = scrollAreaRef?.getScroll() ?? 0;
+    saveScrollPosition(ROUTE_PATH, pos);
+  });
+
+  onMount(() => {
+    const savedPosition = getScrollPosition(ROUTE_PATH);
+    if (savedPosition > 0) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          scrollAreaRef?.restoreScroll(savedPosition);
+        });
+      });
+    }
+  });
 
   let missingFiles = $state<Set<string>>(new Set());
 
@@ -66,7 +88,7 @@
   let searchQuery = $state('');
   let activeFilter = $state<FilterType>('all');
   let sortType = $state<SortType>('date');
-  let viewMode = $state<'list' | 'grid'>('list');
+  let viewMode = $derived($settings.downloadsViewMode);
   let hoveredItemId = $state<string | null>(null);
 
   let itemColors = $state<Map<string, RGB>>(new Map());
@@ -264,20 +286,12 @@
 </script>
 
 <div class="page">
-  <div class="page-header">
-    <h1>{$t('downloads.title')}</h1>
-    <p class="subtitle">{$t('downloads.subtitle')}</p>
-  </div>
-
-  <!-- Search Bar -->
   <div class="search-bar">
     <Icon name="search" size={18} />
     <input type="text" placeholder={$t('downloads.searchPlaceholder')} bind:value={searchQuery} />
   </div>
 
-  <!-- Toolbar -->
   <div class="toolbar">
-    <!-- Filter Chips -->
     <div class="filters">
       <Chip selected={activeFilter === 'all'} icon="date" onclick={() => setFilter('all')}>
         {$t('downloads.filters.all')}
@@ -296,9 +310,7 @@
       </Chip>
     </div>
 
-    <!-- Sort & View Controls -->
     <div class="controls-right">
-      <!-- Sort Dropdown -->
       <div class="sort-control">
         <span class="sort-label">{$t('downloads.sort.label')}:</span>
         <Select
@@ -312,12 +324,11 @@
         />
       </div>
 
-      <!-- View Toggle -->
       <div class="view-toggle">
         <button
           class="view-btn"
           class:active={viewMode === 'list'}
-          onclick={() => (viewMode = 'list')}
+          onclick={() => updateSetting('downloadsViewMode', 'list')}
           use:tooltip={$t('downloads.views.list')}
         >
           <Icon name="checklist" size={18} />
@@ -325,7 +336,7 @@
         <button
           class="view-btn"
           class:active={viewMode === 'grid'}
-          onclick={() => (viewMode = 'grid')}
+          onclick={() => updateSetting('downloadsViewMode', 'grid')}
           use:tooltip={$t('downloads.views.grid')}
         >
           <Icon name="gallery" size={18} />
@@ -334,9 +345,7 @@
     </div>
   </div>
 
-  <!-- Scrollable Content Area -->
-  <ScrollArea>
-    <!-- Active Downloads Section -->
+  <ScrollArea bind:this={scrollAreaRef}>
     {#if activeDownloads.length > 0}
       {@const grouped = filteredGroupedDownloads()}
       <div class="section-header">
@@ -344,7 +353,6 @@
         <span>{$t('downloads.active')}</span>
         <span class="count-badge">{activeDownloads.length}</span>
 
-        <!-- Queue Controls -->
         <div class="queue-controls">
           <button
             class="queue-btn"
@@ -655,19 +663,6 @@
       </div>
 
       <Divider my={12} />
-    {/if}
-
-    <!-- Table Header (list view only) -->
-    {#if viewMode === 'list'}
-      <div class="table-header">
-        <span></span>
-        <span>{$t('downloads.table.title')}</span>
-        <span></span>
-        <span class="col-center">{$t('downloads.table.ext')}</span>
-        <span class="col-center">{$t('downloads.table.size')}</span>
-        <span class="col-center">{$t('downloads.table.length')}</span>
-        <span></span>
-      </div>
     {/if}
 
     <!-- History List -->
@@ -1263,25 +1258,10 @@
 
 <style>
   .page {
-    padding: 0 8px 0 16px;
+    padding: 0 14px 0 16px;
     height: 100%;
     display: flex;
     flex-direction: column;
-  }
-
-  .page-header {
-    margin-bottom: 16px;
-  }
-
-  h1 {
-    font-size: 28px;
-    font-weight: 700;
-    margin-bottom: 6px;
-  }
-
-  .subtitle {
-    color: rgba(255, 255, 255, 0.6);
-    font-size: 14px;
   }
 
   /* Active Downloads Section */
@@ -1879,20 +1859,6 @@
     color: white;
   }
 
-  /* Table Header */
-  .table-header {
-    display: grid;
-    grid-template-columns: 60px 1fr 120px 50px 70px 60px 32px;
-    gap: 12px;
-    padding: 8px 12px;
-    font-size: 10px;
-    font-weight: 350;
-    color: rgba(255, 255, 255, 0.4);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  }
-
   /* History List */
   .history-list {
     padding-bottom: 16px;
@@ -2057,10 +2023,6 @@
   .col-length {
     font-size: 13px;
     color: rgba(255, 255, 255, 0.6);
-    text-align: center;
-  }
-
-  .col-center {
     text-align: center;
   }
 
@@ -2401,10 +2363,6 @@
       padding: 0 12px 0 12px;
     }
 
-    h1 {
-      font-size: 24px;
-    }
-
     /* Toolbar - stack into two rows */
     .toolbar {
       flex-direction: column;
@@ -2443,10 +2401,6 @@
 
     .sort-control :global(.select-trigger) {
       width: 100%;
-    }
-
-    .table-header {
-      display: none;
     }
 
     .history-item {

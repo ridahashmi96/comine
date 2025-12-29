@@ -133,6 +133,9 @@ export interface AppSettings {
   watchClipboardForFiles: boolean;
   fileDownloadNotifications: boolean;
 
+  downloadsViewMode: 'list' | 'grid';
+  historyViewMode: 'list' | 'grid';
+
   customPresets: CustomPreset[];
 }
 
@@ -234,6 +237,9 @@ export const defaultSettings: AppSettings = {
 
   watchClipboardForFiles: true,
   fileDownloadNotifications: true,
+
+  downloadsViewMode: 'list',
+  historyViewMode: 'list',
 
   customPresets: [],
 };

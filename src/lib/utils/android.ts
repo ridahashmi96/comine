@@ -12,6 +12,7 @@ interface AndroidYtDlp {
     url: string,
     format: string | null,
     playlistFolder: string | null,
+    isAudioOnly: boolean,
     callbackName: string
   ): void;
   openFile(filePath: string): boolean;
@@ -111,6 +112,19 @@ export interface DownloadResult {
 
 let callbackCounter = 0;
 
+const activeCallbacks = new Set<string>();
+
+/**
+ * Clean up any orphaned callbacks - call on page unload
+ */
+export function cleanupAndroidCallbacks(): void {
+  activeCallbacks.forEach((name) => {
+    delete (window as unknown as Record<string, unknown>)[name];
+    delete (window as unknown as Record<string, unknown>)[`${name}_progress`];
+  });
+  activeCallbacks.clear();
+}
+
 /**
  * Download a video using the Android bridge
  * @returns Promise that resolves when download completes
@@ -119,7 +133,8 @@ export function downloadOnAndroid(
   url: string,
   format: string = 'best',
   onProgress?: (progress: DownloadProgress) => void,
-  playlistFolder?: string | null
+  playlistFolder?: string | null,
+  isAudioOnly: boolean = false
 ): Promise<DownloadResult> {
   return new Promise((resolve, reject) => {
     if (!isAndroid() || !window.AndroidYtDlp) {
@@ -133,6 +148,7 @@ export function downloadOnAndroid(
     }
 
     const callbackName = `ytdlp_cb_${++callbackCounter}`;
+    activeCallbacks.add(callbackName);
     let hasCompleted = false;
 
     const timeout = setTimeout(() => {
@@ -146,6 +162,7 @@ export function downloadOnAndroid(
 
     const cleanup = () => {
       clearTimeout(timeout);
+      activeCallbacks.delete(callbackName);
       delete (window as unknown as Record<string, unknown>)[`${callbackName}_progress`];
       delete (window as unknown as Record<string, unknown>)[callbackName];
     };
@@ -213,9 +230,15 @@ export function downloadOnAndroid(
       logHandler?.(
         'info',
         'Android',
-        `Starting download via bridge: ${url}${playlistFolder ? ` (folder: ${playlistFolder})` : ''}`
+        `Starting download via bridge: ${url}${playlistFolder ? ` (folder: ${playlistFolder})` : ''}, isAudioOnly: ${isAudioOnly}`
       );
-      window.AndroidYtDlp.download(url, format || null, playlistFolder || null, callbackName);
+      window.AndroidYtDlp.download(
+        url,
+        format || null,
+        playlistFolder || null,
+        isAudioOnly,
+        callbackName
+      );
     } catch (error) {
       hasCompleted = true;
       cleanup();
@@ -241,11 +264,13 @@ export function getVideoInfoOnAndroid(url: string): Promise<Record<string, unkno
     }
 
     const callbackName = `ytdlp_info_cb_${++callbackCounter}`;
+    activeCallbacks.add(callbackName);
     let hasCompleted = false;
 
     const timeout = setTimeout(() => {
       if (!hasCompleted) {
         hasCompleted = true;
+        activeCallbacks.delete(callbackName);
         delete (window as unknown as Record<string, unknown>)[callbackName];
         logHandler?.('warn', 'Android', 'Video info fetch timeout');
         reject(new Error('Video info fetch timeout'));
@@ -257,6 +282,7 @@ export function getVideoInfoOnAndroid(url: string): Promise<Record<string, unkno
       hasCompleted = true;
       clearTimeout(timeout);
 
+      activeCallbacks.delete(callbackName);
       delete (window as unknown as Record<string, unknown>)[callbackName];
 
       try {
@@ -284,6 +310,7 @@ export function getVideoInfoOnAndroid(url: string): Promise<Record<string, unkno
     } catch (error) {
       hasCompleted = true;
       clearTimeout(timeout);
+      activeCallbacks.delete(callbackName);
       delete (window as unknown as Record<string, unknown>)[callbackName];
       logHandler?.('error', 'Android', `Failed to call getVideoInfo: ${error}`);
       reject(error);
@@ -334,11 +361,13 @@ export function getPlaylistInfoOnAndroid(url: string): Promise<PlaylistInfo> {
     }
 
     const callbackName = `ytdlp_playlist_cb_${++callbackCounter}`;
+    activeCallbacks.add(callbackName);
     let hasCompleted = false;
 
     const timeout = setTimeout(() => {
       if (!hasCompleted) {
         hasCompleted = true;
+        activeCallbacks.delete(callbackName);
         delete (window as unknown as Record<string, unknown>)[callbackName];
         logHandler?.('warn', 'Android', 'Playlist info fetch timeout');
         reject(new Error('Playlist info fetch timeout'));
@@ -350,6 +379,7 @@ export function getPlaylistInfoOnAndroid(url: string): Promise<PlaylistInfo> {
       hasCompleted = true;
       clearTimeout(timeout);
 
+      activeCallbacks.delete(callbackName);
       delete (window as unknown as Record<string, unknown>)[callbackName];
 
       try {
@@ -381,6 +411,7 @@ export function getPlaylistInfoOnAndroid(url: string): Promise<PlaylistInfo> {
     } catch (error) {
       hasCompleted = true;
       clearTimeout(timeout);
+      activeCallbacks.delete(callbackName);
       delete (window as unknown as Record<string, unknown>)[callbackName];
       logHandler?.('error', 'Android', `Failed to call getPlaylistInfo: ${error}`);
       reject(error);
@@ -492,14 +523,17 @@ export function pickFileOnAndroid(mimeTypes: string): Promise<string | null> {
     }
 
     const callbackName = `file_pick_cb_${++callbackCounter}`;
+    activeCallbacks.add(callbackName);
 
     const timeout = setTimeout(() => {
+      activeCallbacks.delete(callbackName);
       delete (window as unknown as Record<string, unknown>)[callbackName];
       resolve(null);
     }, 300000);
 
     (window as unknown as Record<string, unknown>)[callbackName] = (uri: string | null) => {
       clearTimeout(timeout);
+      activeCallbacks.delete(callbackName);
       delete (window as unknown as Record<string, unknown>)[callbackName];
       resolve(uri || null);
     };
@@ -508,6 +542,7 @@ export function pickFileOnAndroid(mimeTypes: string): Promise<string | null> {
       window.AndroidYtDlp.pickFile(mimeTypes, callbackName);
     } catch (error) {
       clearTimeout(timeout);
+      activeCallbacks.delete(callbackName);
       delete (window as unknown as Record<string, unknown>)[callbackName];
       console.error('Failed to open file picker on Android:', error);
       resolve(null);
@@ -528,8 +563,10 @@ export function processYtmThumbnailOnAndroid(thumbnailUrl: string): Promise<stri
     }
 
     const callbackName = `thumb_process_cb_${++callbackCounter}`;
+    activeCallbacks.add(callbackName);
 
     const timeout = setTimeout(() => {
+      activeCallbacks.delete(callbackName);
       delete (window as unknown as Record<string, unknown>)[callbackName];
       logHandler?.('warn', 'Android', 'Thumbnail processing timeout');
       resolve(thumbnailUrl);
@@ -537,6 +574,7 @@ export function processYtmThumbnailOnAndroid(thumbnailUrl: string): Promise<stri
 
     (window as unknown as Record<string, unknown>)[callbackName] = (json: string) => {
       clearTimeout(timeout);
+      activeCallbacks.delete(callbackName);
       delete (window as unknown as Record<string, unknown>)[callbackName];
 
       try {
@@ -557,6 +595,7 @@ export function processYtmThumbnailOnAndroid(thumbnailUrl: string): Promise<stri
       window.AndroidYtDlp.processYtmThumbnail(thumbnailUrl, callbackName);
     } catch (error) {
       clearTimeout(timeout);
+      activeCallbacks.delete(callbackName);
       delete (window as unknown as Record<string, unknown>)[callbackName];
       logHandler?.('error', 'Android', `Failed to call processYtmThumbnail: ${error}`);
       resolve(thumbnailUrl);

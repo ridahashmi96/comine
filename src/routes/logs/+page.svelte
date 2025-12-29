@@ -1,13 +1,17 @@
 <script lang="ts">
   import { t } from '$lib/i18n';
   import { logs, filteredLogs, logStats, type LogLevel } from '$lib/stores/logs';
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
+  import { beforeNavigate } from '$app/navigation';
   import Icon from '$lib/components/Icon.svelte';
   import { tooltip } from '$lib/actions/tooltip';
   import { save } from '@tauri-apps/plugin-dialog';
   import { writeTextFile } from '@tauri-apps/plugin-fs';
   import Modal from '$lib/components/Modal.svelte';
   import Button from '$lib/components/Button.svelte';
+  import { saveScrollPosition, getScrollPosition } from '$lib/stores/scroll';
+
+  const ROUTE_PATH = '/logs';
 
   let searchQuery = $state('');
   let logContainer: HTMLElement | null = null;
@@ -15,21 +19,48 @@
   let isMobile = $state(false);
   let isDesktop = $state(false);
 
+  beforeNavigate(() => {
+    const pos = logContainer?.scrollTop ?? 0;
+    saveScrollPosition(ROUTE_PATH, pos);
+  });
+
   let showCopyModal = $state(false);
   let copyContentLength = $state(0);
 
   let activeFilters = $state<Set<LogLevel>>(new Set(['trace', 'debug', 'info', 'warn', 'error']));
 
+  let resizeHandler: (() => void) | null = null;
+
   onMount(async () => {
     isMobile = window.innerWidth < 768;
-    window.addEventListener('resize', () => {
+    resizeHandler = () => {
       isMobile = window.innerWidth < 768;
-    });
+    };
+    window.addEventListener('resize', resizeHandler);
 
     const ua = navigator.userAgent.toLowerCase();
     isDesktop = !ua.includes('android') && !ua.includes('iphone') && !ua.includes('ipad');
 
     logs.info('system', 'Log viewer opened');
+
+    const savedPosition = getScrollPosition(ROUTE_PATH);
+    if (savedPosition > 0 && logContainer) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (logContainer) {
+            logContainer.scrollTop = savedPosition;
+            autoScroll = false;
+          }
+        });
+      });
+    }
+  });
+
+  onDestroy(() => {
+    if (resizeHandler) {
+      window.removeEventListener('resize', resizeHandler);
+      resizeHandler = null;
+    }
   });
 
   function toggleFilter(level: LogLevel) {
@@ -319,6 +350,8 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    /* Match other pages: left padding for content */
+    padding-left: 16px;
   }
 
   .log-container {
@@ -329,6 +362,17 @@
     font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Consolas', monospace;
     font-size: 12px;
     padding-bottom: 80px;
+    padding-right: 6px;
+    margin-right: 4px;
+    margin-bottom: 4px;
+    mask-image: linear-gradient(to bottom, black, black 0px, black calc(100% - 90px), transparent);
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      black,
+      black 0px,
+      black calc(100% - 90px),
+      transparent
+    );
   }
 
   .empty-state {

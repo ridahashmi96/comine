@@ -24,7 +24,7 @@
   const isPlaylist = params.get('is_playlist') === '1';
   const viewPlaylistLabel = 'View Playlist';
 
-  const isYouTubeMusic = /music\.youtube\.com/i.test(mediaUrl);
+  const isYouTube = /youtube\.com|youtu\.be/i.test(mediaUrl);
 
   let isReady = $state(false);
   let isHovered = $state(false);
@@ -91,6 +91,26 @@
           uploader: body ? body.split(' • ')[0] : null,
           downloadMode: mode,
           isPlaylist: isPlaylist,
+        },
+      });
+    } catch (e) {
+      console.error('Action failed:', e);
+      isDownloading = false;
+    }
+  }
+
+  async function handleOpenTrackBuilder() {
+    isDownloading = true;
+
+    try {
+      await invoke('notification_action', {
+        windowId: WINDOW_ID,
+        url: mediaUrl || null,
+        metadata: {
+          title: title !== 'Media Detected' ? title : null,
+          thumbnail: thumbnail || null,
+          uploader: body ? body.split(' • ')[0] : null,
+          openTrackBuilder: true,
         },
       });
     } catch (e) {
@@ -258,13 +278,13 @@
             </svg>
           {/if}
         </button>
-      {:else if isYouTubeMusic}
-        <!-- YTM: Show Video and Audio buttons -->
+      {:else if isYouTube}
+        <!-- YouTube: Show Download and Track Builder buttons -->
         <button
-          class="icon-btn download video"
+          class="icon-btn download youtube"
           class:downloading={isDownloading}
           onclick={() => handleDownload('auto')}
-          title="Video"
+          title="Download"
           disabled={isDownloading}
         >
           {#if isDownloading}
@@ -283,28 +303,34 @@
           {:else}
             <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
               <path
-                d="M4 8V16C4 17.1046 4.89543 18 6 18H18C19.1046 18 20 17.1046 20 16V8C20 6.89543 19.1046 6 18 6H6C4.89543 6 4 6.89543 4 8Z"
+                d="M12 3V16M12 16L16 11.625M12 16L8 11.625"
                 stroke="currentColor"
                 stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
               />
-              <path d="M10 9L15 12L10 15V9Z" fill="currentColor" />
+              <path
+                d="M3 15C3 17.828 3 19.243 3.879 20.121C4.757 21 6.172 21 9 21H15C17.828 21 19.243 21 20.121 20.121C21 19.243 21 17.828 21 15"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
             </svg>
           {/if}
         </button>
         <button
-          class="icon-btn download audio"
-          class:downloading={isDownloading}
-          onclick={() => handleDownload('audio')}
-          title="Audio"
+          class="icon-btn track-builder"
+          onclick={handleOpenTrackBuilder}
+          title="Track Builder"
           disabled={isDownloading}
         >
           <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
             <path
-              d="M9 18V5L21 3V16M9 18C9 19.6569 7.65685 21 6 21C4.34315 21 3 19.6569 3 18C3 16.3431 4.34315 15 6 15C7.65685 15 9 16.3431 9 18ZM21 16C21 17.6569 19.6569 19 18 19C16.3431 19 15 17.6569 15 16C15 14.3431 16.3431 13 18 13C19.6569 13 21 14.3431 21 16Z"
+              d="M12 5V19M5 12H19"
               stroke="currentColor"
               stroke-width="2"
               stroke-linecap="round"
-              stroke-linejoin="round"
             />
           </svg>
         </button>
@@ -443,10 +469,10 @@
             {viewPlaylistLabel}
           {/if}
         </button>
-      {:else if isYouTubeMusic}
-        <!-- YTM: Show Video and Audio download buttons -->
+      {:else if isYouTube}
+        <!-- YouTube: Show Download and Track Builder buttons -->
         <button
-          class="btn download video"
+          class="btn download"
           class:downloading={isDownloading}
           onclick={() => handleDownload('auto')}
           disabled={isDownloading}
@@ -466,33 +492,19 @@
             </svg>
             Starting...
           {:else}
-            <svg viewBox="0 0 24 24" fill="none" width="14" height="14">
-              <path
-                d="M4 8V16C4 17.1046 4.89543 18 6 18H18C19.1046 18 20 17.1046 20 16V8C20 6.89543 19.1046 6 18 6H6C4.89543 6 4 6.89543 4 8Z"
-                stroke="currentColor"
-                stroke-width="2"
-              />
-              <path d="M10 9L15 12L10 15V9Z" fill="currentColor" />
-            </svg>
-            Video
+            Download
           {/if}
         </button>
-        <button
-          class="btn download audio"
-          class:downloading={isDownloading}
-          onclick={() => handleDownload('audio')}
-          disabled={isDownloading}
-        >
+        <button class="btn track-builder" onclick={handleOpenTrackBuilder} disabled={isDownloading}>
           <svg viewBox="0 0 24 24" fill="none" width="14" height="14">
             <path
-              d="M9 18V5L21 3V16M9 18C9 19.6569 7.65685 21 6 21C4.34315 21 3 19.6569 3 18C3 16.3431 4.34315 15 6 15C7.65685 15 9 16.3431 9 18ZM21 16C21 17.6569 19.6569 19 18 19C16.3431 19 15 17.6569 15 16C15 14.3431 16.3431 13 18 13C19.6569 13 21 14.3431 21 16Z"
+              d="M12 5V19M5 12H19"
               stroke="currentColor"
               stroke-width="2"
               stroke-linecap="round"
-              stroke-linejoin="round"
             />
           </svg>
-          Audio
+          Options
         </button>
       {:else}
         <!-- Normal: Download button and optional dismiss button -->
@@ -552,7 +564,6 @@
     inset: 0;
     z-index: 0;
     overflow: hidden;
-    border-radius: 10px;
     pointer-events: none;
   }
 
@@ -589,7 +600,6 @@
   .notification {
     background: #1a1a1e;
     border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 10px;
     padding: 12px;
     display: flex;
     flex-direction: column;
@@ -771,6 +781,14 @@
     background: rgba(255, 255, 255, 0.12);
     color: white;
   }
+  .btn.track-builder {
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.9);
+  }
+  .btn.track-builder:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.15);
+    color: white;
+  }
 
   .btn .spinner {
     animation: spin 0.8s linear infinite;
@@ -876,17 +894,18 @@
     transition: transform 0.15s ease;
   }
 
-  /* YTM dual buttons - make them smaller to fit both */
-  .icon-btn.video,
-  .icon-btn.audio {
+  /* Track builder button */
+  .icon-btn.track-builder,
+  .icon-btn.download.youtube {
     width: 28px;
     height: 28px;
   }
-  .icon-btn.audio {
+  .icon-btn.track-builder {
     background: rgba(255, 255, 255, 0.12);
+    color: white;
   }
-  .icon-btn.audio:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.18);
+  .icon-btn.track-builder:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.2);
     transform: scale(1.08);
   }
 

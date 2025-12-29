@@ -778,23 +778,39 @@ class MainActivity : TauriActivity() {
             return@execute
           }
           
-          sendLog("info", "Fetching video info for: $url")
-          val info = YoutubeDL.getInstance().getInfo(url)
-          val thumbnailUrl = info.thumbnail ?: ""
+          sendLog("info", "Fetching video info with formats for: $url")
           
-          val result = JSONObject().apply {
-            put("title", info.title ?: "")
-            put("id", info.id ?: "")
-            put("duration", info.duration)
-            put("uploader", info.uploader ?: "")
-            put("uploader_id", info.uploaderId ?: "")
-            put("channel", info.uploader ?: "")
-            put("thumbnail", thumbnailUrl)
-            put("ext", info.ext ?: "")
-          }.toString()
+          val request = YoutubeDLRequest(url)
+          request.addOption("--dump-json")
+          request.addOption("--no-download")
+          request.addOption("--no-playlist")
           
-          sendLog("info", "Video info fetched: ${info.title}, uploader_id: ${info.uploaderId ?: "none"}, thumbnail: ${if (thumbnailUrl.isNotEmpty()) "yes" else "no"}")
-          sendCallback(callbackName, result)
+          if (url.contains("youtube.com") || url.contains("youtu.be")) {
+            request.addOption("--extractor-args", "youtube:player_client=android_sdkless")
+          }
+          
+          val response = YoutubeDL.getInstance().execute(request, null)
+          
+          if (response.exitCode != 0) {
+            sendLog("error", "Failed to get video info: ${response.err}")
+            sendCallback(callbackName, JSONObject().apply {
+              put("error", response.err ?: "Unknown error")
+            }.toString())
+            return@execute
+          }
+          
+          val output = response.out ?: ""
+          if (output.isBlank()) {
+            sendLog("error", "Empty response from yt-dlp")
+            sendCallback(callbackName, JSONObject().apply {
+              put("error", "Empty response from yt-dlp")
+            }.toString())
+            return@execute
+          }
+          
+          val json = JSONObject(output)
+          sendLog("info", "Video info fetched: ${json.optString("title")}, formats: ${json.optJSONArray("formats")?.length() ?: 0}")
+          sendCallback(callbackName, output)
           
         } catch (e: Exception) {
           Log.e(TAG, "Failed to get video info", e)
@@ -1026,66 +1042,58 @@ class MainActivity : TauriActivity() {
     private fun isLetterboxed(bitmap: android.graphics.Bitmap, barWidth: Int): Boolean {
       val width = bitmap.width
       val height = bitmap.height
-      val tolerance = 20
-      val refColor = bitmap.getPixel(barWidth / 2, height / 2)
-      val refR = android.graphics.Color.red(refColor)
-      val refG = android.graphics.Color.green(refColor)
-      val refB = android.graphics.Color.blue(refColor)
+      val darkThreshold = 30
       
       val samplePoints = listOf(
+        // Left bar
         Pair(barWidth / 4, height / 4),
         Pair(barWidth / 4, height / 2),
         Pair(barWidth / 4, height * 3 / 4),
         Pair(barWidth / 2, height / 4),
+        Pair(barWidth / 2, height / 2),
         Pair(barWidth / 2, height * 3 / 4),
-        Pair(barWidth * 3 / 4, height / 3),
-        Pair(barWidth * 3 / 4, height * 2 / 3),
+        Pair(barWidth * 3 / 4, height / 4),
+        Pair(barWidth * 3 / 4, height / 2),
+        Pair(barWidth * 3 / 4, height * 3 / 4),
+        // Right bar
         Pair(width - barWidth / 4, height / 4),
         Pair(width - barWidth / 4, height / 2),
         Pair(width - barWidth / 4, height * 3 / 4),
         Pair(width - barWidth / 2, height / 4),
+        Pair(width - barWidth / 2, height / 2),
         Pair(width - barWidth / 2, height * 3 / 4),
-        Pair(width - barWidth * 3 / 4, height / 3),
-        Pair(width - barWidth * 3 / 4, height * 2 / 3)
+        Pair(width - barWidth * 3 / 4, height / 4),
+        Pair(width - barWidth * 3 / 4, height / 2),
+        Pair(width - barWidth * 3 / 4, height * 3 / 4)
       )
       
+      // First check: are the bars dark (black letterboxing)?
+      var darkCount = 0
       for ((x, y) in samplePoints) {
+        if (x < 0 || x >= width || y < 0 || y >= height) continue
         val pixel = bitmap.getPixel(x, y)
         val r = android.graphics.Color.red(pixel)
         val g = android.graphics.Color.green(pixel)
         val b = android.graphics.Color.blue(pixel)
         
-        if (kotlin.math.abs(r - refR) > tolerance ||
-            kotlin.math.abs(g - refG) > tolerance ||
-            kotlin.math.abs(b - refB) > tolerance) {
-          return false
+        if (r <= darkThreshold && g <= darkThreshold && b <= darkThreshold) {
+          darkCount++
         }
       }
       
-      val centerX = width / 2
-      val edgeCheckPoints = listOf(
-        Pair(barWidth + 2, height / 4),
-        Pair(barWidth + 2, height / 2),
-        Pair(barWidth + 2, height * 3 / 4),
-        Pair(width - barWidth - 3, height / 4),
-        Pair(width - barWidth - 3, height / 2),
-        Pair(width - barWidth - 3, height * 3 / 4),
-        Pair(barWidth + barWidth / 4, height / 4),
-        Pair(barWidth + barWidth / 4, height / 2),
-        Pair(barWidth + barWidth / 4, height * 3 / 4),
-        Pair(centerX - height / 2 + 5, height / 4),
-        Pair(centerX - height / 2 + 5, height / 2),
-        Pair(centerX - height / 2 + 5, height * 3 / 4),
-        Pair(centerX + height / 2 - 6, height / 4),
-        Pair(centerX + height / 2 - 6, height / 2),
-        Pair(centerX + height / 2 - 6, height * 3 / 4),
-        Pair(width - barWidth - barWidth / 4 - 1, height / 4),
-        Pair(width - barWidth - barWidth / 4 - 1, height / 2),
-        Pair(width - barWidth - barWidth / 4 - 1, height * 3 / 4)
-      )
+      val requiredDark = (samplePoints.size * 7) / 10
+      if (darkCount >= requiredDark) {
+        return true
+      }
       
-      var edgeMatches = 0
-      for ((x, y) in edgeCheckPoints) {
+      val tolerance = 60
+      val refColor = bitmap.getPixel(barWidth / 2, height / 2)
+      val refR = android.graphics.Color.red(refColor)
+      val refG = android.graphics.Color.green(refColor)
+      val refB = android.graphics.Color.blue(refColor)
+      
+      var uniformCount = 0
+      for ((x, y) in samplePoints) {
         if (x < 0 || x >= width || y < 0 || y >= height) continue
         val pixel = bitmap.getPixel(x, y)
         val r = android.graphics.Color.red(pixel)
@@ -1095,15 +1103,16 @@ class MainActivity : TauriActivity() {
         if (kotlin.math.abs(r - refR) <= tolerance &&
             kotlin.math.abs(g - refG) <= tolerance &&
             kotlin.math.abs(b - refB) <= tolerance) {
-          edgeMatches++
+          uniformCount++
         }
       }
       
-      return edgeMatches >= edgeCheckPoints.size / 2
+      val requiredUniform = (samplePoints.size * 7) / 10
+      return uniformCount >= requiredUniform
     }
     
     @JavascriptInterface
-    fun download(url: String, format: String?, playlistFolder: String?, callbackName: String) {
+    fun download(url: String, format: String?, playlistFolder: String?, isAudioOnly: Boolean, callbackName: String) {
       downloadExecutor.execute {
         val notificationId = getNotificationIdForUrl(url)
         
@@ -1117,7 +1126,7 @@ class MainActivity : TauriActivity() {
           }
           
           sendLog("info", "Starting download: $url")
-          sendLog("debug", "Format: ${format ?: "best"}, PlaylistFolder: ${playlistFolder ?: "none"}")
+          sendLog("debug", "Format: ${format ?: "best"}, PlaylistFolder: ${playlistFolder ?: "none"}, isAudioOnly: $isAudioOnly")
           
           val baseDir = File(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
@@ -1143,13 +1152,13 @@ class MainActivity : TauriActivity() {
           val request = YoutubeDLRequest(url)
           request.addOption("-o", downloadDir.absolutePath + "/%(title)s.%(ext)s")
           
-          val isAudioOnly = format == "bestaudio"
-          
           if (ffmpegAvailable && !isAudioOnly) {
             request.addOption("--merge-output-format", "mp4")
             request.addOption("--remux-video", "mp4")
           } else if (isAudioOnly) {
-            sendLog("info", "Audio-only download, using native format")
+            request.addOption("-x")
+            request.addOption("--audio-format", "m4a")
+            sendLog("info", "Audio-only download, extracting to m4a")
           } else if (!ffmpegAvailable) {
             sendLog("warn", "FFmpeg not available, using single-stream format")
           }

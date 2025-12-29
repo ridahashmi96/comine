@@ -11,7 +11,6 @@
   import { page } from '$app/stores';
   import Icon, { type IconName } from '$lib/components/Icon.svelte';
   import NavItem from '$lib/components/NavItem.svelte';
-  import ScrollArea from '$lib/components/ScrollArea.svelte';
   import Toast from '$lib/components/Toast.svelte';
   import BackgroundProvider from '$lib/components/BackgroundProvider.svelte';
   import AccentProvider from '$lib/components/AccentProvider.svelte';
@@ -43,6 +42,7 @@
     onShareIntent,
     setupAndroidLogHandler,
     processYtmThumbnailOnAndroid,
+    cleanupAndroidCallbacks,
   } from '$lib/utils/android';
   import {
     startUpdateChecker,
@@ -311,6 +311,7 @@
         downloadMode?: 'auto' | 'audio' | 'mute';
         isPlaylist?: boolean | null;
         isFile?: boolean | null;
+        openTrackBuilder?: boolean | null;
         fileInfo?: {
           filename: string;
           size: number;
@@ -373,6 +374,22 @@
 
           toast.info($t('playlist.notification.openingModal'));
           goto(`/?url=${encodeURIComponent(url)}&openPlaylist=1`);
+          return;
+        }
+
+        if (metadata?.openTrackBuilder) {
+          logs.info('layout', `Opening Track Builder for: ${url}`);
+
+          if (appWindow) {
+            try {
+              await appWindow.show();
+              await appWindow.setFocus();
+            } catch (e) {
+              logs.warn('layout', `Failed to show/focus window: ${e}`);
+            }
+          }
+
+          goto(`/?url=${encodeURIComponent(url)}&openFormat=1`);
           return;
         }
 
@@ -442,6 +459,10 @@
     }
     if (cleanupShareIntent) {
       cleanupShareIntent();
+    }
+    // Clean up any orphaned Android callbacks
+    if (isAndroid()) {
+      cleanupAndroidCallbacks();
     }
   });
 
@@ -513,6 +534,15 @@
           await handleDetectedFileUrl(text, fileCheck.filename);
         }
       } catch (err) {
+        // Silently ignore errors when clipboard contains non-text content (e.g., images)
+        // These are expected and not actual errors
+        const errorStr = String(err);
+        if (
+          errorStr.includes('not available in the requested format') ||
+          errorStr.includes('clipboard is empty')
+        ) {
+          return;
+        }
         logs.error('layout', `Clipboard watcher error: ${err}`);
       }
     }, CLIPBOARD_CHECK_INTERVAL);
@@ -848,9 +878,7 @@
       {/if}
 
       <main class="content-area">
-        <ScrollArea>
-          {@render children()}
-        </ScrollArea>
+        {@render children()}
       </main>
     </div>
 
@@ -1097,6 +1125,7 @@
     flex: 1;
     display: flex;
     flex-direction: column;
+    position: relative;
     overflow: hidden;
   }
 

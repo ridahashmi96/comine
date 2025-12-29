@@ -1,16 +1,29 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
 
   interface Props {
     children?: any;
     class?: string;
     maskSize?: number;
+    /** Initial scroll position to restore */
+    initialScrollTop?: number;
+    /** Callback when scroll position changes (throttled) */
+    onscroll?: (position: number) => void;
   }
 
-  let { children, class: className = '', maskSize = 25 }: Props = $props();
+  let {
+    children,
+    class: className = '',
+    maskSize = 25,
+    initialScrollTop,
+    onscroll,
+  }: Props = $props();
 
   let scrollContainer: HTMLDivElement;
   let maskStyle = $state('');
+
+  let scrollRAF: number | null = null;
+  let lastReportedPosition = 0;
 
   function updateScrollState() {
     if (!scrollContainer) return;
@@ -36,28 +49,93 @@
     maskStyle = `mask-image: linear-gradient(to bottom, ${topFade}, ${bottomFade}); -webkit-mask-image: linear-gradient(to bottom, ${topFade}, ${bottomFade});`;
   }
 
-  onMount(() => {
-    setTimeout(updateScrollState, 100);
+  function handleScroll() {
+    updateScrollState();
 
-    const resizeObserver = new ResizeObserver(() => {
-      updateScrollState();
+    if (scrollRAF !== null) return;
+
+    scrollRAF = requestAnimationFrame(() => {
+      scrollRAF = null;
+      if (!scrollContainer) return;
+
+      const position = scrollContainer.scrollTop;
+
+      // Only report if position changed significantly (5px threshold)
+      if (Math.abs(position - lastReportedPosition) > 5) {
+        lastReportedPosition = position;
+        onscroll?.(position);
+      }
+    });
+  }
+
+  export function restoreScroll(position: number): void {
+    if (position <= 0) return;
+
+    const doRestore = () => {
+      if (scrollContainer) {
+        scrollContainer.scrollTop = position;
+        lastReportedPosition = position;
+        updateScrollState();
+      }
+    };
+
+    if (scrollContainer) {
+      doRestore();
+    }
+
+    // Also schedule for next frame in case content isn't rendered yet
+    requestAnimationFrame(() => {
+      doRestore();
+      // And one more frame for good measure (content might load async)
+      requestAnimationFrame(doRestore);
+    });
+  }
+
+  export function getScroll(): number {
+    return scrollContainer?.scrollTop ?? 0;
+  }
+
+  export function scrollToTop(smooth = false): void {
+    if (!scrollContainer) return;
+    scrollContainer.scrollTo({
+      top: 0,
+      behavior: smooth ? 'smooth' : 'instant',
+    });
+  }
+
+  onMount(() => {
+    let resizeObserver: ResizeObserver | null = null;
+
+    // Wait for next tick to ensure content is rendered, then set up
+    tick().then(() => {
+      // Initial mask calculation
+      setTimeout(updateScrollState, 50);
+
+      // Observe resize for mask updates
+      resizeObserver = new ResizeObserver(() => {
+        updateScrollState();
+      });
+      if (scrollContainer) {
+        resizeObserver.observe(scrollContainer);
+      }
+
+      // Restore initial scroll if provided
+      if (typeof initialScrollTop === 'number' && initialScrollTop > 0) {
+        restoreScroll(initialScrollTop);
+      }
     });
 
-    resizeObserver.observe(scrollContainer);
-
     return () => {
-      resizeObserver.disconnect();
+      resizeObserver?.disconnect();
+      if (scrollRAF !== null) {
+        cancelAnimationFrame(scrollRAF);
+      }
     };
   });
 </script>
 
 <div class="scroll-area-wrapper {className}">
-  <div
-    class="scroll-area"
-    bind:this={scrollContainer}
-    onscroll={updateScrollState}
-    style={maskStyle}
-  >
+  <div class="scroll-area" bind:this={scrollContainer} onscroll={handleScroll} style={maskStyle}>
     {@render children?.()}
   </div>
 </div>
@@ -75,9 +153,15 @@
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
+    /* 4px from right/bottom edge of window */
     margin-right: 4px;
     margin-bottom: 4px;
-    padding-right: 0;
+    /* 6px gap between content and scrollbar */
+    padding-right: 6px;
+    /* Improve scroll performance */
+    will-change: scroll-position;
+    -webkit-overflow-scrolling: touch;
+    contain: strict;
   }
 
   /* Mobile: add padding so scrollbar doesn't touch content */

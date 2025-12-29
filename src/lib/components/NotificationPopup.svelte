@@ -122,8 +122,7 @@
   }
 
   .notification {
-    background: rgba(28, 28, 32, 0.98);
-    backdrop-filter: blur(20px);
+    background: rgb(28, 28, 32);
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 12px;
     padding: 16px;
@@ -133,6 +132,9 @@
     pointer-events: all;
     position: relative;
     min-width: 300px;
+    overflow: hidden;
+    isolation: isolate;
+    transform: translateZ(0);
   }
 
   .close-btn {

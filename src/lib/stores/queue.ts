@@ -168,6 +168,55 @@ function createQueueStore() {
 
   const cancelledIds = new Set<string>();
 
+  // Aggressive cleanup of orphaned Map entries (every 30 seconds)
+  const CLEANUP_INTERVAL_MS = 30 * 1000;
+  let cleanupInterval: ReturnType<typeof setInterval> | null = null;
+
+  function cleanupMaps() {
+    const state = get({ subscribe });
+    const activeUrls = new Set(state.items.map((i) => i.url));
+    const activeIds = new Set(state.items.map((i) => i.id));
+
+    // Clean up maxProgressMap for URLs no longer in queue
+    let cleanedProgress = 0;
+    maxProgressMap.forEach((_, url) => {
+      if (!activeUrls.has(url)) {
+        maxProgressMap.delete(url);
+        cleanedProgress++;
+      }
+    });
+
+    // Clean up videoInfoPromises for items no longer in queue
+    let cleanedPromises = 0;
+    videoInfoPromises.forEach((_, id) => {
+      if (!activeIds.has(id)) {
+        videoInfoPromises.delete(id);
+        cleanedPromises++;
+      }
+    });
+
+    // Clean up cancelledIds for items no longer referenced
+    let cleanedCancelled = 0;
+    cancelledIds.forEach((id) => {
+      if (!activeIds.has(id)) {
+        cancelledIds.delete(id);
+        cleanedCancelled++;
+      }
+    });
+
+    if (cleanedProgress + cleanedPromises + cleanedCancelled > 0) {
+      logs.debug(
+        'queue',
+        `Cleaned up ${cleanedProgress} progress entries, ${cleanedPromises} promises, ${cleanedCancelled} cancelled IDs`
+      );
+    }
+  }
+
+  function startCleanupInterval() {
+    if (cleanupInterval) return;
+    cleanupInterval = setInterval(cleanupMaps, CLEANUP_INTERVAL_MS);
+  }
+
   async function ensureNotificationPermission(): Promise<boolean> {
     if (notificationPermission !== null) return notificationPermission;
 
@@ -641,15 +690,10 @@ function createQueueStore() {
         );
         videoInfoPromises.set(itemId, infoPromise);
       } else {
-        console.log('Skipping video info fetch - using prefetched metadata');
-
-        const isYouTubeMusic = /music\.youtube\.com/i.test(url);
+        // Process thumbnail for audio downloads (letterbox cropping)
+        const isAudioDownload = pendingItem.options?.downloadMode === 'audio';
         const currentThumbnail = pendingItem.thumbnail;
-        if (isYouTubeMusic && currentThumbnail && !currentThumbnail.startsWith('data:image/')) {
-          logs.info(
-            'queue',
-            'YouTube Music with prefetched info - processing thumbnail for cropping'
-          );
+        if (isAudioDownload && currentThumbnail && !currentThumbnail.startsWith('data:image/')) {
           ytmThumbnailPromise = (async () => {
             try {
               let processedThumbnail: string;
@@ -661,7 +705,6 @@ function createQueueStore() {
                 });
               }
               if (processedThumbnail !== currentThumbnail) {
-                logs.info('queue', 'Thumbnail cropped to 1:1 square for YTM');
                 update((state) => ({
                   ...state,
                   items: state.items.map((item) =>
@@ -670,7 +713,7 @@ function createQueueStore() {
                 }));
               }
             } catch (e) {
-              logs.warn('queue', `Failed to process YTM thumbnail: ${e}`);
+              logs.warn('queue', `Failed to process thumbnail: ${e}`);
             }
           })();
         }
@@ -684,13 +727,25 @@ function createQueueStore() {
         await waitForAndroidYtDlp();
 
         const downloadMode = pendingItem.options?.downloadMode ?? 'auto';
+        const videoQuality = pendingItem.options?.videoQuality ?? '';
+
+        // Check if videoQuality is a raw format ID (from format modal)
+        const isRawFormat =
+          videoQuality &&
+          (/^\d/.test(videoQuality) ||
+            videoQuality.includes('+') ||
+            videoQuality.startsWith('best'));
 
         let format = 'best';
-        if (downloadMode === 'audio') {
+        if (isRawFormat) {
+          format = videoQuality;
+        } else if (downloadMode === 'audio') {
           format = 'bestaudio[ext=m4a]/bestaudio';
         } else if (downloadMode === 'mute') {
           format = 'bestvideo';
         }
+
+        const isAudioOnly = downloadMode === 'audio';
 
         const playlistFolder =
           pendingItem.playlistTitle && pendingItem.usePlaylistFolder !== false
@@ -707,7 +762,7 @@ function createQueueStore() {
         );
         logs.info(
           'queue',
-          `Starting Android download: ${url} (format: ${format}${playlistFolder ? `, folder: ${playlistFolder}` : ''})`
+          `Starting Android download: ${url} (format: ${format}, isAudioOnly: ${isAudioOnly}${playlistFolder ? `, folder: ${playlistFolder}` : ''})`
         );
 
         const result = await downloadOnAndroid(
@@ -736,7 +791,8 @@ function createQueueStore() {
               ),
             }));
           },
-          playlistFolder
+          playlistFolder,
+          isAudioOnly
         );
 
         console.log('Android download result:', result);
@@ -816,6 +872,10 @@ function createQueueStore() {
           croppedThumbnailData: croppedThumbnailData,
           playlistTitle: playlistTitle,
           proxyConfig: proxyConfig,
+          sponsorBlock: currentSettings.sponsorBlock,
+          chapters: currentSettings.chapters,
+          embedSubtitles: currentSettings.embedSubtitles,
+          downloadSpeedLimit: currentSettings.downloadSpeedLimit,
         });
 
         logs.info(
@@ -1108,6 +1168,7 @@ function createQueueStore() {
 
     async init() {
       await setupListener();
+      startCleanupInterval();
 
       const persistedItems = await loadQueue();
       if (persistedItems.length > 0) {

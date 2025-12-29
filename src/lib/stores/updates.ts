@@ -402,6 +402,8 @@ interface AndroidUpdater {
   downloadAndInstallUpdate?: (url: string, callbackName: string) => void;
 }
 
+let initialCheckTimeout: ReturnType<typeof setTimeout> | null = null;
+
 export function startUpdateChecker(): void {
   if (checkInterval) return;
 
@@ -412,12 +414,15 @@ export function startUpdateChecker(): void {
     }
   };
 
-  setTimeout(check, 5000);
-
+  initialCheckTimeout = setTimeout(check, 5000);
   checkInterval = setInterval(check, 60 * 60 * 1000);
 }
 
 export function stopUpdateChecker(): void {
+  if (initialCheckTimeout) {
+    clearTimeout(initialCheckTimeout);
+    initialCheckTimeout = null;
+  }
   if (checkInterval) {
     clearInterval(checkInterval);
     checkInterval = null;

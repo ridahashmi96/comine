@@ -34,6 +34,10 @@ static PLAYLIST_INFO_CACHE: std::sync::LazyLock<Mutex<LruCache<String, PlaylistI
     std::sync::LazyLock::new(|| Mutex::new(LruCache::new(NonZeroUsize::new(20).unwrap())));
 
 #[cfg(not(target_os = "android"))]
+static VIDEO_FORMATS_CACHE: std::sync::LazyLock<Mutex<LruCache<String, VideoFormats>>> =
+    std::sync::LazyLock::new(|| Mutex::new(LruCache::new(NonZeroUsize::new(30).unwrap())));
+
+#[cfg(not(target_os = "android"))]
 static YTM_THUMBNAIL_CACHE: std::sync::LazyLock<Mutex<LruCache<String, String>>> =
     std::sync::LazyLock::new(|| Mutex::new(LruCache::new(NonZeroUsize::new(50).unwrap())));
 
@@ -269,6 +273,10 @@ async fn download_video(
     cropped_thumbnail_data: Option<String>,
     playlist_title: Option<String>,
     proxy_config: Option<proxy::ProxyConfig>,
+    sponsor_block: Option<bool>,
+    chapters: Option<bool>,
+    embed_subtitles: Option<bool>,
+    download_speed_limit: Option<u64>,
     window: tauri::Window,
 ) -> Result<String, String> {
     info!("Starting download for URL: {}", url);
@@ -393,46 +401,65 @@ async fn download_video(
         let video_quality = video_quality.unwrap_or_else(|| "max".to_string());
         let audio_quality = audio_quality.unwrap_or_else(|| "best".to_string());
 
-        let format_string = match download_mode.as_str() {
-            "audio" => {
-                match audio_quality.as_str() {
-                    "320" => "bestaudio[abr<=320]/bestaudio/best".to_string(),
-                    "256" => "bestaudio[abr<=256]/bestaudio/best".to_string(),
-                    "192" => "bestaudio[abr<=192]/bestaudio/best".to_string(),
-                    "128" => "bestaudio[abr<=128]/bestaudio/best".to_string(),
-                    "96" => "bestaudio[abr<=96]/bestaudio/best".to_string(),
-                    _ => "bestaudio/best".to_string(), // "best"
-                }
-            }
-            "mute" => {
-                match video_quality.as_str() {
-                    "4k" => "bestvideo[height<=2160]/bestvideo/best".to_string(),
-                    "1440p" => "bestvideo[height<=1440]/bestvideo/best".to_string(),
-                    "1080p" => "bestvideo[height<=1080]/bestvideo/best".to_string(),
-                    "720p" => "bestvideo[height<=720]/bestvideo/best".to_string(),
-                    "480p" => "bestvideo[height<=480]/bestvideo/best".to_string(),
-                    "360p" => "bestvideo[height<=360]/bestvideo/best".to_string(),
-                    "240p" => "bestvideo[height<=240]/bestvideo/best".to_string(),
-                    _ => "bestvideo/best".to_string(), // "max"
-                }
-            }
-            _ => {
-                match video_quality.as_str() {
-                    "4k" => "bestvideo[height<=2160]+bestaudio/best[height<=2160]/best".to_string(),
-                    "1440p" => {
-                        "bestvideo[height<=1440]+bestaudio/best[height<=1440]/best".to_string()
+        // Check if video_quality is a raw format ID (e.g., "251", "140+251", "bestvideo+bestaudio")
+        // Raw format IDs contain digits, plus signs, or start with "best"
+        let is_raw_format = video_quality
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(false)
+            || video_quality.contains('+')
+            || video_quality.starts_with("best");
+
+        let format_string =
+            if is_raw_format {
+                info!("Using raw format ID: {}", video_quality);
+                video_quality.clone()
+            } else {
+                match download_mode.as_str() {
+                    "audio" => {
+                        match audio_quality.as_str() {
+                            "320" => "bestaudio[abr<=320]/bestaudio/best".to_string(),
+                            "256" => "bestaudio[abr<=256]/bestaudio/best".to_string(),
+                            "192" => "bestaudio[abr<=192]/bestaudio/best".to_string(),
+                            "128" => "bestaudio[abr<=128]/bestaudio/best".to_string(),
+                            "96" => "bestaudio[abr<=96]/bestaudio/best".to_string(),
+                            _ => "bestaudio/best".to_string(), // "best"
+                        }
                     }
-                    "1080p" => {
-                        "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best".to_string()
+                    "mute" => {
+                        match video_quality.as_str() {
+                            "4k" => "bestvideo[height<=2160]/bestvideo/best".to_string(),
+                            "1440p" => "bestvideo[height<=1440]/bestvideo/best".to_string(),
+                            "1080p" => "bestvideo[height<=1080]/bestvideo/best".to_string(),
+                            "720p" => "bestvideo[height<=720]/bestvideo/best".to_string(),
+                            "480p" => "bestvideo[height<=480]/bestvideo/best".to_string(),
+                            "360p" => "bestvideo[height<=360]/bestvideo/best".to_string(),
+                            "240p" => "bestvideo[height<=240]/bestvideo/best".to_string(),
+                            _ => "bestvideo/best".to_string(), // "max"
+                        }
                     }
-                    "720p" => "bestvideo[height<=720]+bestaudio/best[height<=720]/best".to_string(),
-                    "480p" => "bestvideo[height<=480]+bestaudio/best[height<=480]/best".to_string(),
-                    "360p" => "bestvideo[height<=360]+bestaudio/best[height<=360]/best".to_string(),
-                    "240p" => "bestvideo[height<=240]+bestaudio/best[height<=240]/best".to_string(),
-                    _ => "bestvideo+bestaudio/best".to_string(), // "max"
+                    _ => {
+                        match video_quality.as_str() {
+                            "4k" => "bestvideo[height<=2160]+bestaudio/best[height<=2160]/best"
+                                .to_string(),
+                            "1440p" => "bestvideo[height<=1440]+bestaudio/best[height<=1440]/best"
+                                .to_string(),
+                            "1080p" => "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
+                                .to_string(),
+                            "720p" => "bestvideo[height<=720]+bestaudio/best[height<=720]/best"
+                                .to_string(),
+                            "480p" => "bestvideo[height<=480]+bestaudio/best[height<=480]/best"
+                                .to_string(),
+                            "360p" => "bestvideo[height<=360]+bestaudio/best[height<=360]/best"
+                                .to_string(),
+                            "240p" => "bestvideo[height<=240]+bestaudio/best[height<=240]/best"
+                                .to_string(),
+                            _ => "bestvideo+bestaudio/best".to_string(), // "max"
+                        }
+                    }
                 }
-            }
-        };
+            };
 
         args.extend(["-f".to_string(), format_string.clone()]);
         info!("Using format: {}", format_string);
@@ -522,6 +549,32 @@ async fn download_video(
                 "youtube:player_client=tv,mweb,android_sdkless,web".to_string(),
             ]);
             info!("Using optimized player client chain for YouTube (tv,mweb,android_sdkless,web)");
+        }
+
+        if sponsor_block.unwrap_or(false) {
+            args.extend(["--sponsorblock-remove".to_string(), "default".to_string()]);
+            info!("SponsorBlock enabled - removing sponsored segments");
+        }
+
+        if chapters.unwrap_or(true) {
+            args.push("--embed-chapters".to_string());
+            info!("Embedding chapters");
+        }
+
+        if embed_subtitles.unwrap_or(false) {
+            args.extend([
+                "--embed-subs".to_string(),
+                "--sub-langs".to_string(),
+                "en.*,ru.*".to_string(),
+            ]);
+            info!("Embedding subtitles (en, ru)");
+        }
+
+        if let Some(limit) = download_speed_limit {
+            if limit > 0 {
+                args.extend(["--limit-rate".to_string(), format!("{}M", limit)]);
+                info!("Download speed limit: {} MB/s", limit);
+            }
         }
 
         if use_aria2.unwrap_or(false) {
@@ -1543,6 +1596,256 @@ async fn get_video_info(
     }
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+struct VideoFormat {
+    format_id: String,
+    ext: String,
+    resolution: Option<String>,
+    fps: Option<f64>,
+    vcodec: Option<String>,
+    acodec: Option<String>,
+    filesize: Option<u64>,
+    filesize_approx: Option<u64>,
+    tbr: Option<f64>, // Total bitrate
+    vbr: Option<f64>, // Video bitrate
+    abr: Option<f64>, // Audio bitrate
+    asr: Option<u32>, // Audio sample rate
+    format_note: Option<String>,
+    has_video: bool,
+    has_audio: bool,
+    quality: Option<f64>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+struct VideoFormats {
+    title: String,
+    author: Option<String>,
+    thumbnail: Option<String>,
+    duration: Option<f64>,
+    formats: Vec<VideoFormat>,
+    view_count: Option<u64>,
+    like_count: Option<u64>,
+    description: Option<String>,
+    upload_date: Option<String>,
+}
+
+#[tauri::command]
+#[allow(unused_variables)]
+async fn get_video_formats(
+    app: AppHandle,
+    url: String,
+    cookies_from_browser: Option<String>,
+    custom_cookies: Option<String>,
+    proxy_config: Option<proxy::ProxyConfig>,
+) -> Result<VideoFormats, String> {
+    info!("Getting video formats for URL: {}", url);
+
+    #[cfg(target_os = "android")]
+    {
+        return Err("Format selection not supported on Android yet".to_string());
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        {
+            let mut cache = VIDEO_FORMATS_CACHE.lock().unwrap();
+            if let Some(cached) = cache.get(&url) {
+                info!("Video formats cache hit for URL: {}", url);
+                return Ok(cached.clone());
+            }
+        }
+
+        let resolved_proxy = proxy_config.as_ref().map(|c| proxy::resolve_proxy(c));
+        let proxy_url = resolved_proxy.as_ref().and_then(|p| {
+            if p.url.is_empty() {
+                None
+            } else {
+                Some(p.url.as_str())
+            }
+        });
+
+        let (command, prefix_args, env_vars, quickjs_path) = get_ytdlp_command(&app, proxy_url)?;
+
+        let mut args: Vec<String> = prefix_args;
+        args.extend([
+            "--encoding".to_string(),
+            "utf-8".to_string(),
+            "--dump-json".to_string(),
+            "--no-download".to_string(),
+            "--no-playlist".to_string(),
+        ]);
+
+        if let Some(proxy) = proxy_url {
+            args.extend(["--proxy".to_string(), proxy.to_string()]);
+        }
+
+        if let Some(ref qjs_path) = quickjs_path {
+            args.extend(["--js-runtimes".to_string(), format!("quickjs:{}", qjs_path)]);
+        }
+
+        let use_custom_cookies = custom_cookies
+            .as_ref()
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
+
+        if use_custom_cookies {
+            let cookies_text = custom_cookies.as_ref().unwrap();
+            let cache_dir = app
+                .path()
+                .app_cache_dir()
+                .map_err(|e| format!("Failed to get cache dir: {}", e))?;
+            let cookies_file = cache_dir.join("custom_cookies.txt");
+
+            tokio::fs::create_dir_all(&cache_dir)
+                .await
+                .map_err(|e| format!("Failed to create cache dir: {}", e))?;
+
+            tokio::fs::write(&cookies_file, cookies_text)
+                .await
+                .map_err(|e| format!("Failed to write cookies file: {}", e))?;
+
+            args.push("--cookies".to_string());
+            args.push(cookies_file.to_string_lossy().to_string());
+        } else if let Some(ref browser) = cookies_from_browser {
+            if !browser.is_empty() && browser != "custom" {
+                args.push("--cookies-from-browser".to_string());
+                args.push(browser.clone());
+            }
+        }
+
+        let is_youtube = url.contains("youtube.com") || url.contains("youtu.be");
+        if is_youtube {
+            args.extend([
+                "--extractor-args".to_string(),
+                "youtube:player_client=android_sdkless".to_string(),
+            ]);
+        }
+
+        args.push(url.clone());
+
+        let mut cmd = tokio::process::Command::new(&command);
+        cmd.args(&args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        #[cfg(target_os = "windows")]
+        {
+            use crate::CommandExt;
+            cmd.hide_console();
+        }
+
+        for (key, value) in &env_vars {
+            cmd.env(key, value);
+        }
+
+        let output = cmd.output().await.map_err(|e| {
+            error!("Failed to get video formats: {}", e);
+            format!("Failed to get video formats: {}", e)
+        })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            error!("yt-dlp error: {}", stderr);
+            return Err(format!("Failed to get video formats: {}", stderr));
+        }
+
+        let json_str = String::from_utf8_lossy(&output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(&json_str).map_err(|e| format!("Failed to parse JSON: {}", e))?;
+
+        let title = json["title"].as_str().unwrap_or("Unknown").to_string();
+        let author = json["uploader"]
+            .as_str()
+            .or_else(|| json["channel"].as_str())
+            .or_else(|| json["artist"].as_str())
+            .map(|s| s.strip_suffix(" - Topic").unwrap_or(s).to_string());
+        let thumbnail = json["thumbnail"].as_str().map(|s| s.to_string());
+        let duration = json["duration"].as_f64();
+
+        let view_count = json["view_count"].as_u64();
+        let like_count = json["like_count"].as_u64();
+        let description = json["description"].as_str().map(|s| s.to_string());
+        let upload_date = json["upload_date"].as_str().map(|s| s.to_string());
+
+        let formats_json = json["formats"].as_array().ok_or("No formats found")?;
+
+        let formats: Vec<VideoFormat> = formats_json
+            .iter()
+            .filter_map(|f| {
+                let format_id = f["format_id"].as_str()?.to_string();
+                let ext = f["ext"].as_str().unwrap_or("unknown").to_string();
+
+                // Skip storyboard/mhtml formats
+                if ext == "mhtml" || format_id.contains("storyboard") {
+                    return None;
+                }
+
+                let vcodec = f["vcodec"].as_str().map(|s| s.to_string());
+                let acodec = f["acodec"].as_str().map(|s| s.to_string());
+
+                let has_video = vcodec.as_ref().map(|v| v != "none").unwrap_or(false);
+                let has_audio = acodec.as_ref().map(|a| a != "none").unwrap_or(false);
+
+                // Skip formats with neither video nor audio
+                if !has_video && !has_audio {
+                    return None;
+                }
+
+                let resolution = if has_video {
+                    let width = f["width"].as_u64();
+                    let height = f["height"].as_u64();
+                    match (width, height) {
+                        (Some(w), Some(h)) => Some(format!("{}x{}", w, h)),
+                        _ => f["resolution"].as_str().map(|s| s.to_string()),
+                    }
+                } else {
+                    Some("audio only".to_string())
+                };
+
+                Some(VideoFormat {
+                    format_id,
+                    ext,
+                    resolution,
+                    fps: f["fps"].as_f64(),
+                    vcodec: if has_video { vcodec } else { None },
+                    acodec: if has_audio { acodec } else { None },
+                    filesize: f["filesize"].as_u64(),
+                    filesize_approx: f["filesize_approx"].as_u64(),
+                    tbr: f["tbr"].as_f64(),
+                    vbr: f["vbr"].as_f64(),
+                    abr: f["abr"].as_f64(),
+                    asr: f["asr"].as_u64().map(|v| v as u32),
+                    format_note: f["format_note"].as_str().map(|s| s.to_string()),
+                    has_video,
+                    has_audio,
+                    quality: f["quality"].as_f64(),
+                })
+            })
+            .collect();
+
+        info!("Found {} formats for {}", formats.len(), url);
+
+        let result = VideoFormats {
+            title,
+            author,
+            thumbnail,
+            duration,
+            formats,
+            view_count,
+            like_count,
+            description,
+            upload_date,
+        };
+
+        {
+            let mut cache = VIDEO_FORMATS_CACHE.lock().unwrap();
+            cache.put(url.clone(), result.clone());
+        }
+
+        Ok(result)
+    }
+}
+
 /// Get media file duration using ffprobe (for already downloaded files)
 #[tauri::command]
 #[allow(unused_variables)]
@@ -1773,8 +2076,7 @@ async fn get_logs_folder_path(_app: AppHandle) -> Result<String, String> {
 
 // ==================== YouTube Music Thumbnail Cropping ====================
 
-/// Check if the left and right bars of an image are solid color (letterboxed)
-/// Returns true if the image appears to be a 1:1 thumbnail with solid color bars on sides
+/// Check if image has solid color bars on sides (letterboxed)
 #[cfg(not(target_os = "android"))]
 fn is_letterboxed_thumbnail(img: &DynamicImage) -> bool {
     let (width, height) = img.dimensions();
@@ -1790,81 +2092,72 @@ fn is_letterboxed_thumbnail(img: &DynamicImage) -> bool {
         return false;
     }
 
-    let tolerance: i16 = 45;
+    let dark_threshold: u8 = 30;
 
-    let ref_color = img.get_pixel(bar_width / 2, height / 2);
-
-    let sample_points = [
-        (bar_width / 3, height / 3),
-        (bar_width / 3, height / 2),
-        (bar_width / 3, height * 2 / 3),
-        (bar_width / 2, height / 3),
-        (bar_width / 2, height * 2 / 3),
-        (width - bar_width / 3, height / 3),
-        (width - bar_width / 3, height / 2),
-        (width - bar_width / 3, height * 2 / 3),
-        (width - bar_width / 2, height / 3),
-        (width - bar_width / 2, height * 2 / 3),
+    let sample_points_left = [
+        (bar_width / 4, height / 4),
+        (bar_width / 4, height / 2),
+        (bar_width / 4, height * 3 / 4),
+        (bar_width / 2, height / 4),
+        (bar_width / 2, height / 2),
+        (bar_width / 2, height * 3 / 4),
+        (bar_width * 3 / 4, height / 4),
+        (bar_width * 3 / 4, height / 2),
+        (bar_width * 3 / 4, height * 3 / 4),
     ];
 
-    let mut matches = 0;
-    let required_matches = (sample_points.len() * 7) / 10;
-
-    for (x, y) in sample_points {
-        let pixel = img.get_pixel(x, y);
-
-        let diff_r = (pixel[0] as i16 - ref_color[0] as i16).abs();
-        let diff_g = (pixel[1] as i16 - ref_color[1] as i16).abs();
-        let diff_b = (pixel[2] as i16 - ref_color[2] as i16).abs();
-
-        if diff_r <= tolerance && diff_g <= tolerance && diff_b <= tolerance {
-            matches += 1;
-        }
-    }
-
-    if matches < required_matches {
-        return false;
-    }
-
-    let center_x = width / 2;
-    let edge_check_points = [
-        (bar_width + 2, height / 4),
-        (bar_width + 2, height / 2),
-        (bar_width + 2, height * 3 / 4),
-        (width - bar_width - 3, height / 4),
-        (width - bar_width - 3, height / 2),
-        (width - bar_width - 3, height * 3 / 4),
-        (bar_width + bar_width / 4, height / 4),
-        (bar_width + bar_width / 4, height / 2),
-        (bar_width + bar_width / 4, height * 3 / 4),
-        (center_x - height / 2 + 5, height / 4),
-        (center_x - height / 2 + 5, height / 2),
-        (center_x - height / 2 + 5, height * 3 / 4),
-        (center_x + height / 2 - 6, height / 4),
-        (center_x + height / 2 - 6, height / 2),
-        (center_x + height / 2 - 6, height * 3 / 4),
-        (width - bar_width - bar_width / 4 - 1, height / 4),
-        (width - bar_width - bar_width / 4 - 1, height / 2),
-        (width - bar_width - bar_width / 4 - 1, height * 3 / 4),
+    let sample_points_right = [
+        (width - bar_width / 4, height / 4),
+        (width - bar_width / 4, height / 2),
+        (width - bar_width / 4, height * 3 / 4),
+        (width - bar_width / 2, height / 4),
+        (width - bar_width / 2, height / 2),
+        (width - bar_width / 2, height * 3 / 4),
+        (width - bar_width * 3 / 4, height / 4),
+        (width - bar_width * 3 / 4, height / 2),
+        (width - bar_width * 3 / 4, height * 3 / 4),
     ];
 
-    let mut edge_matches = 0;
-    for (x, y) in edge_check_points {
-        if x >= width || y >= height {
+    let mut dark_count = 0;
+    let total_samples = sample_points_left.len() + sample_points_right.len();
+
+    for (x, y) in sample_points_left.iter().chain(sample_points_right.iter()) {
+        if *x >= width || *y >= height {
             continue;
         }
-        let pixel = img.get_pixel(x, y);
+        let pixel = img.get_pixel(*x, *y);
+        if pixel[0] <= dark_threshold && pixel[1] <= dark_threshold && pixel[2] <= dark_threshold {
+            dark_count += 1;
+        }
+    }
+
+    let required_dark = (total_samples * 7) / 10;
+    if dark_count >= required_dark {
+        return true;
+    }
+
+    let tolerance: i16 = 60;
+    let ref_color = img.get_pixel(bar_width / 2, height / 2);
+
+    let mut uniform_count = 0;
+    for (x, y) in sample_points_left.iter().chain(sample_points_right.iter()) {
+        if *x >= width || *y >= height {
+            continue;
+        }
+        let pixel = img.get_pixel(*x, *y);
 
         let diff_r = (pixel[0] as i16 - ref_color[0] as i16).abs();
         let diff_g = (pixel[1] as i16 - ref_color[1] as i16).abs();
         let diff_b = (pixel[2] as i16 - ref_color[2] as i16).abs();
 
         if diff_r <= tolerance && diff_g <= tolerance && diff_b <= tolerance {
-            edge_matches += 1;
+            uniform_count += 1;
         }
     }
 
-    edge_matches >= (edge_check_points.len() / 2)
+    let required_uniform = (total_samples * 7) / 10;
+
+    uniform_count >= required_uniform
 }
 
 /// Crop a letterboxed thumbnail to its center square
@@ -3264,6 +3557,7 @@ pub fn run() {
             download_video,
             cancel_download,
             get_video_info,
+            get_video_formats,
             get_playlist_info,
             get_media_duration,
             process_ytm_thumbnail,

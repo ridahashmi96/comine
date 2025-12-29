@@ -8,15 +8,46 @@ export interface RGB {
   b: number;
 }
 
+const COLOR_CACHE_MAX_SIZE = 200;
 const colorCache = new Map<string, RGB>();
+
+/**
+ * Add to cache with LRU eviction
+ */
+function setCacheEntry(key: string, value: RGB): void {
+  // If key exists, delete it first so it moves to the end (most recent)
+  if (colorCache.has(key)) {
+    colorCache.delete(key);
+  }
+  // Evict oldest entries if at capacity
+  while (colorCache.size >= COLOR_CACHE_MAX_SIZE) {
+    const oldestKey = colorCache.keys().next().value;
+    if (oldestKey) colorCache.delete(oldestKey);
+  }
+  colorCache.set(key, value);
+}
+
+/**
+ * Get from cache with LRU refresh
+ */
+function getCacheEntry(key: string): RGB | undefined {
+  const value = colorCache.get(key);
+  if (value !== undefined) {
+    // Move to end (most recently used)
+    colorCache.delete(key);
+    colorCache.set(key, value);
+  }
+  return value;
+}
 
 /**
  * Extract the dominant color from an image URL
  * Uses canvas to sample pixels and find the most vibrant/saturated color
  */
 export async function extractDominantColor(imageUrl: string): Promise<RGB | null> {
-  if (colorCache.has(imageUrl)) {
-    return colorCache.get(imageUrl)!;
+  const cached = getCacheEntry(imageUrl);
+  if (cached) {
+    return cached;
   }
 
   return new Promise((resolve) => {
@@ -92,7 +123,7 @@ export async function extractDominantColor(imageUrl: string): Promise<RGB | null
 
         const boosted = boostSaturation(bestColor, 1.2);
 
-        colorCache.set(imageUrl, boosted);
+        setCacheEntry(imageUrl, boosted);
         resolve(boosted);
       } catch {
         resolve(null);

@@ -80,7 +80,7 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 12px;
     min-width: 320px;
-    max-width: 480px;
+    max-width: min(600px, 90vw);
     max-height: 80vh;
     display: flex;
     flex-direction: column;
@@ -91,20 +91,20 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 16px 20px;
+    padding: 12px 16px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   }
 
   .modal-header h2 {
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 600;
     color: white;
     margin: 0;
   }
 
   .close-btn {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -122,7 +122,8 @@
   }
 
   .modal-content {
-    padding: 20px;
+    padding: 14px 16px;
+    overflow-x: hidden;
     overflow-y: auto;
     color: rgba(255, 255, 255, 0.8);
     font-size: 14px;
@@ -131,9 +132,9 @@
 
   .modal-actions {
     display: flex;
-    gap: 12px;
+    gap: 10px;
     justify-content: flex-end;
-    padding: 16px 20px;
+    padding: 12px 16px;
     border-top: 1px solid rgba(255, 255, 255, 0.08);
   }
 </style>

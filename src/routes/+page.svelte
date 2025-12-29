@@ -7,6 +7,7 @@
   import { deps } from '$lib/stores/deps';
   import { queue, activeDownloadsCount } from '$lib/stores/queue';
   import { logs } from '$lib/stores/logs';
+  import { navigation, currentView, previousView, canGoBack } from '$lib/stores/navigation';
   import { toast } from '$lib/components/Toast.svelte';
   import SetupBanner from '$lib/components/SetupBanner.svelte';
   import Icon from '$lib/components/Icon.svelte';
@@ -17,8 +18,25 @@
   import Modal from '$lib/components/Modal.svelte';
   import Checkbox from '$lib/components/Checkbox.svelte';
   import Divider from '$lib/components/Divider.svelte';
-  import PlaylistModal, { type SelectedEntry } from '$lib/components/PlaylistModal.svelte';
+  import PlaylistModal from '$lib/components/PlaylistModal.svelte';
+  import PlaylistBuilder, {
+    type PlaylistSelection,
+    type SelectedEntry,
+    type EntrySettings,
+    type PlaylistEntry,
+  } from '$lib/components/PlaylistBuilder.svelte';
+  import TrackBuilder from '$lib/components/TrackBuilder.svelte';
+  import ViewStack, { type ViewInstance } from '$lib/components/ViewStack.svelte';
   import type { IconName } from '$lib/components/Icon.svelte';
+
+  interface TrackSelection {
+    formatString: string;
+    downloadMode: 'auto' | 'audio' | 'mute';
+    title?: string;
+    author?: string;
+    thumbnail?: string;
+    duration?: number;
+  }
   import { isAndroid, isAndroidYtDlpReady, getPlaylistInfoOnAndroid } from '$lib/utils/android';
   import {
     settings,
@@ -37,106 +55,54 @@
   let status = $state('');
   let androidReady = $state(false);
 
-  let playlistModalOpen = $state(false);
-  let playlistUrl = $state('');
-  let checkingPlaylist = $state(false);
-  let pendingPlaylistCheck = $state(false);
-  let processedPlaylistUrl = $state('');
+  let lastYtmAutoSwitchUrl = $state('');
+  let trackSelection = $state<TrackSelection | null>(null);
 
+  // Check if URL is a supported site for format/track selection
+  function checkIsYouTubeUrl(urlStr: string): boolean {
+    if (!urlStr.trim()) return false;
+    const u = urlStr.toLowerCase();
+    return u.includes('youtube.com') || u.includes('youtu.be');
+  }
+
+  function checkIsPlaylistUrl(urlStr: string): boolean {
+    if (!urlStr.trim()) return false;
+    return checkIsYouTubeUrl(urlStr) && isLikelyPlaylist(urlStr.trim());
+  }
+
+  // Derived state for current URL detection
+  let isYouTubeUrl = $derived(checkIsYouTubeUrl(url));
+  let isPlaylistUrl = $derived(checkIsPlaylistUrl(url));
+
+  // Check for URL params on mount
   $effect(() => {
     const urlParam = $page.url.searchParams.get('url');
     const openPlaylist = $page.url.searchParams.get('openPlaylist') === '1';
-    if (urlParam && urlParam !== url) {
+    const openFormat = $page.url.searchParams.get('openFormat') === '1';
+
+    if (urlParam) {
       url = urlParam;
-      if (openPlaylist && urlParam !== processedPlaylistUrl) {
-        playlistUrl = urlParam;
-        processedPlaylistUrl = urlParam;
-        playlistModalOpen = true;
+      if (openFormat) {
+        navigation.openVideo(urlParam);
+      } else if (openPlaylist) {
+        navigation.openPlaylist(urlParam);
       }
       window.history.replaceState({}, '', window.location.pathname);
     }
   });
 
   $effect(() => {
-    if (pendingPlaylistCheck && url && canDownload && !checkingPlaylist) {
-      pendingPlaylistCheck = false;
-      autoCheckPlaylist();
-    }
-  });
-
-  async function autoCheckPlaylist() {
-    if (!url.trim()) return;
-
-    const downloadUrl = url.trim();
-
-    const fileCheck = isDirectFileUrl(downloadUrl);
-    if (fileCheck.isFile) {
-      logs.info('download', `Direct file URL detected: ${fileCheck.filename}`);
-      queue.addFile({
-        url: downloadUrl,
-        filename: fileCheck.filename || 'download',
-      });
-      toast.info($t('downloads.active'));
-      url = '';
-      return;
-    }
-
-    checkingPlaylist = true;
-
-    try {
-      let info: { is_playlist: boolean; total_count: number };
-
-      if (isAndroid()) {
-        logs.info('download', `Android: checking playlist URL: ${downloadUrl}`);
-        info = await getPlaylistInfoOnAndroid(downloadUrl);
-      } else {
-        info = await invoke<{ is_playlist: boolean; total_count: number }>('get_playlist_info', {
-          url: downloadUrl,
-          offset: 0,
-          limit: 1,
-          cookiesFromBrowser: cookiesFromBrowser || null,
-          customCookies: customCookies || null,
-          proxyConfig: getProxyConfig(),
-        });
-      }
-
-      if (info.is_playlist && info.total_count > 1) {
-        playlistUrl = downloadUrl;
-        playlistModalOpen = true;
-        checkingPlaylist = false;
-        return;
-      }
-    } catch (e) {
-      logs.warn('download', `Failed to check playlist: ${e}`);
-    }
-    checkingPlaylist = false;
-
-    queue.add(downloadUrl, {
-      videoQuality,
-      downloadMode: downloadMode as 'auto' | 'audio' | 'mute',
-      audioQuality,
-      convertToMp4,
-      remux,
-      useHLS,
-      clearMetadata,
-      dontShowInHistory,
-      useAria2,
-      ignoreMixes,
-      cookiesFromBrowser,
-      customCookies,
-    });
-    toast.info($t('downloads.active'));
-    url = '';
-  }
-
-  $effect(() => {
     if ($settings.youtubeMusicAudioOnly && url && /music\.youtube\.com/i.test(url)) {
-      if (downloadMode !== 'audio') {
+      if (url !== lastYtmAutoSwitchUrl && downloadMode !== 'audio') {
         downloadMode = 'audio';
         if (selectedPreset !== 'music') {
           selectedPreset = 'music';
         }
+        lastYtmAutoSwitchUrl = url;
       }
+    }
+    if (!url.trim()) {
+      lastYtmAutoSwitchUrl = '';
     }
   });
 
@@ -146,7 +112,7 @@
 
   let optionsExpanded = $state(true);
 
-  let selectedPreset = $state($settings.selectedPreset ?? 'custom');
+  let selectedPreset = $state($settings.selectedPreset ?? 'best');
   let videoQuality = $state<VideoQuality>($settings.defaultVideoQuality ?? 'max');
   let downloadMode = $state<DownloadMode>($settings.defaultDownloadMode ?? 'auto');
   let audioQuality = $state<AudioQuality>($settings.defaultAudioQuality ?? 'best');
@@ -163,7 +129,7 @@
   let settingsInitialized = false;
   $effect(() => {
     if ($settingsReady && $settings && !settingsInitialized) {
-      selectedPreset = $settings.selectedPreset ?? 'custom';
+      selectedPreset = $settings.selectedPreset ?? 'best';
       videoQuality = $settings.defaultVideoQuality ?? 'max';
       downloadMode = $settings.defaultDownloadMode ?? 'auto';
       audioQuality = $settings.defaultAudioQuality ?? 'best';
@@ -247,10 +213,9 @@
   ];
 
   const builtInPresets: { id: string; label: string; icon: IconName }[] = [
-    { id: 'custom', label: $t('download.options.custom'), icon: 'settings' },
     { id: 'best', label: $t('download.options.bestVideo'), icon: 'video' },
-    { id: 'small', label: $t('download.options.smallVideo'), icon: 'video' },
     { id: 'music', label: $t('download.options.music'), icon: 'music' },
+    { id: 'small', label: $t('download.options.smallVideo'), icon: 'weight' },
   ];
 
   let allPresets = $derived([
@@ -291,7 +256,7 @@
       case 'small':
         videoQuality = '480p';
         downloadMode = 'auto';
-        audioQuality = '192'; // Fixed: was 'good' which is invalid
+        audioQuality = '192';
         break;
       case 'music':
         videoQuality = 'max';
@@ -404,7 +369,7 @@
       };
       checkReady();
 
-      if (!url) {
+      if (!url.trim()) {
         try {
           const clipboardText = await readText();
           if (clipboardText && isValidMediaUrl(clipboardText, $settings.clipboardPatterns || [])) {
@@ -416,19 +381,76 @@
     }
   });
 
-  async function handlePlaylistDownload(
-    entries: SelectedEntry[],
-    playlistInfo: { id: string; title: string; usePlaylistFolder: boolean }
-  ) {
+  function handleBack() {
+    navigation.pop();
+    url = '';
+  }
+
+
+  let backLabel = $derived(() => {
+    const prev = $previousView;
+    if (!prev) return undefined;
+    
+    switch (prev.type) {
+      case 'home':
+        return $t('nav.download');
+      case 'playlist':
+        // Show truncated playlist title if available
+        const title = prev.cachedData?.title;
+        if (title) {
+          return title.length > 20 ? title.slice(0, 20) + '…' : title;
+        }
+        return $t('playlist.title');
+      case 'video':
+        return prev.cachedData?.title?.slice(0, 20) + '…' || $t('download.tracks.title');
+      case 'channel':
+        return prev.channelName || $t('common.back');
+      default:
+        return undefined;
+    }
+  });
+
+
+  function handleVideoDownload(selection: TrackSelection) {
+    const downloadUrl = $currentView.url;
+    if (!downloadUrl) return;
+
+    logs.info('download', `Using custom tracks: ${selection.formatString}`);
+    const queueId = queue.add(downloadUrl, {
+      videoQuality: selection.formatString,
+      downloadMode: selection.downloadMode,
+      audioQuality: 'best',
+      convertToMp4,
+      remux,
+      useHLS,
+      clearMetadata,
+      dontShowInHistory,
+      useAria2,
+      ignoreMixes,
+      cookiesFromBrowser,
+      customCookies,
+      prefetchedInfo: {
+        title: selection.title,
+        author: selection.author,
+        thumbnail: selection.thumbnail,
+        duration: selection.duration,
+      },
+    });
+
+    if (queueId) {
+      logs.info('download', `Added to queue with ID: ${queueId}`);
+    }
+    toast.info($t('downloads.active'));
+    navigation.pop();
+    url = '';
+  }
+
+  function handlePlaylistDownload(selection: PlaylistSelection) {
     logs.info(
       'playlist',
-      `Downloading ${entries.length} items from playlist: ${playlistInfo.title} (usePlaylistFolder: ${playlistInfo.usePlaylistFolder})`
+      `Downloading ${selection.entries.length} items from playlist: ${selection.playlistInfo.title}`
     );
-    logs.debug(
-      'playlist',
-      `Cookies being passed: cookiesFromBrowser="${cookiesFromBrowser}", customCookies="${customCookies ? 'set' : 'none'}"`
-    );
-
+    
     const globalOptions = {
       videoQuality,
       audioQuality,
@@ -443,43 +465,52 @@
       customCookies,
     };
 
-    const queueEntries = entries.map((e) => ({
+    const queueEntries = selection.entries.map((e) => ({
       url: e.entry.url,
       title: e.entry.title,
       thumbnail: e.entry.thumbnail ?? undefined,
       author: e.entry.uploader ?? undefined,
       duration: e.entry.duration ?? undefined,
       downloadMode: e.settings.downloadMode,
-      videoQuality: e.settings.videoQuality,
     }));
 
     queue.addPlaylist(
       queueEntries,
       {
-        playlistId: playlistInfo.id,
-        playlistTitle: playlistInfo.title,
-        usePlaylistFolder: playlistInfo.usePlaylistFolder,
+        playlistId: selection.playlistInfo.id,
+        playlistTitle: selection.playlistInfo.title,
+        usePlaylistFolder: selection.playlistInfo.usePlaylistFolder,
       },
       globalOptions
     );
-    url = '';
-    playlistUrl = '';
-    processedPlaylistUrl = '';
-    status = '';
+    
     toast.success(
-      $t('playlist.notification.downloadStarted').replace('{count}', entries.length.toString())
+      $t('playlist.notification.downloadStarted').replace('{count}', selection.entries.length.toString())
     );
+    navigation.goHome();
+    url = '';
   }
 
-  async function download() {
+
+  function handleOpenPlaylistItem(entry: PlaylistEntry) {
+    navigation.openVideo(entry.url, {
+      title: entry.title,
+      thumbnail: entry.thumbnail ?? undefined,
+      author: entry.uploader ?? undefined,
+      duration: entry.duration ?? undefined,
+    });
+  }
+
+  async function quickDownload() {
     if (!url.trim()) {
       status = `⚠️ ${$t('download.placeholder')}`;
       return;
     }
 
     const downloadUrl = url.trim();
-    logs.info('download', `User initiated download: ${downloadUrl}`);
+    logs.info('download', `Quick download: ${downloadUrl}`);
 
+    // Check for direct file download
     const fileCheck = isDirectFileUrl(downloadUrl);
     if (fileCheck.isFile) {
       logs.info('download', `Direct file URL detected: ${fileCheck.filename}`);
@@ -504,44 +535,7 @@
       }
     }
 
-    const isPlaylistUrl = isLikelyPlaylist(downloadUrl);
-    logs.debug('download', `Is likely playlist: ${isPlaylistUrl}`);
-
-    if (isPlaylistUrl) {
-      checkingPlaylist = true;
-      try {
-        let info: { is_playlist: boolean; total_count: number };
-
-        if (isAndroid()) {
-          info = await getPlaylistInfoOnAndroid(downloadUrl);
-        } else {
-          info = await invoke<{ is_playlist: boolean; total_count: number }>('get_playlist_info', {
-            url: downloadUrl,
-            offset: 0,
-            limit: 1,
-            cookiesFromBrowser: cookiesFromBrowser || null,
-            customCookies: customCookies || null,
-            proxyConfig: getProxyConfig(),
-          });
-        }
-
-        if (info.is_playlist && info.total_count > 1) {
-          playlistUrl = downloadUrl;
-          playlistModalOpen = true;
-          checkingPlaylist = false;
-          return;
-        }
-      } catch (e) {
-        logs.warn('download', `Failed to check playlist: ${e}`);
-      }
-      checkingPlaylist = false;
-    }
-
-    logs.debug(
-      'download',
-      `Options: mode=${downloadMode}, quality=${videoQuality}, audioQuality=${audioQuality}, cookies=${cookiesFromBrowser || 'none'}`
-    );
-
+    // Add to queue with current settings
     const queueId = queue.add(downloadUrl, {
       videoQuality,
       downloadMode: downloadMode as 'auto' | 'audio' | 'mute',
@@ -559,162 +553,234 @@
 
     if (queueId) {
       logs.info('download', `Added to queue with ID: ${queueId}`);
-    } else {
-      logs.warn('download', 'Failed to add to queue (already queued or dependencies missing)');
+      toast.info($t('downloads.active'));
     }
-
-    toast.info($t('downloads.active'));
     url = '';
+  }
+
+
+  function openAdvancedView() {
+    if (!url.trim()) return;
+    
+    if (isPlaylistUrl) {
+      navigation.openPlaylist(url.trim());
+    } else if (isYouTubeUrl) {
+      navigation.openVideo(url.trim());
+    }
   }
 </script>
 
 <div class="page">
-  <div class="page-header">
-    <h1>{$t('app.name')}</h1>
-    <p class="subtitle">{$t('download.subtitle')}</p>
-  </div>
-
-  <Divider my={20} />
-
-  <div class="page-content">
-    <SetupBanner />
-
-    <!-- URL Input -->
-    <div class="url-input-wrapper">
-      <Icon name="link" size={18} />
-      <input
-        bind:value={url}
-        placeholder={$t('download.placeholder')}
-        class="url-input"
-        disabled={!canDownload}
-      />
-      <button class="download-btn" onclick={download} disabled={!canDownload || !url.trim()}>
-        <Icon name="download" size={20} />
-      </button>
-    </div>
-
-    <!-- Options Section -->
-    <div class="options-section">
-      <button class="options-header" onclick={() => (optionsExpanded = !optionsExpanded)}>
-        <span class="options-title">
-          <Icon name="settings" size={18} />
-          {$t('download.options.title')}
-        </span>
-        <Icon name={optionsExpanded ? 'chevron_up' : 'chevron_down'} size={20} />
-      </button>
-
-      {#if optionsExpanded}
-        <div class="options-content">
-          <!-- Presets -->
-          <div class="options-group">
-            <span class="group-label">{$t('download.options.presets')}</span>
-            <div class="presets-row">
-              {#each allPresets as preset}
-                <Chip
-                  selected={selectedPreset === preset.id}
-                  icon={preset.icon}
-                  onclick={() => applyPreset(preset.id)}
-                >
-                  {preset.label}
-                  {#if preset.id.startsWith('custom-')}
-                    <button
-                      class="preset-delete"
-                      onclick={(e) => {
-                        e.stopPropagation();
-                        deletePreset(preset.id);
-                      }}
-                      title={$t('common.delete')}
-                    >
-                      <Icon name="close" size={12} />
-                    </button>
-                  {/if}
-                </Chip>
-              {/each}
-              <Chip icon="add" onclick={() => (createPresetModalOpen = true)}
-                >{$t('download.options.createNew')}</Chip
-              >
-            </div>
-          </div>
-
-          <!-- Settings Row -->
-          <div class="settings-row">
-            <SettingButton
-              label={$t('download.options.videoQuality')}
-              value={getLabel(videoQualityOptions, videoQuality)}
-              onclick={() => (videoQualityModalOpen = true)}
-            />
-            <SettingButton
-              label={$t('download.options.downloadMode')}
-              value={getLabel(downloadModeOptions, downloadMode)}
-              onclick={() => (downloadModeModalOpen = true)}
-            />
-            <SettingButton
-              label={$t('download.options.audioQuality')}
-              value={getLabel(audioQualityOptions, audioQuality)}
-              onclick={() => (audioQualityModalOpen = true)}
-            />
-            <SettingButton
-              label={$t('download.options.cookies')}
-              value={cookiesFromBrowser
-                ? getLabel(browserOptions, cookiesFromBrowser)
-                : $t('download.options.noCookies')}
-              onclick={() => (cookiesModalOpen = true)}
-            />
-          </div>
-
-          <!-- Checkboxes -->
-          <div class="checkbox-groups">
-            <div class="checkbox-group">
-              <span class="group-label">{$t('download.options.postProcessing')}</span>
-              <Checkbox
-                checked={convertToMp4}
-                label={$t('download.options.convertToMp4')}
-                onchange={(val) => handleCheckboxChange('convertToMp4', val)}
-              />
-              <Checkbox
-                checked={remux}
-                label={$t('download.options.remux')}
-                onchange={(val) => handleCheckboxChange('remux', val)}
-              />
+  <ViewStack>
+    {#snippet children({ views, currentId, isActive })}
+      {#each views as view (view.id)}
+        {@const active = isActive(view.id)}
+        <div class="view-container" class:active>
+          {#if view.type === 'home'}
+            <!-- HOME VIEW -->
+            <div class="page-header">
+              <h1>{$t('app.name')}</h1>
+              <p class="subtitle">{$t('download.subtitle')}</p>
             </div>
 
-            <div class="checkbox-group">
-              <span class="group-label">{$t('download.options.other')}</span>
-              <Checkbox
-                checked={ignoreMixes}
-                label={$t('download.options.ignoreMixes')}
-                onchange={(val) => handleCheckboxChange('ignoreMixes', val)}
-              />
-              <Checkbox
-                checked={useHLS}
-                label={$t('download.options.useHLS')}
-                onchange={(val) => handleCheckboxChange('useHLS', val)}
-              />
-              <Checkbox
-                checked={clearMetadata}
-                label={$t('download.options.clearMetadata')}
-                onchange={(val) => handleCheckboxChange('clearMetadata', val)}
-              />
-              <Checkbox
-                checked={dontShowInHistory}
-                label={$t('download.options.dontShowInHistory')}
-                onchange={(val) => handleCheckboxChange('dontShowInHistory', val)}
-              />
-              <Checkbox
-                checked={useAria2}
-                label={$t('download.options.useAria2')}
-                onchange={(val) => handleCheckboxChange('useAria2', val)}
-              />
+            <Divider my={20} />
+
+            <div class="page-content">
+              <SetupBanner />
+
+              <!-- URL Input -->
+              <div class="url-input-wrapper">
+                <Icon name="link" size={18} />
+                {#if url.trim() && canDownload && (isYouTubeUrl || isPlaylistUrl)}
+                  <button class="input-badge" class:playlist={isPlaylistUrl} onclick={openAdvancedView}>
+                    <Icon name={isPlaylistUrl ? 'playlist' : 'play'} size={12} />
+                    <span>{isPlaylistUrl ? 'Playlist' : 'YouTube'}</span>
+                  </button>
+                {/if}
+                <input
+                  bind:value={url}
+                  placeholder={$t('download.placeholder')}
+                  class="url-input"
+                  disabled={!canDownload}
+                />
+                {#if url.trim() && canDownload && (isYouTubeUrl || isPlaylistUrl)}
+                  <button class="customize-btn" onclick={openAdvancedView} title={$t('download.customizeDownload')}>
+                    <Icon name="alt_arrow_rigth" size={18} />
+                  </button>
+                {/if}
+                <button class="download-btn" onclick={quickDownload} disabled={!canDownload || !url.trim()}>
+                  <Icon name="download" size={20} />
+                </button>
+              </div>
+
+              <!-- Options Section -->
+              <div class="options-section">
+                <button class="options-header" onclick={() => (optionsExpanded = !optionsExpanded)}>
+                  <span class="options-title">
+                    <Icon name="settings" size={18} />
+                    {$t('download.options.title')}
+                  </span>
+                  <Icon name={optionsExpanded ? 'chevron_up' : 'chevron_down'} size={20} />
+                </button>
+
+                {#if optionsExpanded}
+                  <div class="options-content">
+                    <!-- Presets -->
+                    <div class="options-group">
+                      <span class="group-label">{$t('download.options.presets')}</span>
+                      <div class="presets-row">
+                        {#each allPresets as preset}
+                          <Chip
+                            selected={selectedPreset === preset.id}
+                            icon={preset.icon}
+                            onclick={() => applyPreset(preset.id)}
+                          >
+                            {preset.label}
+                            {#if preset.id.startsWith('custom-')}
+                              <button
+                                class="preset-delete"
+                                onclick={(e) => {
+                                  e.stopPropagation();
+                                  deletePreset(preset.id);
+                                }}
+                                title={$t('common.delete')}
+                              >
+                                <Icon name="close" size={12} />
+                              </button>
+                            {/if}
+                          </Chip>
+                        {/each}
+                        <Chip icon="add" onclick={() => (createPresetModalOpen = true)}
+                          >{$t('download.options.createNew')}</Chip
+                        >
+                      </div>
+                    </div>
+
+                    <!-- Settings Row -->
+                    <div class="settings-row">
+                      <SettingButton
+                        label={$t('download.options.videoQuality')}
+                        value={getLabel(videoQualityOptions, videoQuality)}
+                        onclick={() => (videoQualityModalOpen = true)}
+                      />
+                      <SettingButton
+                        label={$t('download.options.downloadMode')}
+                        value={getLabel(downloadModeOptions, downloadMode)}
+                        onclick={() => (downloadModeModalOpen = true)}
+                      />
+                      <SettingButton
+                        label={$t('download.options.audioQuality')}
+                        value={getLabel(audioQualityOptions, audioQuality)}
+                        onclick={() => (audioQualityModalOpen = true)}
+                      />
+                      <SettingButton
+                        label={$t('download.options.cookies')}
+                        value={cookiesFromBrowser
+                          ? getLabel(browserOptions, cookiesFromBrowser)
+                          : $t('download.options.noCookies')}
+                        onclick={() => (cookiesModalOpen = true)}
+                      />
+                    </div>
+
+                    <!-- Checkboxes -->
+                    <div class="checkbox-groups">
+                      <div class="checkbox-group">
+                        <span class="group-label">{$t('download.options.postProcessing')}</span>
+                        <Checkbox
+                          checked={convertToMp4}
+                          label={$t('download.options.convertToMp4')}
+                          onchange={(val) => handleCheckboxChange('convertToMp4', val)}
+                        />
+                        <Checkbox
+                          checked={remux}
+                          label={$t('download.options.remux')}
+                          onchange={(val) => handleCheckboxChange('remux', val)}
+                        />
+                      </div>
+
+                      <div class="checkbox-group">
+                        <span class="group-label">{$t('download.options.other')}</span>
+                        <Checkbox
+                          checked={ignoreMixes}
+                          label={$t('download.options.ignoreMixes')}
+                          onchange={(val) => handleCheckboxChange('ignoreMixes', val)}
+                        />
+                        <Checkbox
+                          checked={useHLS}
+                          label={$t('download.options.useHLS')}
+                          onchange={(val) => handleCheckboxChange('useHLS', val)}
+                        />
+                        <Checkbox
+                          checked={clearMetadata}
+                          label={$t('download.options.clearMetadata')}
+                          onchange={(val) => handleCheckboxChange('clearMetadata', val)}
+                        />
+                        <Checkbox
+                          checked={dontShowInHistory}
+                          label={$t('download.options.dontShowInHistory')}
+                          onchange={(val) => handleCheckboxChange('dontShowInHistory', val)}
+                        />
+                        <Checkbox
+                          checked={useAria2}
+                          label={$t('download.options.useAria2')}
+                          onchange={(val) => handleCheckboxChange('useAria2', val)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                {/if}
+              </div>
+
+              {#if status}
+                <p class="status">{status}</p>
+              {/if}
             </div>
-          </div>
+
+          {:else if view.type === 'video'}
+            <!-- VIDEO VIEW -->
+            <TrackBuilder
+              url={view.url ?? ''}
+              {cookiesFromBrowser}
+              {customCookies}
+              showHeader={true}
+              onback={handleBack}
+              ondownload={handleVideoDownload}
+              backLabel={backLabel()}
+              prefetchedInfo={view.cachedData}
+            />
+
+          {:else if view.type === 'playlist'}
+            <!-- PLAYLIST VIEW -->
+            <PlaylistBuilder
+              url={view.url ?? ''}
+              {cookiesFromBrowser}
+              {customCookies}
+              defaultDownloadMode={downloadMode}
+              showHeader={true}
+              onback={handleBack}
+              ondownload={handlePlaylistDownload}
+              onopenitem={handleOpenPlaylistItem}
+              backLabel={backLabel()}
+            />
+
+          {:else if view.type === 'channel'}
+            <!-- CHANNEL VIEW -->
+            <div class="page-content">
+              <div class="coming-soon">
+                <Icon name="user" size={48} />
+                <h2>Channel View</h2>
+                <p>Coming soon...</p>
+                <button class="back-btn" onclick={handleBack}>
+                  <Icon name="alt_arrow_rigth" size={18} class="rotate-180" />
+                  <span>{$t('common.back')}</span>
+                </button>
+              </div>
+            </div>
+          {/if}
         </div>
-      {/if}
-    </div>
-
-    {#if status}
-      <p class="status">{status}</p>
-    {/if}
-  </div>
+      {/each}
+    {/snippet}
+  </ViewStack>
 </div>
 
 <!-- Modals -->
@@ -821,24 +887,40 @@
   {/snippet}
 </Modal>
 
-<!-- Playlist Modal -->
-<PlaylistModal
-  bind:open={playlistModalOpen}
-  url={playlistUrl}
-  {cookiesFromBrowser}
-  {customCookies}
-  defaultDownloadMode={downloadMode}
-  ondownload={handlePlaylistDownload}
-  onclose={() => {
-    playlistUrl = '';
-    processedPlaylistUrl = '';
-  }}
-/>
-
 <style>
   .page {
-    padding: 0 8px 16px 16px;
+    padding: 0;
     height: 100%;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .view-container {
+    position: absolute;
+    inset: 0;
+    height: 100%;
+    width: 100%;
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 0 6px 16px 16px;
+    margin-right: 4px;
+    margin-bottom: 4px;
+    mask-image: linear-gradient(to bottom, black, black 0px, black calc(100% - 25px), transparent);
+    -webkit-mask-image: linear-gradient(to bottom, black, black 0px, black calc(100% - 25px), transparent);
+    &:not(.active) * {
+      transition: none !important;
+      animation: none !important;
+    }
+  }
+  
+  .view-container.active {
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
+    z-index: 1;
   }
 
   .page-header {
@@ -904,10 +986,10 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--accent, rgba(99, 102, 241, 0.85));
+    background: rgba(255, 255, 255, 0.1);
     border: none;
     border-radius: 10px;
-    color: white;
+    color: rgba(255, 255, 255, 0.8);
     cursor: pointer;
     transition: all 0.15s;
     flex-shrink: 0;
@@ -919,8 +1001,8 @@
   }
 
   .download-btn:hover:not(:disabled) {
-    background: var(--accent-hover, rgba(99, 102, 241, 1));
-    transform: scale(1.02);
+    background: rgba(255, 255, 255, 0.15);
+    color: white;
   }
 
   /* Options Section */
@@ -1123,5 +1205,117 @@
     border-radius: 4px;
     font-size: 12px;
     color: rgba(255, 255, 255, 0.7);
+  }
+
+  .input-badge {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background: rgba(255, 0, 0, 0.15);
+    color: #ff6666;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    flex-shrink: 0;
+    white-space: nowrap;
+    cursor: pointer;
+    max-width: 80px;
+    overflow: hidden;
+    animation: badge-expand 0.25s ease-out forwards;
+    transition: background 0.15s ease, transform 0.1s ease;
+  }
+
+  .input-badge:hover {
+    background: rgba(255, 0, 0, 0.25);
+    transform: scale(1.02);
+  }
+
+  @keyframes badge-expand {
+    from {
+      max-width: 0;
+      padding: 4px 0;
+      opacity: 0;
+    }
+    to {
+      max-width: 80px;
+      padding: 4px 8px;
+      opacity: 1;
+    }
+  }
+
+  .input-badge.playlist {
+    background: rgba(255, 165, 0, 0.15);
+    color: #ffaa44;
+  }
+
+  .input-badge.playlist:hover {
+    background: rgba(255, 165, 0, 0.25);
+  }
+
+  .customize-btn {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--accent-alpha, rgba(99, 102, 241, 0.15));
+    color: var(--accent, rgb(99, 102, 241));
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+  }
+
+  .customize-btn:hover {
+    background: var(--accent-alpha, rgba(99, 102, 241, 0.25));
+    color: var(--accent, rgb(99, 102, 241));
+  }
+
+  .coming-soon {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 64px;
+    text-align: center;
+    color: rgba(255, 255, 255, 0.6);
+  }
+
+  .coming-soon h2 {
+    margin: 0;
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  .coming-soon p {
+    margin: 0;
+  }
+
+  .coming-soon .back-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 16px;
+    padding: 10px 20px;
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .coming-soon .back-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  :global(.rotate-180) {
+    transform: rotate(180deg);
   }
 </style>
