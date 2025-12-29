@@ -49,6 +49,7 @@
     stopUpdateChecker,
     clearDismissedVersionIfUpdated,
   } from '$lib/stores/updates';
+  import { navigation } from '$lib/stores/navigation';
   import NotificationPopup from '$lib/components/NotificationPopup.svelte';
 
   let { children }: { children: Snippet } = $props();
@@ -65,11 +66,13 @@
   let clipboardCheckInterval: ReturnType<typeof setInterval> | null = null;
 
   let hasShownTrayNotification = false;
+  let isWindowHidden = $state(false);
 
   let unlistenClose: UnlistenFn | null = null;
   let unlistenTrayDownload: UnlistenFn | null = null;
   let unlistenNotificationDownload: UnlistenFn | null = null;
   let unlistenNotificationStartDownload: UnlistenFn | null = null;
+  let unlistenWindowShown: UnlistenFn | null = null;
   let detachLogger: (() => void) | null = null;
   let cleanupShareIntent: (() => void) | null = null;
 
@@ -191,9 +194,7 @@
     initHistory();
     queue.init();
 
-    if (!isAndroid()) {
-      deps.checkAll();
-    }
+    deps.checkAll();
 
     windowWidth = window.innerWidth;
     isMobile = windowWidth < MOBILE_BREAKPOINT;
@@ -360,7 +361,7 @@
         if (isPlaylistNotification) {
           logs.info(
             'layout',
-            `Playlist detected - showing window and opening playlist modal: ${url}`
+            `Playlist detected - showing window and opening playlist view: ${url}`
           );
 
           if (appWindow) {
@@ -372,8 +373,13 @@
             }
           }
 
+          // Navigate directly with prefetched data - no placeholders!
+          navigation.openPlaylist(url, {
+            title: metadata?.title || undefined,
+            thumbnail: metadata?.thumbnail || undefined,
+            author: metadata?.uploader || undefined,
+          });
           toast.info($t('playlist.notification.openingModal'));
-          goto(`/?url=${encodeURIComponent(url)}&openPlaylist=1`);
           return;
         }
 
@@ -389,7 +395,12 @@
             }
           }
 
-          goto(`/?url=${encodeURIComponent(url)}&openFormat=1`);
+          // Navigate directly with prefetched data - no placeholders!
+          navigation.openVideo(url, {
+            title: metadata?.title || undefined,
+            thumbnail: metadata?.thumbnail || undefined,
+            author: metadata?.uploader || undefined,
+          });
           return;
         }
 
@@ -429,6 +440,10 @@
         }
       }
     );
+
+    unlistenWindowShown = await listen('window-shown', () => {
+      onWindowShown();
+    });
   }
 
   onDestroy(() => {
@@ -454,6 +469,9 @@
     if (unlistenNotificationStartDownload) {
       unlistenNotificationStartDownload();
     }
+    if (unlistenWindowShown) {
+      unlistenWindowShown();
+    }
     if (detachLogger) {
       detachLogger();
     }
@@ -473,6 +491,24 @@
       goto(`/?url=${encodeURIComponent(url)}`);
       toast.info($t('clipboard.detected'));
     }
+  }
+
+  function releaseMemoryOnHide() {
+    logs.info('layout', 'Window hidden - releasing non-essential memory');
+    navigation.clearCachedData();
+    logs.clearMemory();
+    if (typeof window !== 'undefined' && 'gc' in window) {
+      try {
+        // @ts-ignore
+        window.gc();
+      } catch {}
+    }
+  }
+
+  function onWindowShown() {
+    logs.info('layout', 'Window restored from tray');
+    isWindowHidden = false;
+    deps.checkAll();
   }
 
   async function handleCloseRequest() {
@@ -502,6 +538,10 @@
             console.warn('Failed to send tray notification:', e);
           }
         }
+
+        isWindowHidden = true;
+        releaseMemoryOnHide();
+
         await appWindow.hide();
         break;
     }

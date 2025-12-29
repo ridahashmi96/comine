@@ -27,19 +27,19 @@ static ACTIVE_DOWNLOADS: std::sync::LazyLock<Mutex<HashMap<String, u32>>> =
 
 #[cfg(not(target_os = "android"))]
 static VIDEO_INFO_CACHE: std::sync::LazyLock<Mutex<LruCache<String, VideoInfo>>> =
-    std::sync::LazyLock::new(|| Mutex::new(LruCache::new(NonZeroUsize::new(50).unwrap())));
+    std::sync::LazyLock::new(|| Mutex::new(LruCache::new(NonZeroUsize::new(10).unwrap())));
 
 #[cfg(not(target_os = "android"))]
 static PLAYLIST_INFO_CACHE: std::sync::LazyLock<Mutex<LruCache<String, PlaylistInfo>>> =
-    std::sync::LazyLock::new(|| Mutex::new(LruCache::new(NonZeroUsize::new(20).unwrap())));
+    std::sync::LazyLock::new(|| Mutex::new(LruCache::new(NonZeroUsize::new(5).unwrap())));
 
 #[cfg(not(target_os = "android"))]
 static VIDEO_FORMATS_CACHE: std::sync::LazyLock<Mutex<LruCache<String, VideoFormats>>> =
-    std::sync::LazyLock::new(|| Mutex::new(LruCache::new(NonZeroUsize::new(30).unwrap())));
+    std::sync::LazyLock::new(|| Mutex::new(LruCache::new(NonZeroUsize::new(10).unwrap())));
 
 #[cfg(not(target_os = "android"))]
 static YTM_THUMBNAIL_CACHE: std::sync::LazyLock<Mutex<LruCache<String, String>>> =
-    std::sync::LazyLock::new(|| Mutex::new(LruCache::new(NonZeroUsize::new(50).unwrap())));
+    std::sync::LazyLock::new(|| Mutex::new(LruCache::new(NonZeroUsize::new(20).unwrap())));
 
 /// Extension trait to hide console window on Windows
 #[cfg(target_os = "windows")]
@@ -2043,6 +2043,52 @@ async fn get_logs_folder_path(app: AppHandle) -> Result<String, String> {
     Ok(logs_dir.to_string_lossy().to_string())
 }
 
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+async fn read_session_logs(
+    session_file: String,
+    offset: Option<usize>,
+    limit: Option<usize>,
+) -> Result<Vec<String>, String> {
+    use std::io::{BufRead, BufReader};
+
+    let path = std::path::Path::new(&session_file);
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+
+    let file = std::fs::File::open(path).map_err(|e| format!("Failed to open log file: {}", e))?;
+
+    let reader = BufReader::new(file);
+    let offset = offset.unwrap_or(0);
+    let limit = limit.unwrap_or(usize::MAX);
+
+    let lines: Vec<String> = reader
+        .lines()
+        .skip(offset)
+        .take(limit)
+        .filter_map(|line| line.ok())
+        .collect();
+
+    Ok(lines)
+}
+
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+async fn get_session_log_count(session_file: String) -> Result<usize, String> {
+    use std::io::{BufRead, BufReader};
+
+    let path = std::path::Path::new(&session_file);
+    if !path.exists() {
+        return Ok(0);
+    }
+
+    let file = std::fs::File::open(path).map_err(|e| format!("Failed to open log file: {}", e))?;
+
+    let reader = BufReader::new(file);
+    Ok(reader.lines().count())
+}
+
 // Android stubs for log functions (logging handled differently on mobile)
 #[cfg(target_os = "android")]
 #[tauri::command]
@@ -2072,6 +2118,22 @@ async fn open_logs_folder(_app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn get_logs_folder_path(_app: AppHandle) -> Result<String, String> {
     Err("Not supported on Android".to_string())
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn read_session_logs(
+    _session_file: String,
+    _offset: Option<usize>,
+    _limit: Option<usize>,
+) -> Result<Vec<String>, String> {
+    Ok(vec![])
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn get_session_log_count(_session_file: String) -> Result<usize, String> {
+    Ok(0)
 }
 
 // ==================== YouTube Music Thumbnail Cropping ====================
@@ -3302,6 +3364,92 @@ async fn clear_cache(_app: AppHandle) -> Result<u32, String> {
     Ok(0)
 }
 
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+async fn get_cache_stats() -> Result<CacheStats, String> {
+    let (video_info_count, playlist_count, formats_count, thumbnail_count) = {
+        let vi = VIDEO_INFO_CACHE.lock().unwrap();
+        let pi = PLAYLIST_INFO_CACHE.lock().unwrap();
+        let vf = VIDEO_FORMATS_CACHE.lock().unwrap();
+        let yt = YTM_THUMBNAIL_CACHE.lock().unwrap();
+        (vi.len(), pi.len(), vf.len(), yt.len())
+    };
+
+    // Estimate playlist cache size (rough estimate)
+    let playlist_entries_total: usize = {
+        let pi = PLAYLIST_INFO_CACHE.lock().unwrap();
+        pi.iter().map(|(_, v)| v.entries.len()).sum()
+    };
+
+    // Estimate thumbnail cache size (base64 strings)
+    let thumbnail_bytes: usize = {
+        let yt = YTM_THUMBNAIL_CACHE.lock().unwrap();
+        yt.iter().map(|(_, v)| v.len()).sum()
+    };
+
+    Ok(CacheStats {
+        video_info_count,
+        playlist_count,
+        playlist_entries_total,
+        formats_count,
+        thumbnail_count,
+        thumbnail_bytes_approx: thumbnail_bytes,
+    })
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn get_cache_stats() -> Result<CacheStats, String> {
+    Ok(CacheStats {
+        video_info_count: 0,
+        playlist_count: 0,
+        playlist_entries_total: 0,
+        formats_count: 0,
+        thumbnail_count: 0,
+        thumbnail_bytes_approx: 0,
+    })
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CacheStats {
+    video_info_count: usize,
+    playlist_count: usize,
+    playlist_entries_total: usize,
+    formats_count: usize,
+    thumbnail_count: usize,
+    thumbnail_bytes_approx: usize,
+}
+
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+async fn clear_memory_caches() -> Result<(), String> {
+    {
+        let mut vi = VIDEO_INFO_CACHE.lock().unwrap();
+        vi.clear();
+    }
+    {
+        let mut pi = PLAYLIST_INFO_CACHE.lock().unwrap();
+        pi.clear();
+    }
+    {
+        let mut vf = VIDEO_FORMATS_CACHE.lock().unwrap();
+        vf.clear();
+    }
+    {
+        let mut yt = YTM_THUMBNAIL_CACHE.lock().unwrap();
+        yt.clear();
+    }
+    info!("Cleared all in-memory caches");
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn clear_memory_caches() -> Result<(), String> {
+    Ok(())
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct UpdateCheckResult {
     pub available: bool,
@@ -3572,6 +3720,8 @@ pub fn run() {
             cleanup_old_logs,
             open_logs_folder,
             get_logs_folder_path,
+            read_session_logs,
+            get_session_log_count,
             resolve_proxy_config,
             validate_proxy_url,
             detect_system_proxy,
@@ -3596,7 +3746,9 @@ pub fn run() {
             deps::check_quickjs,
             deps::install_quickjs,
             deps::uninstall_quickjs,
-            clear_cache
+            clear_cache,
+            get_cache_stats,
+            clear_memory_caches
         ]);
 
     #[cfg(not(target_os = "android"))]
@@ -3606,12 +3758,24 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                let label = window.label();
-                if label == "main" {
+            let label = window.label();
+            if label != "main" {
+                return;
+            }
+
+            match event {
+                tauri::WindowEvent::CloseRequested { api, .. } => {
                     let _ = window.emit("close-requested", ());
                     api.prevent_close();
                 }
+                tauri::WindowEvent::Focused(false) => {
+                    if let Ok(visible) = window.is_visible() {
+                        if !visible {
+                            let _ = window.emit("window-hidden", ());
+                        }
+                    }
+                }
+                _ => {}
             }
         });
 
@@ -3659,6 +3823,7 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.set_focus();
+                    let _ = window.emit("window-shown", ());
                 }
             }
             "download" => {
@@ -3679,6 +3844,7 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(window) = tray.app_handle().get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.set_focus();
+                    let _ = window.emit("window-shown", ());
                 }
             }
         })

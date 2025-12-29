@@ -18,6 +18,7 @@
   let autoScroll = $state(true);
   let isMobile = $state(false);
   let isDesktop = $state(false);
+  let isLoading = $state(true);
 
   beforeNavigate(() => {
     const pos = logContainer?.scrollTop ?? 0;
@@ -40,6 +41,10 @@
 
     const ua = navigator.userAgent.toLowerCase();
     isDesktop = !ua.includes('android') && !ua.includes('iphone') && !ua.includes('ipad');
+
+    isLoading = true;
+    await logs.loadFromDisk();
+    isLoading = false;
 
     logs.info('system', 'Log viewer opened');
 
@@ -92,14 +97,14 @@
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   }
 
-  function promptCopyLogs() {
-    const text = logs.exportAsText();
+  async function promptCopyLogs() {
+    const text = await logs.exportAsText();
     copyContentLength = text.length;
     showCopyModal = true;
   }
 
   async function confirmCopyLogs() {
-    const text = logs.exportAsText();
+    const text = await logs.exportAsText();
     await navigator.clipboard.writeText(text);
     logs.info('system', 'Logs copied to clipboard');
     showCopyModal = false;
@@ -111,7 +116,7 @@
   }
 
   async function downloadLogs() {
-    const text = logs.exportAsText();
+    const text = await logs.exportAsText();
     const defaultName = `comine-logs-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.txt`;
 
     try {
@@ -186,7 +191,15 @@
 
 <div class="logs-page">
   <div class="log-container" bind:this={logContainer} onscroll={handleScroll}>
-    {#if $filteredLogs.length === 0}
+    {#if isLoading}
+      <div class="empty-state">
+        <div class="empty-icon">
+          <Icon name="documents" size={56} />
+        </div>
+        <p class="empty-title">Loading logs...</p>
+        <span class="empty-hint">Reading session log file from disk</span>
+      </div>
+    {:else if $filteredLogs.length === 0}
       <div class="empty-state">
         <div class="empty-icon">
           <Icon name="documents" size={56} />

@@ -85,10 +85,6 @@
         });
       });
     }
-
-    if (onDesktop) {
-      deps.checkAll();
-    }
   });
 
   const settingItems = {
@@ -625,7 +621,14 @@
     if (!onDesktop) return;
     clearingCache = true;
     try {
+      // Clear disk cache
       const deleted = await invoke<number>('clear_cache');
+      // Clear Rust memory caches
+      await invoke('clear_memory_caches');
+      // Clear frontend caches
+      const { clearAllFrontendCaches } = await import('$lib/stores/viewState');
+      clearAllFrontendCaches();
+
       if (deleted > 0) {
         toast.success($t('settings.data.clearCacheSuccess'));
       } else {

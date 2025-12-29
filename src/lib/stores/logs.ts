@@ -1,6 +1,7 @@
 import { writable, derived, get } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
 import { browser } from '$app/environment';
+import { isAndroid } from '$lib/utils/android';
 
 export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error';
 
@@ -18,56 +19,108 @@ export interface LogFilters {
 }
 
 interface LogsState {
-  entries: LogEntry[];
+  liveBuffer: LogEntry[];
+  diskEntries: LogEntry[];
+  diskLoaded: boolean;
   filters: LogFilters;
-  maxEntries: number;
+  sessionFile: string | null;
+  diskCount: number;
+  isAndroidPlatform: boolean;
 }
 
+const LIVE_BUFFER_SIZE = 100;
+const ANDROID_BUFFER_SIZE = 2000;
+
 const initialState: LogsState = {
-  entries: [],
+  liveBuffer: [],
+  diskEntries: [],
+  diskLoaded: false,
   filters: {
     levels: new Set(['trace', 'debug', 'info', 'warn', 'error']),
     search: '',
   },
-  maxEntries: 2000,
+  sessionFile: null,
+  diskCount: 0,
+  isAndroidPlatform: false,
 };
 
-let sessionLogFile: string | null = null;
 let isInitializing = false;
 
-async function initLogging() {
-  if (!browser || isInitializing || sessionLogFile) return;
-
-  isInitializing = true;
-  try {
-    sessionLogFile = await invoke<string>('get_log_file_path');
-    console.log('Log file initialized:', sessionLogFile);
-
-    const deleted = await invoke<number>('cleanup_old_logs', { keepSessions: 10 });
-    if (deleted > 0) {
-      console.log(`Cleaned up ${deleted} old log files`);
-    }
-  } catch (e) {
-    console.warn('Failed to initialize file logging:', e);
-  } finally {
-    isInitializing = false;
+/**
+ * Parse a log line from the session file
+ * [2024-12-29T15:30:45.123Z] [INFO] source: message
+ */
+function parseLogLine(line: string, index: number): LogEntry | null {
+  // Match: [timestamp] [LEVEL] source: message
+  const match = line.match(/^\[([^\]]+)\]\s*\[(\w+)\]\s*([^:]+):\s*(.*)$/);
+  if (!match) {
+    // Fallback for malformed lines
+    return {
+      id: `disk-${index}`,
+      timestamp: new Date(),
+      level: 'info',
+      source: 'unknown',
+      message: line,
+    };
   }
-}
 
-async function writeToFile(entry: LogEntry) {
-  if (!sessionLogFile) return;
+  const [, timestampStr, levelStr, source, message] = match;
+  const level = levelStr.toLowerCase() as LogLevel;
 
-  try {
-    const time = entry.timestamp.toISOString();
-    const line = `[${time}] [${entry.level.toUpperCase()}] ${entry.source}: ${entry.message}`;
-    await invoke('append_log', { sessionFile: sessionLogFile, entry: line });
-  } catch (e) {}
+  return {
+    id: `disk-${index}`,
+    timestamp: new Date(timestampStr),
+    level: ['trace', 'debug', 'info', 'warn', 'error'].includes(level) ? level : 'info',
+    source: source.trim(),
+    message: message.trim(),
+  };
 }
 
 function createLogsStore() {
   const { subscribe, set, update } = writable<LogsState>(initialState);
 
   let idCounter = 0;
+  const onAndroid = browser && isAndroid();
+
+  if (browser) {
+    update((s) => ({ ...s, isAndroidPlatform: onAndroid }));
+  }
+
+  async function initLogging() {
+    if (!browser || isInitializing || onAndroid) return;
+
+    const state = get({ subscribe });
+    if (state.sessionFile) return;
+
+    isInitializing = true;
+    try {
+      const sessionFile = await invoke<string>('get_log_file_path');
+      update((s) => ({ ...s, sessionFile }));
+      console.log('Log file initialized:', sessionFile);
+
+      const deleted = await invoke<number>('cleanup_old_logs', { keepSessions: 10 });
+      if (deleted > 0) {
+        console.log(`Cleaned up ${deleted} old log files`);
+      }
+    } catch (e) {
+      console.warn('Failed to initialize file logging:', e);
+    } finally {
+      isInitializing = false;
+    }
+  }
+
+  async function writeToFile(entry: LogEntry) {
+    if (onAndroid) return;
+
+    const state = get({ subscribe });
+    if (!state.sessionFile) return;
+
+    try {
+      const time = entry.timestamp.toISOString();
+      const line = `[${time}] [${entry.level.toUpperCase()}] ${entry.source}: ${entry.message}`;
+      await invoke('append_log', { sessionFile: state.sessionFile, entry: line });
+    } catch (e) {}
+  }
 
   if (browser) {
     initLogging();
@@ -78,7 +131,7 @@ function createLogsStore() {
 
     log(level: LogLevel, source: string, message: string) {
       const entry: LogEntry = {
-        id: `log-${++idCounter}`,
+        id: `live-${++idCounter}`,
         timestamp: new Date(),
         level,
         source,
@@ -86,8 +139,9 @@ function createLogsStore() {
       };
 
       update((state) => {
-        const entries = [entry, ...state.entries].slice(0, state.maxEntries);
-        return { ...state, entries };
+        const maxSize = state.isAndroidPlatform ? ANDROID_BUFFER_SIZE : LIVE_BUFFER_SIZE;
+        const liveBuffer = [entry, ...state.liveBuffer].slice(0, maxSize);
+        return { ...state, liveBuffer };
       });
 
       writeToFile(entry);
@@ -107,6 +161,48 @@ function createLogsStore() {
     },
     error(source: string, message: string) {
       this.log('error', source, message);
+    },
+
+    async loadFromDisk(): Promise<void> {
+      const state = get({ subscribe });
+
+      if (state.isAndroidPlatform) {
+        update((s) => ({ ...s, diskLoaded: true }));
+        return;
+      }
+
+      if (!state.sessionFile) return;
+
+      try {
+        const lines = await invoke<string[]>('read_session_logs', {
+          sessionFile: state.sessionFile,
+        });
+
+        const diskEntries = lines
+          .map((line, index) => parseLogLine(line, index))
+          .filter((entry): entry is LogEntry => entry !== null)
+          .reverse();
+
+        update((s) => ({
+          ...s,
+          diskEntries,
+          diskLoaded: true,
+          diskCount: lines.length,
+        }));
+
+        console.log(`Loaded ${diskEntries.length} log entries from disk`);
+      } catch (e) {
+        console.error('Failed to load logs from disk:', e);
+      }
+    },
+
+    clearMemory() {
+      update((state) => ({
+        ...state,
+        liveBuffer: [],
+        diskEntries: [],
+        diskLoaded: false,
+      }));
     },
 
     toggleLevel(level: LogLevel) {
@@ -129,14 +225,25 @@ function createLogsStore() {
     },
 
     clear() {
-      update((state) => ({ ...state, entries: [] }));
+      update((state) => ({ ...state, liveBuffer: [], diskEntries: [], diskLoaded: false }));
     },
 
     getFiltered(): LogEntry[] {
       const state = get({ subscribe });
-      return state.entries.filter((entry) => {
-        if (!state.filters.levels.has(entry.level)) return false;
 
+      let entries: LogEntry[];
+      if (state.diskLoaded) {
+        const liveMessages = new Set(state.liveBuffer.map((e) => `${e.source}:${e.message}`));
+        entries = [
+          ...state.liveBuffer,
+          ...state.diskEntries.filter((de) => !liveMessages.has(`${de.source}:${de.message}`)),
+        ];
+      } else {
+        entries = state.liveBuffer;
+      }
+
+      return entries.filter((entry) => {
+        if (!state.filters.levels.has(entry.level)) return false;
         if (state.filters.search) {
           const search = state.filters.search.toLowerCase();
           return (
@@ -144,19 +251,38 @@ function createLogsStore() {
             entry.source.toLowerCase().includes(search)
           );
         }
-
         return true;
       });
     },
 
-    exportAsText(): string {
+    async exportAsText(): Promise<string> {
       const state = get({ subscribe });
-      return state.entries
-        .map((entry) => {
-          const time = entry.timestamp.toISOString();
-          return `[${time}] [${entry.level.toUpperCase()}] ${entry.source}: ${entry.message}`;
-        })
-        .join('\n');
+
+      if (state.isAndroidPlatform || !state.sessionFile) {
+        return state.liveBuffer
+          .map((entry) => {
+            const time = entry.timestamp.toISOString();
+            return `[${time}] [${entry.level.toUpperCase()}] ${entry.source}: ${entry.message}`;
+          })
+          .reverse()
+          .join('\n');
+      }
+
+      try {
+        const lines = await invoke<string[]>('read_session_logs', {
+          sessionFile: state.sessionFile,
+        });
+        return lines.join('\n');
+      } catch (e) {
+        console.error('Failed to read logs for export:', e);
+        return state.liveBuffer
+          .map((entry) => {
+            const time = entry.timestamp.toISOString();
+            return `[${time}] [${entry.level.toUpperCase()}] ${entry.source}: ${entry.message}`;
+          })
+          .reverse()
+          .join('\n');
+      }
     },
 
     async openLogsFolder(): Promise<void> {
@@ -175,13 +301,33 @@ function createLogsStore() {
         return null;
       }
     },
+
+    getSessionFile(): string | null {
+      return get({ subscribe }).sessionFile;
+    },
+
+    isDiskLoaded(): boolean {
+      return get({ subscribe }).diskLoaded;
+    },
   };
 }
 
 export const logs = createLogsStore();
 
 export const filteredLogs = derived(logs, ($logs) => {
-  return $logs.entries.filter((entry) => {
+  let entries: LogEntry[];
+
+  if ($logs.diskLoaded) {
+    const liveMessages = new Set($logs.liveBuffer.map((e) => `${e.source}:${e.message}`));
+    entries = [
+      ...$logs.liveBuffer,
+      ...$logs.diskEntries.filter((de) => !liveMessages.has(`${de.source}:${de.message}`)),
+    ];
+  } else {
+    entries = $logs.liveBuffer;
+  }
+
+  return entries.filter((entry) => {
     if (!$logs.filters.levels.has(entry.level)) return false;
 
     if ($logs.filters.search) {
@@ -196,16 +342,28 @@ export const filteredLogs = derived(logs, ($logs) => {
 });
 
 export const logStats = derived(logs, ($logs) => {
+  let entries: LogEntry[];
+
+  if ($logs.diskLoaded) {
+    const liveMessages = new Set($logs.liveBuffer.map((e) => `${e.source}:${e.message}`));
+    entries = [
+      ...$logs.liveBuffer,
+      ...$logs.diskEntries.filter((de) => !liveMessages.has(`${de.source}:${de.message}`)),
+    ];
+  } else {
+    entries = $logs.liveBuffer;
+  }
+
   const counts = {
     trace: 0,
     debug: 0,
     info: 0,
     warn: 0,
     error: 0,
-    total: $logs.entries.length,
+    total: entries.length,
   };
 
-  for (const entry of $logs.entries) {
+  for (const entry of entries) {
     counts[entry.level]++;
   }
 

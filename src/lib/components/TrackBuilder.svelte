@@ -3,6 +3,7 @@
   import { t } from '$lib/i18n';
   import { getProxyConfig } from '$lib/stores/settings';
   import { logs } from '$lib/stores/logs';
+  import { portal } from '$lib/actions/portal';
   import Icon from './Icon.svelte';
   import type { IconName } from './Icon.svelte';
   import Select from './Select.svelte';
@@ -15,7 +16,12 @@
     waitForAndroidYtDlp,
     processYtmThumbnailOnAndroid,
   } from '$lib/utils/android';
-  import { viewStateCache, type VideoViewState } from '$lib/stores/viewState';
+  import {
+    viewStateCache,
+    androidDataCache,
+    type VideoViewState,
+    type CachedVideoInfo,
+  } from '$lib/stores/viewState';
 
   interface VideoFormat {
     format_id: string;
@@ -96,23 +102,16 @@
 
   function getInitialState() {
     const cached = viewStateCache.get<VideoViewState>('video', url);
-    if (cached && cached.info && Date.now() - cached.timestamp < CACHE_TTL) {
-      return {
-        info: cached.info,
-        selectedVideo: cached.selectedVideo,
-        selectedAudio: cached.selectedAudio,
-        loading: false,
-        lastLoadedUrl: url,
-        fromCache: true,
-      };
-    }
+
+    const androidCachedData = isAndroid() ? androidDataCache.getVideo(url) : null;
+
     return {
-      info: null as VideoInfo | null,
-      selectedVideo: 'best',
-      selectedAudio: 'best',
-      loading: true,
-      lastLoadedUrl: '',
-      fromCache: false,
+      info: androidCachedData as VideoInfo | null,
+      selectedVideo: cached?.selectedVideo ?? 'best',
+      selectedAudio: cached?.selectedAudio ?? 'best',
+      loading: !androidCachedData,
+      lastLoadedUrl: androidCachedData ? url : '',
+      fromCache: !!androidCachedData,
     };
   }
 
@@ -183,23 +182,21 @@
   let processedThumbnail = $state<string | null>(initialState.info?.thumbnail ?? null);
   let lastLoadedUrl = $state(initialState.lastLoadedUrl);
 
+  let destroyed = false;
+
   let selectedVideo = $state<string>(initialState.selectedVideo);
   let selectedAudio = $state<string>(initialState.selectedAudio);
 
-  // Description modal
   let showDescription = $state(false);
 
-  // Subtitles
   let embedSubs = $state(false);
   let subLangs = $state('en');
 
-  // SponsorBlock categories
   let skipSponsors = $state(true);
   let skipIntros = $state(false);
   let skipSelfPromo = $state(false);
   let skipInteraction = $state(false);
 
-  // Other options
   let embedChapters = $state(true);
   let embedThumbnail = $state(true);
   let embedMetadata = $state(true);
@@ -467,7 +464,14 @@
       viewStateCache.set<VideoViewState>({
         type: 'video',
         url,
-        info: {
+        selectedVideo,
+        selectedAudio,
+        scrollTop: 0,
+        timestamp: Date.now(),
+      });
+
+      if (isAndroid()) {
+        androidDataCache.setVideo(url, {
           title: info.title,
           author: info.author ?? '',
           thumbnail: info.thumbnail,
@@ -489,23 +493,25 @@
             has_video: f.has_video,
             has_audio: f.has_audio,
           })),
-        },
-        selectedVideo,
-        selectedAudio,
-        scrollTop: 0,
-        timestamp: Date.now(),
-      });
+        });
+      }
     }
   }
 
   $effect(() => {
     return () => {
+      destroyed = true;
       saveToCache();
+      console.log(
+        `[TrackBuilder] Destroying: ${url}, formats count: ${info?.formats?.length ?? 0}`
+      );
+      info = null;
+      processedThumbnail = null;
     };
   });
 
   async function processThumbnail(thumbUrl: string) {
-    if (!thumbUrl) return;
+    if (!thumbUrl || destroyed) return;
 
     const isYouTubeMusic = url.includes('music.youtube.com');
     if (!isYouTubeMusic) {
@@ -514,20 +520,27 @@
     }
 
     try {
+      let result: string;
       if (isAndroid()) {
-        processedThumbnail = await processYtmThumbnailOnAndroid(thumbUrl);
+        result = await processYtmThumbnailOnAndroid(thumbUrl);
       } else {
-        processedThumbnail = await invoke<string>('process_ytm_thumbnail', {
+        result = await invoke<string>('process_ytm_thumbnail', {
           thumbnailUrl: thumbUrl,
         });
       }
+      if (!destroyed) {
+        processedThumbnail = result;
+      }
     } catch (e) {
       logs.warn('tracks', `Thumbnail processing failed: ${e}`);
-      processedThumbnail = thumbUrl;
+      if (!destroyed) {
+        processedThumbnail = thumbUrl;
+      }
     }
   }
 
   async function loadInfo() {
+    if (destroyed) return;
     loading = true;
     error = null;
     processedThumbnail = null;
@@ -536,13 +549,17 @@
     try {
       logs.info('tracks', `Fetching info for: ${url}`);
 
+      let loadedInfo: VideoInfo;
+
       if (isAndroid()) {
         await waitForAndroidYtDlp();
+        if (destroyed) return; // Check after await
         const raw = await getVideoInfoOnAndroid(url);
+        if (destroyed) return; // Check after await
         if (!raw) throw new Error('Failed to get video info');
 
         const rawFormats = (raw.formats as Array<Record<string, unknown>>) || [];
-        info = {
+        loadedInfo = {
           title: (raw.title as string) || url,
           author: (raw.uploader as string) || (raw.channel as string) || null,
           thumbnail: (raw.thumbnail as string) || null,
@@ -570,13 +587,16 @@
           })),
         };
       } else {
-        info = await invoke<VideoInfo>('get_video_formats', {
+        loadedInfo = await invoke<VideoInfo>('get_video_formats', {
           url,
           cookiesFromBrowser: cookiesFromBrowser || null,
           customCookies: customCookies || null,
           proxyConfig: getProxyConfig(),
         });
+        if (destroyed) return;
       }
+
+      info = loadedInfo;
 
       if (info.thumbnail) {
         processThumbnail(info.thumbnail);
@@ -587,10 +607,13 @@
         `Loaded: ${info.title}, ${videoFormats.length} video, ${audioFormats.length} audio`
       );
     } catch (e) {
+      if (destroyed) return;
       error = String(e);
       logs.error('tracks', `Failed: ${e}`);
     } finally {
-      loading = false;
+      if (!destroyed) {
+        loading = false;
+      }
     }
   }
 </script>
@@ -918,7 +941,7 @@
 {#if showDescription && info?.description}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div class="desc-modal-overlay" onclick={() => (showDescription = false)}>
+  <div class="desc-modal-overlay" use:portal onclick={() => (showDescription = false)}>
     <div class="desc-modal" onclick={(e) => e.stopPropagation()}>
       <div class="desc-modal-header">
         <span class="desc-modal-title">{$t('download.tracks.description')}</span>

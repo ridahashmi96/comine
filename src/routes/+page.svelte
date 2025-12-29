@@ -358,8 +358,6 @@
   }
 
   onMount(async () => {
-    await deps.checkAll();
-
     if (isAndroid()) {
       const checkReady = () => {
         androidReady = isAndroidYtDlpReady();
@@ -386,11 +384,10 @@
     url = '';
   }
 
-
   let backLabel = $derived(() => {
     const prev = $previousView;
     if (!prev) return undefined;
-    
+
     switch (prev.type) {
       case 'home':
         return $t('nav.download');
@@ -409,7 +406,6 @@
         return undefined;
     }
   });
-
 
   function handleVideoDownload(selection: TrackSelection) {
     const downloadUrl = $currentView.url;
@@ -450,7 +446,7 @@
       'playlist',
       `Downloading ${selection.entries.length} items from playlist: ${selection.playlistInfo.title}`
     );
-    
+
     const globalOptions = {
       videoQuality,
       audioQuality,
@@ -483,14 +479,16 @@
       },
       globalOptions
     );
-    
+
     toast.success(
-      $t('playlist.notification.downloadStarted').replace('{count}', selection.entries.length.toString())
+      $t('playlist.notification.downloadStarted').replace(
+        '{count}',
+        selection.entries.length.toString()
+      )
     );
     navigation.goHome();
     url = '';
   }
-
 
   function handleOpenPlaylistItem(entry: PlaylistEntry) {
     navigation.openVideo(entry.url, {
@@ -558,10 +556,9 @@
     url = '';
   }
 
-
   function openAdvancedView() {
     if (!url.trim()) return;
-    
+
     if (isPlaylistUrl) {
       navigation.openPlaylist(url.trim());
     } else if (isYouTubeUrl) {
@@ -574,210 +571,225 @@
   <ViewStack>
     {#snippet children({ views, currentId, isActive })}
       {#each views as view (view.id)}
-        {@const active = isActive(view.id)}
-        <div class="view-container" class:active>
-          {#if view.type === 'home'}
-            <!-- HOME VIEW -->
-            <div class="page-header">
-              <h1>{$t('app.name')}</h1>
-              <p class="subtitle">{$t('download.subtitle')}</p>
-            </div>
-
-            <Divider my={20} />
-
-            <div class="page-content">
-              <SetupBanner />
-
-              <!-- URL Input -->
-              <div class="url-input-wrapper">
-                <Icon name="link" size={18} />
-                {#if url.trim() && canDownload && (isYouTubeUrl || isPlaylistUrl)}
-                  <button class="input-badge" class:playlist={isPlaylistUrl} onclick={openAdvancedView}>
-                    <Icon name={isPlaylistUrl ? 'playlist' : 'play'} size={12} />
-                    <span>{isPlaylistUrl ? 'Playlist' : 'YouTube'}</span>
-                  </button>
-                {/if}
-                <input
-                  bind:value={url}
-                  placeholder={$t('download.placeholder')}
-                  class="url-input"
-                  disabled={!canDownload}
-                />
-                {#if url.trim() && canDownload && (isYouTubeUrl || isPlaylistUrl)}
-                  <button class="customize-btn" onclick={openAdvancedView} title={$t('download.customizeDownload')}>
-                    <Icon name="alt_arrow_rigth" size={18} />
-                  </button>
-                {/if}
-                <button class="download-btn" onclick={quickDownload} disabled={!canDownload || !url.trim()}>
-                  <Icon name="download" size={20} />
-                </button>
+        {#key view.id}
+          {@const active = isActive(view.id)}
+          <div class="view-container" class:active>
+            {#if view.type === 'home'}
+              <!-- HOME VIEW -->
+              <div class="page-header">
+                <h1>{$t('app.name')}</h1>
+                <p class="subtitle">{$t('download.subtitle')}</p>
               </div>
 
-              <!-- Options Section -->
-              <div class="options-section">
-                <button class="options-header" onclick={() => (optionsExpanded = !optionsExpanded)}>
-                  <span class="options-title">
-                    <Icon name="settings" size={18} />
-                    {$t('download.options.title')}
-                  </span>
-                  <Icon name={optionsExpanded ? 'chevron_up' : 'chevron_down'} size={20} />
-                </button>
+              <Divider my={20} />
 
-                {#if optionsExpanded}
-                  <div class="options-content">
-                    <!-- Presets -->
-                    <div class="options-group">
-                      <span class="group-label">{$t('download.options.presets')}</span>
-                      <div class="presets-row">
-                        {#each allPresets as preset}
-                          <Chip
-                            selected={selectedPreset === preset.id}
-                            icon={preset.icon}
-                            onclick={() => applyPreset(preset.id)}
+              <div class="page-content">
+                <SetupBanner />
+
+                <!-- URL Input -->
+                <div class="url-input-wrapper">
+                  <Icon name="link" size={18} />
+                  {#if url.trim() && canDownload && (isYouTubeUrl || isPlaylistUrl)}
+                    <button
+                      class="input-badge"
+                      class:playlist={isPlaylistUrl}
+                      onclick={openAdvancedView}
+                    >
+                      <Icon name={isPlaylistUrl ? 'playlist' : 'play'} size={12} />
+                      <span>{isPlaylistUrl ? 'Playlist' : 'YouTube'}</span>
+                    </button>
+                  {/if}
+                  <input
+                    bind:value={url}
+                    placeholder={$t('download.placeholder')}
+                    class="url-input"
+                    disabled={!canDownload}
+                  />
+                  {#if url.trim() && canDownload && (isYouTubeUrl || isPlaylistUrl)}
+                    <button
+                      class="customize-btn"
+                      onclick={openAdvancedView}
+                      title={$t('download.customizeDownload')}
+                    >
+                      <Icon name="alt_arrow_rigth" size={18} />
+                    </button>
+                  {/if}
+                  <button
+                    class="download-btn"
+                    onclick={quickDownload}
+                    disabled={!canDownload || !url.trim()}
+                  >
+                    <Icon name="download" size={20} />
+                  </button>
+                </div>
+
+                <!-- Options Section -->
+                <div class="options-section">
+                  <button
+                    class="options-header"
+                    onclick={() => (optionsExpanded = !optionsExpanded)}
+                  >
+                    <span class="options-title">
+                      <Icon name="settings" size={18} />
+                      {$t('download.options.title')}
+                    </span>
+                    <Icon name={optionsExpanded ? 'chevron_up' : 'chevron_down'} size={20} />
+                  </button>
+
+                  {#if optionsExpanded}
+                    <div class="options-content">
+                      <!-- Presets -->
+                      <div class="options-group">
+                        <span class="group-label">{$t('download.options.presets')}</span>
+                        <div class="presets-row">
+                          {#each allPresets as preset}
+                            <Chip
+                              selected={selectedPreset === preset.id}
+                              icon={preset.icon}
+                              onclick={() => applyPreset(preset.id)}
+                            >
+                              {preset.label}
+                              {#if preset.id.startsWith('custom-')}
+                                <button
+                                  class="preset-delete"
+                                  onclick={(e) => {
+                                    e.stopPropagation();
+                                    deletePreset(preset.id);
+                                  }}
+                                  title={$t('common.delete')}
+                                >
+                                  <Icon name="close" size={12} />
+                                </button>
+                              {/if}
+                            </Chip>
+                          {/each}
+                          <Chip icon="add" onclick={() => (createPresetModalOpen = true)}
+                            >{$t('download.options.createNew')}</Chip
                           >
-                            {preset.label}
-                            {#if preset.id.startsWith('custom-')}
-                              <button
-                                class="preset-delete"
-                                onclick={(e) => {
-                                  e.stopPropagation();
-                                  deletePreset(preset.id);
-                                }}
-                                title={$t('common.delete')}
-                              >
-                                <Icon name="close" size={12} />
-                              </button>
-                            {/if}
-                          </Chip>
-                        {/each}
-                        <Chip icon="add" onclick={() => (createPresetModalOpen = true)}
-                          >{$t('download.options.createNew')}</Chip
-                        >
+                        </div>
                       </div>
-                    </div>
 
-                    <!-- Settings Row -->
-                    <div class="settings-row">
-                      <SettingButton
-                        label={$t('download.options.videoQuality')}
-                        value={getLabel(videoQualityOptions, videoQuality)}
-                        onclick={() => (videoQualityModalOpen = true)}
-                      />
-                      <SettingButton
-                        label={$t('download.options.downloadMode')}
-                        value={getLabel(downloadModeOptions, downloadMode)}
-                        onclick={() => (downloadModeModalOpen = true)}
-                      />
-                      <SettingButton
-                        label={$t('download.options.audioQuality')}
-                        value={getLabel(audioQualityOptions, audioQuality)}
-                        onclick={() => (audioQualityModalOpen = true)}
-                      />
-                      <SettingButton
-                        label={$t('download.options.cookies')}
-                        value={cookiesFromBrowser
-                          ? getLabel(browserOptions, cookiesFromBrowser)
-                          : $t('download.options.noCookies')}
-                        onclick={() => (cookiesModalOpen = true)}
-                      />
-                    </div>
-
-                    <!-- Checkboxes -->
-                    <div class="checkbox-groups">
-                      <div class="checkbox-group">
-                        <span class="group-label">{$t('download.options.postProcessing')}</span>
-                        <Checkbox
-                          checked={convertToMp4}
-                          label={$t('download.options.convertToMp4')}
-                          onchange={(val) => handleCheckboxChange('convertToMp4', val)}
+                      <!-- Settings Row -->
+                      <div class="settings-row">
+                        <SettingButton
+                          label={$t('download.options.videoQuality')}
+                          value={getLabel(videoQualityOptions, videoQuality)}
+                          onclick={() => (videoQualityModalOpen = true)}
                         />
-                        <Checkbox
-                          checked={remux}
-                          label={$t('download.options.remux')}
-                          onchange={(val) => handleCheckboxChange('remux', val)}
+                        <SettingButton
+                          label={$t('download.options.downloadMode')}
+                          value={getLabel(downloadModeOptions, downloadMode)}
+                          onclick={() => (downloadModeModalOpen = true)}
+                        />
+                        <SettingButton
+                          label={$t('download.options.audioQuality')}
+                          value={getLabel(audioQualityOptions, audioQuality)}
+                          onclick={() => (audioQualityModalOpen = true)}
+                        />
+                        <SettingButton
+                          label={$t('download.options.cookies')}
+                          value={cookiesFromBrowser
+                            ? getLabel(browserOptions, cookiesFromBrowser)
+                            : $t('download.options.noCookies')}
+                          onclick={() => (cookiesModalOpen = true)}
                         />
                       </div>
 
-                      <div class="checkbox-group">
-                        <span class="group-label">{$t('download.options.other')}</span>
-                        <Checkbox
-                          checked={ignoreMixes}
-                          label={$t('download.options.ignoreMixes')}
-                          onchange={(val) => handleCheckboxChange('ignoreMixes', val)}
-                        />
-                        <Checkbox
-                          checked={useHLS}
-                          label={$t('download.options.useHLS')}
-                          onchange={(val) => handleCheckboxChange('useHLS', val)}
-                        />
-                        <Checkbox
-                          checked={clearMetadata}
-                          label={$t('download.options.clearMetadata')}
-                          onchange={(val) => handleCheckboxChange('clearMetadata', val)}
-                        />
-                        <Checkbox
-                          checked={dontShowInHistory}
-                          label={$t('download.options.dontShowInHistory')}
-                          onchange={(val) => handleCheckboxChange('dontShowInHistory', val)}
-                        />
-                        <Checkbox
-                          checked={useAria2}
-                          label={$t('download.options.useAria2')}
-                          onchange={(val) => handleCheckboxChange('useAria2', val)}
-                        />
+                      <!-- Checkboxes -->
+                      <div class="checkbox-groups">
+                        <div class="checkbox-group">
+                          <span class="group-label">{$t('download.options.postProcessing')}</span>
+                          <Checkbox
+                            checked={convertToMp4}
+                            label={$t('download.options.convertToMp4')}
+                            onchange={(val) => handleCheckboxChange('convertToMp4', val)}
+                          />
+                          <Checkbox
+                            checked={remux}
+                            label={$t('download.options.remux')}
+                            onchange={(val) => handleCheckboxChange('remux', val)}
+                          />
+                        </div>
+
+                        <div class="checkbox-group">
+                          <span class="group-label">{$t('download.options.other')}</span>
+                          <Checkbox
+                            checked={ignoreMixes}
+                            label={$t('download.options.ignoreMixes')}
+                            onchange={(val) => handleCheckboxChange('ignoreMixes', val)}
+                          />
+                          <Checkbox
+                            checked={useHLS}
+                            label={$t('download.options.useHLS')}
+                            onchange={(val) => handleCheckboxChange('useHLS', val)}
+                          />
+                          <Checkbox
+                            checked={clearMetadata}
+                            label={$t('download.options.clearMetadata')}
+                            onchange={(val) => handleCheckboxChange('clearMetadata', val)}
+                          />
+                          <Checkbox
+                            checked={dontShowInHistory}
+                            label={$t('download.options.dontShowInHistory')}
+                            onchange={(val) => handleCheckboxChange('dontShowInHistory', val)}
+                          />
+                          <Checkbox
+                            checked={useAria2}
+                            label={$t('download.options.useAria2')}
+                            onchange={(val) => handleCheckboxChange('useAria2', val)}
+                          />
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  {/if}
+                </div>
+
+                {#if status}
+                  <p class="status">{status}</p>
                 {/if}
               </div>
-
-              {#if status}
-                <p class="status">{status}</p>
-              {/if}
-            </div>
-
-          {:else if view.type === 'video'}
-            <!-- VIDEO VIEW -->
-            <TrackBuilder
-              url={view.url ?? ''}
-              {cookiesFromBrowser}
-              {customCookies}
-              showHeader={true}
-              onback={handleBack}
-              ondownload={handleVideoDownload}
-              backLabel={backLabel()}
-              prefetchedInfo={view.cachedData}
-            />
-
-          {:else if view.type === 'playlist'}
-            <!-- PLAYLIST VIEW -->
-            <PlaylistBuilder
-              url={view.url ?? ''}
-              {cookiesFromBrowser}
-              {customCookies}
-              defaultDownloadMode={downloadMode}
-              showHeader={true}
-              onback={handleBack}
-              ondownload={handlePlaylistDownload}
-              onopenitem={handleOpenPlaylistItem}
-              backLabel={backLabel()}
-            />
-
-          {:else if view.type === 'channel'}
-            <!-- CHANNEL VIEW -->
-            <div class="page-content">
-              <div class="coming-soon">
-                <Icon name="user" size={48} />
-                <h2>Channel View</h2>
-                <p>Coming soon...</p>
-                <button class="back-btn" onclick={handleBack}>
-                  <Icon name="alt_arrow_rigth" size={18} class="rotate-180" />
-                  <span>{$t('common.back')}</span>
-                </button>
+            {:else if view.type === 'video'}
+              <!-- VIDEO VIEW -->
+              <TrackBuilder
+                url={view.url ?? ''}
+                {cookiesFromBrowser}
+                {customCookies}
+                showHeader={true}
+                onback={handleBack}
+                ondownload={handleVideoDownload}
+                backLabel={backLabel()}
+                prefetchedInfo={view.cachedData}
+              />
+            {:else if view.type === 'playlist'}
+              <!-- PLAYLIST VIEW -->
+              <PlaylistBuilder
+                url={view.url ?? ''}
+                {cookiesFromBrowser}
+                {customCookies}
+                defaultDownloadMode={downloadMode}
+                showHeader={true}
+                onback={handleBack}
+                ondownload={handlePlaylistDownload}
+                onopenitem={handleOpenPlaylistItem}
+                backLabel={backLabel()}
+                prefetchedInfo={view.cachedData}
+              />
+            {:else if view.type === 'channel'}
+              <!-- CHANNEL VIEW -->
+              <div class="page-content">
+                <div class="coming-soon">
+                  <Icon name="user" size={48} />
+                  <h2>Channel View</h2>
+                  <p>Coming soon...</p>
+                  <button class="back-btn" onclick={handleBack}>
+                    <Icon name="alt_arrow_rigth" size={18} class="rotate-180" />
+                    <span>{$t('common.back')}</span>
+                  </button>
+                </div>
               </div>
-            </div>
-          {/if}
-        </div>
+            {/if}
+          </div>
+        {/key}
       {/each}
     {/snippet}
   </ViewStack>
@@ -909,13 +921,19 @@
     margin-right: 4px;
     margin-bottom: 4px;
     mask-image: linear-gradient(to bottom, black, black 0px, black calc(100% - 25px), transparent);
-    -webkit-mask-image: linear-gradient(to bottom, black, black 0px, black calc(100% - 25px), transparent);
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      black,
+      black 0px,
+      black calc(100% - 25px),
+      transparent
+    );
     &:not(.active) * {
       transition: none !important;
       animation: none !important;
     }
   }
-  
+
   .view-container.active {
     visibility: visible;
     opacity: 1;
@@ -1226,7 +1244,9 @@
     max-width: 80px;
     overflow: hidden;
     animation: badge-expand 0.25s ease-out forwards;
-    transition: background 0.15s ease, transform 0.1s ease;
+    transition:
+      background 0.15s ease,
+      transform 0.1s ease;
   }
 
   .input-badge:hover {

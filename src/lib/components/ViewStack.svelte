@@ -21,7 +21,6 @@
   import { untrack } from 'svelte';
 
   interface Props {
-    maxAliveViews?: number;
     children: import('svelte').Snippet<
       [
         {
@@ -33,7 +32,7 @@
     >;
   }
 
-  let { maxAliveViews = 5, children }: Props = $props();
+  let { children }: Props = $props();
 
   function getViewId(view: ViewState, index: number): string {
     if (view.type === 'home') return 'home-0';
@@ -42,69 +41,49 @@
     return `${view.type}-${index}-${Date.now()}`;
   }
 
-  function getInitialViews(): ViewInstance[] {
+  function getCurrentView(): ViewInstance {
     const stack = navigation.getStack?.() ?? [{ type: 'home' }];
-    return stack.map((view, i) => ({
-      id: getViewId(view, i),
-      type: view.type,
-      url: view.url,
-      channelId: view.channelId,
-      channelName: view.channelName,
-      cachedData: view.cachedData,
+    const current = stack[stack.length - 1];
+    return {
+      id: getViewId(current, stack.length - 1),
+      type: current.type,
+      url: current.url,
+      channelId: current.channelId,
+      channelName: current.channelName,
+      cachedData: current.cachedData,
       mountedAt: Date.now(),
-    }));
+    };
   }
 
-  const initialViews = getInitialViews();
-  let mountedViews = $state<ViewInstance[]>(initialViews);
-  let currentViewId = $state<string>(initialViews[initialViews.length - 1]?.id ?? 'home-0');
+  let currentView = $state<ViewInstance>(getCurrentView());
 
   $effect(() => {
     const stack = $navigation.stack;
 
     untrack(() => {
-      const newMounted: ViewInstance[] = [];
-      const existingById = new Map(mountedViews.map((v) => [v.id, v]));
+      const topView = stack[stack.length - 1];
+      const newId = getViewId(topView, stack.length - 1);
 
-      for (let i = 0; i < stack.length; i++) {
-        const view = stack[i];
-        const id = getViewId(view, i);
-
-        const existing = existingById.get(id);
-        if (existing) {
-          newMounted.push(existing);
-        } else {
-          newMounted.push({
-            id,
-            type: view.type,
-            url: view.url,
-            channelId: view.channelId,
-            channelName: view.channelName,
-            cachedData: view.cachedData,
-            mountedAt: Date.now(),
-          });
-        }
-      }
-
-      const currentView = stack[stack.length - 1];
-      currentViewId = getViewId(currentView, stack.length - 1);
-
-      if (newMounted.length > maxAliveViews) {
-        const toKeep = newMounted.filter((v, idx) => {
-          if (v.type === 'home') return true;
-          if (v.id === currentViewId) return true;
-          return idx >= newMounted.length - maxAliveViews;
-        });
-        mountedViews = toKeep;
-      } else {
-        mountedViews = newMounted;
+      if (currentView.id !== newId) {
+        console.log(`[ViewStack] Switching view: ${currentView.id} → ${newId}`);
+        currentView = {
+          id: newId,
+          type: topView.type,
+          url: topView.url,
+          channelId: topView.channelId,
+          channelName: topView.channelName,
+          cachedData: topView.cachedData,
+          mountedAt: Date.now(),
+        };
       }
     });
   });
 
+  let mountedViews = $derived([currentView]);
+
   function isActive(id: string): boolean {
-    return id === currentViewId;
+    return id === currentView.id;
   }
 </script>
 
-{@render children({ views: mountedViews, currentId: currentViewId, isActive })}
+{@render children({ views: mountedViews, currentId: currentView.id, isActive })}

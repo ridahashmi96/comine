@@ -312,7 +312,12 @@ function createDepsStore() {
       return uninstallDep('quickjs');
     },
 
-    async checkAll() {
+    async checkAll(force: boolean = false) {
+      const state = get({ subscribe });
+      if (state.hasCheckedAll && !force) {
+        return;
+      }
+
       logs.debug('deps', 'Checking all dependencies...');
       await Promise.all([
         checkDep('ytdlp'),

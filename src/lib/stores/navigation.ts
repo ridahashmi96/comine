@@ -20,6 +20,8 @@ interface NavigationState {
   stack: ViewState[];
 }
 
+const MAX_STACK_DEPTH = 20;
+
 function createNavigationStore() {
   const { subscribe, set, update } = writable<NavigationState>({
     stack: [{ type: 'home' }],
@@ -39,10 +41,13 @@ function createNavigationStore() {
     },
 
     push(view: ViewState) {
-      update((state) => ({
-        ...state,
-        stack: [...state.stack, view],
-      }));
+      update((state) => {
+        let newStack = [...state.stack, view];
+        if (newStack.length > MAX_STACK_DEPTH) {
+          newStack = [newStack[0], ...newStack.slice(-(MAX_STACK_DEPTH - 1))];
+        }
+        return { ...state, stack: newStack };
+      });
     },
 
     pop(): boolean {
@@ -50,10 +55,7 @@ function createNavigationStore() {
       update((state) => {
         if (state.stack.length > 1) {
           didPop = true;
-          return {
-            ...state,
-            stack: state.stack.slice(0, -1),
-          };
+          return { ...state, stack: state.stack.slice(0, -1) };
         }
         return state;
       });
@@ -76,23 +78,42 @@ function createNavigationStore() {
     },
 
     openVideo(url: string, cachedData?: ViewState['cachedData']) {
-      update((state) => ({
-        ...state,
-        stack: [...state.stack, { type: 'video', url, cachedData }],
-      }));
+      update((state) => {
+        let newStack = [...state.stack, { type: 'video' as ViewType, url, cachedData }];
+        if (newStack.length > MAX_STACK_DEPTH) {
+          newStack = [newStack[0], ...newStack.slice(-(MAX_STACK_DEPTH - 1))];
+        }
+        return { ...state, stack: newStack };
+      });
     },
 
     openPlaylist(url: string, cachedData?: ViewState['cachedData']) {
-      update((state) => ({
-        ...state,
-        stack: [...state.stack, { type: 'playlist', url, cachedData }],
-      }));
+      update((state) => {
+        let newStack = [...state.stack, { type: 'playlist' as ViewType, url, cachedData }];
+        if (newStack.length > MAX_STACK_DEPTH) {
+          newStack = [newStack[0], ...newStack.slice(-(MAX_STACK_DEPTH - 1))];
+        }
+        return { ...state, stack: newStack };
+      });
     },
 
     openChannel(channelId: string, channelName?: string) {
+      update((state) => {
+        let newStack = [...state.stack, { type: 'channel' as ViewType, channelId, channelName }];
+        if (newStack.length > MAX_STACK_DEPTH) {
+          newStack = [newStack[0], ...newStack.slice(-(MAX_STACK_DEPTH - 1))];
+        }
+        return { ...state, stack: newStack };
+      });
+    },
+
+    clearCachedData() {
       update((state) => ({
         ...state,
-        stack: [...state.stack, { type: 'channel', channelId, channelName }],
+        stack: state.stack.map((view) => ({
+          ...view,
+          cachedData: undefined,
+        })),
       }));
     },
   };

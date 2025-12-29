@@ -13,7 +13,7 @@
     type MediaItemData,
     type MediaItemSettings,
   } from './MediaGrid.svelte';
-  import { viewStateCache, type PlaylistViewState } from '$lib/stores/viewState';
+  import { viewStateCache, androidDataCache, type PlaylistViewState } from '$lib/stores/viewState';
 
   const CACHE_TTL = 10 * 60 * 1000;
 
@@ -72,6 +72,13 @@
     settings: EntrySettings;
   }
 
+  export interface PrefetchedPlaylistInfo {
+    title?: string;
+    thumbnail?: string;
+    author?: string;
+    entryCount?: number;
+  }
+
   interface Props {
     url: string;
     cookiesFromBrowser?: string;
@@ -82,6 +89,7 @@
     onopenitem?: (entry: PlaylistEntry) => void;
     showHeader?: boolean;
     backLabel?: string;
+    prefetchedInfo?: PrefetchedPlaylistInfo;
   }
 
   let {
@@ -94,36 +102,40 @@
     onopenitem,
     showHeader = false,
     backLabel,
+    prefetchedInfo,
   }: Props = $props();
 
   function getInitialState() {
     const cached = viewStateCache.get<PlaylistViewState>('playlist', url);
-    if (cached && cached.playlistInfo && Date.now() - cached.timestamp < CACHE_TTL) {
+
+    const androidCachedData = isAndroid() ? androidDataCache.getPlaylist(url) : null;
+
+    if (cached) {
       const selectedIdsSet = new Set(cached.selectedIds);
       return {
-        playlistInfo: cached.playlistInfo,
+        playlistInfo: androidCachedData as PlaylistInfo | null,
         selectedIdsArray: [...cached.selectedIds],
         selectedIdsSet: selectedIdsSet,
         perItemSettingsObj: cached.perItemSettings,
         scrollTop: cached.scrollTop,
         viewMode: cached.viewMode,
         searchQuery: cached.searchQuery,
-        loading: false,
-        lastLoadedUrl: url,
-        fromCache: true,
+        loading: !androidCachedData,
+        lastLoadedUrl: androidCachedData ? url : '',
+        fromCache: !!androidCachedData,
       };
     }
     return {
-      playlistInfo: null,
+      playlistInfo: androidCachedData as PlaylistInfo | null,
       selectedIdsArray: [] as string[],
       selectedIdsSet: null as Set<string> | null,
       perItemSettingsObj: {} as Record<string, MediaItemSettings>,
       scrollTop: 0,
       viewMode: 'list' as const,
       searchQuery: '',
-      loading: true,
-      lastLoadedUrl: '',
-      fromCache: false,
+      loading: !androidCachedData,
+      lastLoadedUrl: androidCachedData ? url : '',
+      fromCache: !!androidCachedData,
     };
   }
 
@@ -132,6 +144,8 @@
   let loading = $state(initialState.loading);
   let error = $state<string | null>(null);
   let lastLoadedUrl = $state(initialState.lastLoadedUrl);
+
+  let destroyed = false;
 
   let selectedIdsArray = $state<string[]>(initialState.selectedIdsArray);
   let lastSelectedArrayRef: string[] | null = null;
@@ -193,6 +207,12 @@
   let isYouTubeMusicUrl = $derived(url.toLowerCase().includes('music.youtube.com'));
   let bulkMode = $state<DownloadMode | null>(null);
 
+  let displayTitle = $derived(playlistInfo?.title ?? prefetchedInfo?.title ?? '');
+  let displayThumbnail = $derived(playlistInfo?.thumbnail ?? prefetchedInfo?.thumbnail ?? '');
+  let displayAuthor = $derived(playlistInfo?.uploader ?? prefetchedInfo?.author ?? '');
+  let displayCount = $derived(playlistInfo?.total_count ?? prefetchedInfo?.entryCount ?? null);
+  let hasPrefetchedInfo = $derived(!!prefetchedInfo?.title || !!prefetchedInfo?.thumbnail);
+
   function applyModeToAll(mode: DownloadMode) {
     bulkMode = mode;
     const updated: Record<string, MediaItemSettings> = {};
@@ -217,7 +237,6 @@
     }, 150);
   });
 
-  // Use entries directly, filter only when searching
   let filteredEntries = $derived.by(() => {
     const entries = playlistInfo?.entries ?? [];
     if (!searchQueryDebounced) return entries;
@@ -350,7 +369,6 @@
       viewStateCache.set<PlaylistViewState>({
         type: 'playlist',
         url,
-        playlistInfo,
         selectedIds: [...selectedIdsArray],
         perItemSettings: { ...perItemSettingsObj },
         scrollTop: currentScrollTop,
@@ -358,11 +376,14 @@
         searchQuery,
         timestamp: Date.now(),
       });
+
+      if (isAndroid()) {
+        androidDataCache.setPlaylist(url, playlistInfo);
+      }
     }
   }
 
   $effect(() => {
-    // Only load if URL changed and we don't already have data (from initial cache load)
     if (url && url !== lastLoadedUrl && !playlistInfo) {
       loadPlaylist();
     }
@@ -370,11 +391,19 @@
 
   $effect(() => {
     return () => {
+      destroyed = true;
       saveToCache();
+      console.log(
+        `[PlaylistBuilder] Destroying: ${url}, entries: ${playlistInfo?.entries?.length ?? 0}`
+      );
+      playlistInfo = null;
+      perItemSettingsObj = {};
+      selectedIdsArray = [];
     };
   });
 
   async function loadPlaylist() {
+    if (destroyed) return;
     loading = true;
     error = null;
     playlistInfo = null;
@@ -388,6 +417,7 @@
 
       if (isAndroid()) {
         info = (await getPlaylistInfoOnAndroid(url)) as PlaylistInfo;
+        if (destroyed) return;
       } else {
         info = await invoke<PlaylistInfo>('get_playlist_info', {
           url,
@@ -397,8 +427,9 @@
           customCookies: customCookies || null,
           proxyConfig: getProxyConfig(),
         });
+        if (destroyed) return;
 
-        while (info.has_more && info.total_count > 0) {
+        while (info.has_more && info.total_count > 0 && !destroyed) {
           const currentOffset = info.entries.length;
           const moreInfo = await invoke<PlaylistInfo>('get_playlist_info', {
             url,
@@ -408,6 +439,7 @@
             customCookies: customCookies || null,
             proxyConfig: getProxyConfig(),
           });
+          if (destroyed) return;
 
           info = {
             ...info,
@@ -416,6 +448,8 @@
           };
         }
       }
+
+      if (destroyed) return;
 
       playlistInfo = info;
 
@@ -435,9 +469,12 @@
       }
       perItemSettingsObj = newSettings;
     } catch (e) {
+      if (destroyed) return;
       error = String(e);
     } finally {
-      loading = false;
+      if (!destroyed) {
+        loading = false;
+      }
     }
   }
 
@@ -548,33 +585,33 @@
     {:else}
       <div class="main-row">
         <div class="left">
-          {#if loading}
+          {#if displayThumbnail}
+            <img src={displayThumbnail} alt="" class="thumb" />
+          {:else if loading && !hasPrefetchedInfo}
             <div class="thumb skeleton"></div>
-          {:else if playlistInfo?.thumbnail}
-            <img src={playlistInfo.thumbnail} alt="" class="thumb" />
           {:else}
             <div class="thumb empty"><Icon name="playlist" size={showHeader ? 32 : 20} /></div>
           {/if}
           <div class="info">
-            {#if loading}
-              <div class="title-skel skeleton"></div>
-              <div class="meta-skel skeleton"></div>
-            {:else if playlistInfo}
-              <span class="title">{playlistInfo.title}</span>
+            {#if displayTitle || playlistInfo}
+              <span class="title">{displayTitle || 'Playlist'}</span>
               <span class="meta">
-                {#if playlistInfo.uploader}<span class="author"
-                    ><Icon name="user" size={12} />{playlistInfo.uploader}</span
+                {#if displayAuthor}<span class="author"
+                    ><Icon name="user" size={12} />{displayAuthor}</span
                   >{/if}
-                <span class="meta-item"
-                  ><Icon name="video" size={12} />{playlistInfo.total_count}
-                  {$t('playlist.videos')}</span
-                >
-                {#if getTotalDuration(playlistInfo.entries)}<span class="meta-item"
+                {#if displayCount}<span class="meta-item"
+                    ><Icon name="video" size={12} />{displayCount}
+                    {$t('playlist.videos')}</span
+                  >{/if}
+                {#if playlistInfo && getTotalDuration(playlistInfo.entries)}<span class="meta-item"
                     ><Icon name="clock" size={12} />{formatDuration(
                       getTotalDuration(playlistInfo.entries)!
                     )}</span
                   >{/if}
               </span>
+            {:else if loading}
+              <div class="title-skel skeleton"></div>
+              <div class="meta-skel skeleton"></div>
             {/if}
           </div>
         </div>
