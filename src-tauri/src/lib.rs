@@ -271,6 +271,7 @@ async fn download_video(
     download_path: Option<String>,
     embed_thumbnail: Option<bool>,
     cropped_thumbnail_data: Option<String>,
+    thumbnail_url_for_embed: Option<String>,
     playlist_title: Option<String>,
     proxy_config: Option<proxy::ProxyConfig>,
     sponsor_block: Option<bool>,
@@ -476,11 +477,25 @@ async fn download_video(
                 .map(|d| d.starts_with("data:image/"))
                 .unwrap_or(false);
 
-            if embed_thumbnail.unwrap_or(false) && !has_cropped_thumbnail {
+            let has_thumb_url_for_embed = thumbnail_url_for_embed
+                .as_ref()
+                .map(|s| !s.is_empty())
+                .unwrap_or(false);
+
+            // For YouTube Music, we want a square cover without sending base64 through JS.
+            // If we have a thumbnail URL, we'll embed it manually after download (cropping if letterboxed).
+            let should_manual_embed_ytm = embed_thumbnail.unwrap_or(false)
+                && url.to_lowercase().contains("music.youtube.com")
+                && has_thumb_url_for_embed
+                && !has_cropped_thumbnail;
+
+            if embed_thumbnail.unwrap_or(false) && !has_cropped_thumbnail && !should_manual_embed_ytm {
                 args.push("--embed-thumbnail".to_string());
                 info!("Embedding thumbnail as cover art (via yt-dlp)");
             } else if embed_thumbnail.unwrap_or(false) && has_cropped_thumbnail {
                 info!("Will embed cropped YTM thumbnail manually after download");
+            } else if should_manual_embed_ytm {
+                info!("Will embed YTM thumbnail manually after download (no base64)");
             }
 
             info!("Audio-only download with extraction (ffprobe available)");
@@ -816,6 +831,31 @@ async fn download_video(
                         } else {
                             info!("Successfully embedded cropped thumbnail");
                         }
+                    }
+                }
+
+                // New path: embed from thumbnail URL directly (no base64 through the frontend)
+                let has_cropped_thumbnail = cropped_thumbnail_data
+                    .as_ref()
+                    .map(|d| d.starts_with("data:image/"))
+                    .unwrap_or(false);
+                let has_thumb_url_for_embed = thumbnail_url_for_embed
+                    .as_ref()
+                    .map(|s| !s.is_empty())
+                    .unwrap_or(false);
+
+                if embed_thumbnail.unwrap_or(false)
+                    && !has_cropped_thumbnail
+                    && has_thumb_url_for_embed
+                    && url.to_lowercase().contains("music.youtube.com")
+                    && download_mode == "audio"
+                {
+                    let thumb_url = thumbnail_url_for_embed.as_ref().unwrap();
+                    info!("Embedding YTM thumbnail from URL into: {}", path);
+                    if let Err(e) = embed_thumbnail_from_url(&app, path, thumb_url).await {
+                        warn!("Failed to embed thumbnail from URL: {}", e);
+                    } else {
+                        info!("Successfully embedded thumbnail from URL");
                     }
                 }
             }
@@ -2250,72 +2290,7 @@ async fn process_ytm_thumbnail(thumbnail_url: String) -> Result<String, String> 
 
     #[cfg(not(target_os = "android"))]
     {
-        use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-        use std::io::Cursor;
-
-        info!("Processing YTM thumbnail: {}", thumbnail_url);
-
-        {
-            let mut cache = YTM_THUMBNAIL_CACHE.lock().unwrap();
-            if let Some(cached) = cache.get(&thumbnail_url) {
-                info!("YTM thumbnail cache hit for URL: {}", thumbnail_url);
-                return Ok(cached.clone());
-            }
-        }
-
-        let response = reqwest::get(&thumbnail_url)
-            .await
-            .map_err(|e| format!("Failed to download thumbnail: {}", e))?;
-
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|e| format!("Failed to read thumbnail bytes: {}", e))?;
-
-        debug!("Downloaded thumbnail: {} bytes", bytes.len());
-
-        let img = image::load_from_memory(&bytes)
-            .map_err(|e| format!("Failed to decode image: {}", e))?;
-
-        let (width, height) = img.dimensions();
-        debug!("Thumbnail dimensions: {}x{}", width, height);
-
-        if !is_letterboxed_thumbnail(&img) {
-            info!("Thumbnail is not letterboxed, returning original URL");
-            {
-                let mut cache = YTM_THUMBNAIL_CACHE.lock().unwrap();
-                cache.put(thumbnail_url.clone(), thumbnail_url.clone());
-            }
-            return Ok(thumbnail_url);
-        }
-
-        info!("Detected letterboxed thumbnail, cropping to center square");
-
-        let cropped = crop_to_center_square(img);
-        let (new_w, new_h) = cropped.dimensions();
-        debug!("Cropped thumbnail dimensions: {}x{}", new_w, new_h);
-
-        let mut jpeg_bytes: Vec<u8> = Vec::new();
-        let mut cursor = Cursor::new(&mut jpeg_bytes);
-        cropped
-            .write_to(&mut cursor, image::ImageFormat::Jpeg)
-            .map_err(|e| format!("Failed to encode cropped image: {}", e))?;
-
-        let base64_data = BASE64.encode(&jpeg_bytes);
-        let data_uri = format!("data:image/jpeg;base64,{}", base64_data);
-
-        info!(
-            "Cropped thumbnail: {} bytes -> {} bytes base64",
-            bytes.len(),
-            data_uri.len()
-        );
-
-        {
-            let mut cache = YTM_THUMBNAIL_CACHE.lock().unwrap();
-            cache.put(thumbnail_url.clone(), data_uri.clone());
-        }
-
-        Ok(data_uri)
+        Ok(thumbnail_url)
     }
 }
 
@@ -2428,6 +2403,149 @@ async fn embed_cropped_thumbnail(
         "Successfully embedded cropped thumbnail into: {}",
         audio_path
     );
+    Ok(())
+}
+
+/// Embed a thumbnail into an audio file by downloading it from a URL.
+///
+/// - Downloads the image
+/// - Crops to center square if letterboxed
+/// - Encodes as JPEG
+/// - Embeds via ffmpeg
+#[cfg(not(target_os = "android"))]
+async fn embed_thumbnail_from_url(
+    app: &AppHandle,
+    audio_path: &str,
+    thumbnail_url: &str,
+) -> Result<(), String> {
+    use std::io::Cursor;
+
+    if thumbnail_url.is_empty() {
+        return Err("Empty thumbnail URL".to_string());
+    }
+
+    let response = reqwest::get(thumbnail_url)
+        .await
+        .map_err(|e| format!("Failed to download thumbnail: {}", e))?;
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read thumbnail bytes: {}", e))?;
+
+    let img = image::load_from_memory(&bytes)
+        .map_err(|e| format!("Failed to decode image: {}", e))?;
+
+    let processed = if is_letterboxed_thumbnail(&img) {
+        crop_to_center_square(img)
+    } else {
+        img
+    };
+
+    let mut jpeg_bytes: Vec<u8> = Vec::new();
+    let mut cursor = Cursor::new(&mut jpeg_bytes);
+    processed
+        .write_to(&mut cursor, image::ImageFormat::Jpeg)
+        .map_err(|e| format!("Failed to encode thumbnail as JPEG: {}", e))?;
+
+    embed_thumbnail_jpeg_bytes(app, audio_path, &jpeg_bytes).await
+}
+
+#[cfg(not(target_os = "android"))]
+async fn embed_thumbnail_jpeg_bytes(
+    app: &AppHandle,
+    audio_path: &str,
+    jpeg_bytes: &[u8],
+) -> Result<(), String> {
+    use std::process::Stdio;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let cache_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("Failed to get cache dir: {}", e))?;
+    tokio::fs::create_dir_all(&cache_dir)
+        .await
+        .map_err(|e| format!("Failed to create cache dir: {}", e))?;
+
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let thumb_path = cache_dir.join(format!("cover_{}.jpg", stamp));
+    tokio::fs::write(&thumb_path, jpeg_bytes)
+        .await
+        .map_err(|e| format!("Failed to write thumbnail file: {}", e))?;
+
+    let ffmpeg_path = deps::get_ffmpeg_path(app)?;
+    if !ffmpeg_path.exists() {
+        let _ = tokio::fs::remove_file(&thumb_path).await;
+        return Err("FFmpeg not found".to_string());
+    }
+
+    let audio_path_buf = std::path::PathBuf::from(audio_path);
+    let audio_ext = audio_path_buf
+        .extension()
+        .map(|e| e.to_string_lossy().to_string())
+        .unwrap_or_else(|| "mp3".to_string());
+    let temp_output = audio_path_buf.with_extension(format!("temp.{}", audio_ext));
+
+    let mut cmd = tokio::process::Command::new(&ffmpeg_path);
+    cmd.args([
+        "-y",
+        "-i",
+        audio_path,
+        "-i",
+        thumb_path.to_str().unwrap(),
+        "-map",
+        "0:a",
+        "-map",
+        "1:v",
+        "-c:a",
+        "copy",
+        "-c:v",
+        "mjpeg",
+    ]);
+
+    if audio_ext == "mp3" {
+        cmd.args([
+            "-id3v2_version",
+            "3",
+            "-metadata:s:v",
+            "title=Album cover",
+            "-metadata:s:v",
+            "comment=Cover (front)",
+        ]);
+    } else {
+        cmd.args(["-disposition:v:0", "attached_pic"]);
+    }
+
+    cmd.arg(temp_output.to_str().unwrap());
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    #[cfg(target_os = "windows")]
+    {
+        use crate::CommandExt;
+        cmd.hide_console();
+    }
+
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run ffmpeg: {}", e))?;
+
+    let _ = tokio::fs::remove_file(&thumb_path).await;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let _ = tokio::fs::remove_file(&temp_output).await;
+        return Err(format!("FFmpeg failed to embed thumbnail: {}", stderr));
+    }
+
+    tokio::fs::rename(&temp_output, audio_path)
+        .await
+        .map_err(|e| format!("Failed to replace original file: {}", e))?;
+
     Ok(())
 }
 

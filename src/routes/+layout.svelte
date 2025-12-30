@@ -42,7 +42,6 @@
     isAndroid,
     onShareIntent,
     setupAndroidLogHandler,
-    processYtmThumbnailOnAndroid,
     cleanupAndroidCallbacks,
   } from '$lib/utils/android';
   import {
@@ -847,24 +846,7 @@
         proxyConfig: getProxyConfig(),
       });
 
-      let croppedThumbnailUrl: string | undefined = undefined;
       const originalThumbnailUrl = videoInfo.thumbnail || getQuickThumbnail(url);
-      const isYouTubeMusic = /music\.youtube\.com/i.test(url);
-      if (isYouTubeMusic && originalThumbnailUrl) {
-        (async () => {
-          try {
-            if (isAndroid()) {
-              croppedThumbnailUrl = await processYtmThumbnailOnAndroid(originalThumbnailUrl);
-            } else {
-              croppedThumbnailUrl = await invoke<string>('process_ytm_thumbnail', {
-                thumbnailUrl: originalThumbnailUrl,
-              });
-            }
-          } catch (e) {
-            console.warn('Failed to process YTM thumbnail:', e);
-          }
-        })();
-      }
 
       let durationStr = '';
       if (videoInfo.duration) {

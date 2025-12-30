@@ -2,6 +2,7 @@
   import { t } from '$lib/i18n';
   import { tooltip } from '$lib/actions/tooltip';
   import { formatDuration } from '$lib/utils/format';
+  import { normalizeYouTubeThumbnailUrl } from '$lib/utils/format';
   import Icon, { type IconName } from './Icon.svelte';
   import Checkbox from './Checkbox.svelte';
 
@@ -73,14 +74,44 @@
   let hoveredItemId = $state<string | null>(null);
 
   const ITEM_HEIGHT = 56;
-  const GRID_ITEM_HEIGHT = 180;
+  const GRID_MIN_COL_WIDTH = 150;
+  const GRID_GAP = 10;
+  const GRID_INFO_EST_HEIGHT = 64;
   const BUFFER_COUNT = 5;
 
   let containerEl: HTMLDivElement | null = $state(null);
   let scrollTop = $state(0);
   let containerHeight = $state(600);
+  let containerWidth = $state(800);
   let lastViewMode = $state<ViewMode>('list');
   let didInitScroll = $state(false);
+
+  function getGridItemsPerRow(width: number): number {
+    if (!Number.isFinite(width) || width <= 0) return 1;
+    return Math.max(1, Math.floor((width + GRID_GAP) / (GRID_MIN_COL_WIDTH + GRID_GAP)));
+  }
+
+  function getGridRowHeight(width: number, perRow: number): number {
+    if (!Number.isFinite(width) || width <= 0 || perRow <= 0) return 220;
+    const cardWidth = (width - GRID_GAP * Math.max(0, perRow - 1)) / perRow;
+    const thumbHeight = (cardWidth * 9) / 16;
+    return Math.max(140, Math.round(thumbHeight + GRID_INFO_EST_HEIGHT + GRID_GAP));
+  }
+
+  function getItemsPerRowFor(mode: ViewMode, width: number): number {
+    return mode === 'grid' ? getGridItemsPerRow(width) : 1;
+  }
+
+  function getItemHeightFor(mode: ViewMode, width: number): number {
+    if (mode === 'list') return ITEM_HEIGHT;
+    const perRow = getGridItemsPerRow(width);
+    return getGridRowHeight(width, perRow);
+  }
+
+  let isFastScrolling = $state(false);
+  let lastScrollTime = 0;
+  let lastScrollPos = 0;
+  let scrollEndTimer: ReturnType<typeof setTimeout> | null = null;
 
   function bindContainer(el: HTMLDivElement) {
     containerEl = el;
@@ -99,10 +130,10 @@
 
   $effect(() => {
     if (viewMode !== lastViewMode && containerEl && items.length > 50) {
-      const oldItemHeight = lastViewMode === 'list' ? ITEM_HEIGHT : GRID_ITEM_HEIGHT;
-      const oldItemsPerRow = lastViewMode === 'grid' ? 3 : 1;
-      const newItemHeight = viewMode === 'list' ? ITEM_HEIGHT : GRID_ITEM_HEIGHT;
-      const newItemsPerRow = viewMode === 'grid' ? 3 : 1;
+      const oldItemHeight = getItemHeightFor(lastViewMode, containerWidth);
+      const oldItemsPerRow = getItemsPerRowFor(lastViewMode, containerWidth);
+      const newItemHeight = getItemHeightFor(viewMode, containerWidth);
+      const newItemsPerRow = getItemsPerRowFor(viewMode, containerWidth);
 
       const oldRow = Math.floor(scrollTop / oldItemHeight);
       const topItemIndex = oldRow * oldItemsPerRow;
@@ -128,12 +159,27 @@
       const target = e.target as HTMLDivElement;
       scrollTop = target.scrollTop;
       onscroll?.(scrollTop);
+
+      const now = performance.now();
+      const dt = Math.max(1, now - lastScrollTime);
+      const dy = Math.abs(target.scrollTop - lastScrollPos);
+      const velocity = dy / dt;
+
+      lastScrollTime = now;
+      lastScrollPos = target.scrollTop;
+
+      isFastScrolling = velocity > 1.2;
+      if (scrollEndTimer) clearTimeout(scrollEndTimer);
+      scrollEndTimer = setTimeout(() => {
+        isFastScrolling = false;
+      }, 120);
+
       scrollRAF = null;
     });
   }
 
-  let itemHeight = $derived(viewMode === 'list' ? ITEM_HEIGHT : GRID_ITEM_HEIGHT);
-  let itemsPerRow = $derived(viewMode === 'grid' ? 3 : 1);
+  let itemsPerRow = $derived(getItemsPerRowFor(viewMode, containerWidth));
+  let itemHeight = $derived(getItemHeightFor(viewMode, containerWidth));
 
   let visibleRange = $derived.by(() => {
     if (items.length <= 50) return { startIdx: 0, endIdx: items.length };
@@ -214,6 +260,7 @@
     use:bindContainer
     onscroll={handleScroll}
     bind:clientHeight={containerHeight}
+    bind:clientWidth={containerWidth}
   >
     {#if loading}
       {#each Array(5) as _, i (i)}
@@ -308,6 +355,7 @@
     use:bindContainer
     onscroll={handleScroll}
     bind:clientHeight={containerHeight}
+    bind:clientWidth={containerWidth}
   >
     {#if loading}
       {#each Array(6) as _, i (i)}
@@ -325,12 +373,17 @@
         <span>{$t('playlist.noResults')}</span>
       </div>
     {:else}
-      <div class="virtual-spacer-grid" style="min-height: {totalHeight};">
+      <div class="virtual-spacer-grid" style="height: {totalHeight}; position: relative;">
         <div class="virtual-content-grid" style="transform: translateY({offsetTop}px);">
           {#each visibleItems as item (item.id)}
             {@const isSelected = isItemSelected(item.id)}
             {@const settings = getSettings(item)}
             {@const isHovered = hoveredItemId === item.id}
+            {@const thumbSrc = item.thumbnail
+              ? isFastScrolling
+                ? item.thumbnail
+                : normalizeYouTubeThumbnailUrl(item.thumbnail, 'mq')
+              : null}
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <!-- svelte-ignore a11y_click_events_have_key_events -->
             <div
@@ -341,9 +394,9 @@
               onclick={() => ontoggle?.(item.id)}
             >
               <div class="card-thumb">
-                {#if item.thumbnail}
+                {#if thumbSrc}
                   <img
-                    src={item.thumbnail}
+                    src={thumbSrc}
                     alt=""
                     loading="lazy"
                     decoding="async"
@@ -422,9 +475,16 @@
 <style>
   /* ===== List View ===== */
   .list-view {
-    display: flex;
-    flex-direction: column;
+    display: block;
     contain: layout style;
+    overflow-y: auto;
+    max-height: 100%;
+    flex: 1;
+    min-height: 0;
+    will-change: scroll-position;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
   }
 
   .list-view:not(.virtualized) .virtual-spacer,
@@ -433,8 +493,6 @@
   }
 
   .list-view.virtualized {
-    overflow-y: auto;
-    max-height: 100%;
     will-change: scroll-position;
   }
 
@@ -604,6 +662,18 @@
   /* ===== Grid View ===== */
   .grid-view {
     contain: layout style;
+    padding-right: 8px;
+    overflow-y: auto;
+    max-height: 100%;
+    flex: 1;
+    min-height: 0;
+    will-change: scroll-position;
+  }
+  
+  @media (max-width: 480px) {
+    .grid-view {
+      padding-right: 1px;
+    }
   }
 
   .grid-view:not(.virtualized) {
@@ -619,8 +689,6 @@
 
   .grid-view.virtualized {
     display: block;
-    overflow-y: auto;
-    max-height: 100%;
     will-change: scroll-position;
   }
 

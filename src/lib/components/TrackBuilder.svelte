@@ -14,7 +14,6 @@
     isAndroid,
     getVideoInfoOnAndroid,
     waitForAndroidYtDlp,
-    processYtmThumbnailOnAndroid,
   } from '$lib/utils/android';
   import {
     viewStateCache,
@@ -632,31 +631,7 @@
 
   async function processThumbnail(thumbUrl: string) {
     if (!thumbUrl || destroyed) return;
-
-    const isYouTubeMusic = url.includes('music.youtube.com');
-    if (!isYouTubeMusic) {
-      processedThumbnail = thumbUrl;
-      return;
-    }
-
-    try {
-      let result: string;
-      if (isAndroid()) {
-        result = await processYtmThumbnailOnAndroid(thumbUrl);
-      } else {
-        result = await invoke<string>('process_ytm_thumbnail', {
-          thumbnailUrl: thumbUrl,
-        });
-      }
-      if (!destroyed) {
-        processedThumbnail = result;
-      }
-    } catch (e) {
-      logs.warn('tracks', `Thumbnail processing failed: ${e}`);
-      if (!destroyed) {
-        processedThumbnail = thumbUrl;
-      }
-    }
+    processedThumbnail = thumbUrl;
   }
 
   async function loadInfo() {
@@ -1122,8 +1097,8 @@
   }
 
   .track-builder.full-bleed {
-    margin: 0 -8px 0 -16px;
-    padding: 0;
+    /* margin: 0 -8px 0 -16px; */
+    padding: 0 8px 0 0;
     height: 100%;
     display: flex;
     flex-direction: column;
@@ -1134,7 +1109,7 @@
     top: 0;
     z-index: 10;
     margin: 0;
-    padding: 10px 16px 10px 16px;
+    /* padding: 10px 16px 10px 16px; */
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   }
 
@@ -1142,7 +1117,7 @@
     background: transparent;
     border: none;
     border-radius: 0;
-    padding: 0 16px 16px 16px;
+    /* padding: 0 16px 0 16px; */
     flex: 1;
     overflow-y: auto;
   }
@@ -1156,7 +1131,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 12px 0;
+    padding: 10px 0;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     flex-shrink: 0;
     flex-wrap: wrap;
@@ -1667,7 +1642,7 @@
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 12px;
-    padding: 12px;
+    padding: 0;
   }
 
   .error-state {

@@ -161,6 +161,45 @@
   );
 
   let currentScrollTop = $state(initialState.scrollTop);
+
+  let cardEl = $state<HTMLDivElement | null>(null);
+  let entriesContainerEl = $state<HTMLDivElement | null>(null);
+  let entriesContainerHeight = $state<number | null>(null);
+
+  function recomputeEntriesHeight() {
+    if (!showHeader || !showEntries) {
+      entriesContainerHeight = null;
+      return;
+    }
+    if (!cardEl || !entriesContainerEl) return;
+
+    const cardRect = cardEl.getBoundingClientRect();
+    const containerRect = entriesContainerEl.getBoundingClientRect();
+    const paddingBottom = 12;
+    const available = Math.floor(cardRect.bottom - containerRect.top - paddingBottom);
+    entriesContainerHeight = Math.max(160, available);
+  }
+
+  $effect(() => {
+    if (!showHeader || !showEntries) {
+      entriesContainerHeight = null;
+      return;
+    }
+
+    let raf = requestAnimationFrame(recomputeEntriesHeight);
+    const ro = new ResizeObserver(() => recomputeEntriesHeight());
+    if (cardEl) ro.observe(cardEl);
+    if (entriesContainerEl) ro.observe(entriesContainerEl);
+
+    const onWindowResize = () => recomputeEntriesHeight();
+    window.addEventListener('resize', onWindowResize, { passive: true });
+
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      window.removeEventListener('resize', onWindowResize);
+    };
+  });
   let searchQuery = $state(initialState.searchQuery);
   let viewMode = $state<ViewMode>(initialState.viewMode);
   let activeTab = $state<ChannelTab>(initialState.channelTab);
@@ -353,8 +392,10 @@
         });
         if (destroyed) return;
 
+        const allEntries = (rawInfo.entries ?? []) as any[];
+        rawInfo.entries = allEntries;
         while (rawInfo.has_more && rawInfo.total_count > 0 && !destroyed) {
-          const currentOffset = rawInfo.entries.length;
+          const currentOffset = allEntries.length;
           const moreInfo = await invoke<any>('get_playlist_info', {
             url,
             offset: currentOffset,
@@ -365,11 +406,11 @@
           });
           if (destroyed) return;
 
-          rawInfo = {
-            ...rawInfo,
-            entries: [...rawInfo.entries, ...moreInfo.entries],
-            has_more: moreInfo.has_more,
-          };
+          if (moreInfo?.entries?.length) {
+            allEntries.push(...moreInfo.entries);
+          }
+          rawInfo.has_more = moreInfo.has_more;
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
         }
       }
 
@@ -490,7 +531,7 @@
     return {
       id: e.id,
       title: e.title,
-      thumbnail: getDisplayThumbnailUrl(e.url, e.thumbnail, viewMode === 'list' ? 'default' : 'mq'),
+      thumbnail: getDisplayThumbnailUrl(e.url, e.thumbnail, 'default'),
       duration: e.duration,
       author: e.viewCount ? formatNumber(e.viewCount) + ' views' : null,
       isMusic: false,
@@ -520,7 +561,7 @@
   let downloadOrder = $state<'queue' | 'reverse' | 'shuffle'>('queue');
 </script>
 
-<div class="channel-builder" class:full-bleed={showHeader}>
+<div class="channel-builder" class:full-bleed={showHeader} class:entries-open={showEntries}>
   {#if showHeader}
     <div class="view-header">
       <button class="back-btn" onclick={onback}>
@@ -548,7 +589,7 @@
     </div>
   {/if}
 
-  <div class="card">
+  <div class="card" bind:this={cardEl}>
     {#if error}
       <div class="error-state">
         <Icon name="warning" size={18} />
@@ -813,7 +854,13 @@
           </div>
 
           <!-- Entries grid -->
-          <div class="entries-container">
+          <div
+            class="entries-container"
+            bind:this={entriesContainerEl}
+            style={showHeader && showEntries && entriesContainerHeight
+              ? `height: ${entriesContainerHeight}px;`
+              : undefined}
+          >
             {#if loading && !channelInfo}
               <div class="loading-state">
                 <div class="spinner"></div>
@@ -886,8 +933,8 @@
   }
 
   .channel-builder.full-bleed {
-    margin: 0 -8px 0 -16px;
-    padding: 0;
+    /* margin: 0 -8px 0 -16px; */
+    padding: 0 8px 0 0;
     height: 100%;
     display: flex;
     flex-direction: column;
@@ -898,7 +945,7 @@
     top: 0;
     z-index: 10;
     margin: 0;
-    padding: 10px 16px 10px 16px;
+    padding: 10px 0;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   }
 
@@ -906,24 +953,40 @@
     background: transparent;
     border: none;
     border-radius: 0;
-    padding: 12px 16px 16px 16px;
+    padding: 0;
     flex: 1;
+    min-height: 0;
+  }
+
+  .channel-builder.full-bleed:not(.entries-open) .card {
     overflow-y: auto;
   }
 
+  .channel-builder.full-bleed.entries-open .card {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
   .channel-builder.full-bleed .entries-container {
+    height: auto;
     max-height: none;
     border-radius: 0;
     background: transparent;
-    margin: 0 -16px;
-    padding: 6px 16px 16px 16px;
+    /* margin: 0 -16px; */
+    padding: 0;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
   }
 
   .view-header {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 12px 0;
+    padding: 10px 0;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     flex-shrink: 0;
     flex-wrap: wrap;
@@ -1424,6 +1487,13 @@
     margin-top: 10px;
     padding-top: 10px;
     border-top: 1px solid rgba(255, 255, 255, 0.05);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .channel-builder.full-bleed.entries-open .entries-panel {
+    flex: 1;
   }
 
   .entries-toolbar {
@@ -1539,11 +1609,15 @@
   }
 
   .entries-container {
+    height: 400px;
     max-height: 400px;
-    overflow-y: auto;
+    overflow: hidden;
     border-radius: 8px;
     background: rgba(0, 0, 0, 0.2);
     padding: 6px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
   }
 
   .empty-state {

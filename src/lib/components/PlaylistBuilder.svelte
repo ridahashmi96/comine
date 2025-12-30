@@ -200,6 +200,45 @@
 
   let currentScrollTop = $state(initialState.scrollTop);
 
+  let cardEl = $state<HTMLDivElement | null>(null);
+  let entriesContainerEl = $state<HTMLDivElement | null>(null);
+  let entriesContainerHeight = $state<number | null>(null);
+
+  function recomputeEntriesHeight() {
+    if (!showHeader || !showEntries) {
+      entriesContainerHeight = null;
+      return;
+    }
+    if (!cardEl || !entriesContainerEl) return;
+
+    const cardRect = cardEl.getBoundingClientRect();
+    const containerRect = entriesContainerEl.getBoundingClientRect();
+    const paddingBottom = 12;
+    const available = Math.floor(cardRect.bottom - containerRect.top - paddingBottom);
+    entriesContainerHeight = Math.max(160, available);
+  }
+
+  $effect(() => {
+    if (!showHeader || !showEntries) {
+      entriesContainerHeight = null;
+      return;
+    }
+
+    let raf = requestAnimationFrame(recomputeEntriesHeight);
+    const ro = new ResizeObserver(() => recomputeEntriesHeight());
+    if (cardEl) ro.observe(cardEl);
+    if (entriesContainerEl) ro.observe(entriesContainerEl);
+
+    const onWindowResize = () => recomputeEntriesHeight();
+    window.addEventListener('resize', onWindowResize, { passive: true });
+
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      window.removeEventListener('resize', onWindowResize);
+    };
+  });
+
   let searchQuery = $state(initialState.searchQuery);
   let showEntries = $state(true);
   let viewMode = $state<ViewMode>(initialState.viewMode);
@@ -437,8 +476,9 @@
         });
         if (destroyed) return;
 
+        const allEntries = info.entries;
         while (info.has_more && info.total_count > 0 && !destroyed) {
-          const currentOffset = info.entries.length;
+          const currentOffset = allEntries.length;
           const moreInfo = await invoke<BackendPlaylistInfo>('get_playlist_info', {
             url,
             offset: currentOffset,
@@ -449,11 +489,11 @@
           });
           if (destroyed) return;
 
-          info = {
-            ...info,
-            entries: [...info.entries, ...moreInfo.entries],
-            has_more: moreInfo.has_more,
-          };
+          if (moreInfo.entries?.length) {
+            allEntries.push(...moreInfo.entries);
+          }
+          info.has_more = moreInfo.has_more;
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
         }
       }
 
@@ -586,7 +626,7 @@
   }
 </script>
 
-<div class="playlist-builder" class:full-bleed={showHeader}>
+<div class="playlist-builder" class:full-bleed={showHeader} class:entries-open={showEntries}>
   {#if showHeader}
     <div class="view-header">
       <button class="back-btn" onclick={onback}>
@@ -617,7 +657,7 @@
     </div>
   {/if}
 
-  <div class="card">
+  <div class="card" bind:this={cardEl}>
     {#if error}
       <div class="error-state">
         <Icon name="warning" size={18} />
@@ -856,7 +896,13 @@
             </div>
           </div>
 
-          <div class="entries-container">
+          <div
+            class="entries-container"
+            bind:this={entriesContainerEl}
+            style={showHeader && showEntries && entriesContainerHeight
+              ? `height: ${entriesContainerHeight}px;`
+              : undefined}
+          >
             <MediaGrid
               items={filteredEntries}
               mapItem={(e: PlaylistEntry) => ({
@@ -865,7 +911,7 @@
                 thumbnail: getDisplayThumbnailUrl(
                   e.url,
                   e.thumbnail,
-                  viewMode === 'list' ? 'default' : 'mq'
+                  'default'
                 ),
                 duration: e.duration,
                 author: e.uploader,
@@ -919,7 +965,6 @@
   }
 
   .playlist-builder.full-bleed {
-    margin: 0 -8px 0 -16px;
     padding: 0;
     height: 100%;
     display: flex;
@@ -931,7 +976,8 @@
     top: 0;
     z-index: 10;
     margin: 0;
-    padding: 10px 16px 10px 16px;
+    padding: 10px 0 10px 0;
+    margin-right: 8px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   }
 
@@ -939,9 +985,19 @@
     background: transparent;
     border: none;
     border-radius: 0;
-    padding: 0 16px 16px 16px;
+    padding: 0 8px 0 0;
     flex: 1;
+    min-height: 0;
+  }
+
+  .playlist-builder.full-bleed:not(.entries-open) .card {
     overflow-y: auto;
+  }
+
+  .playlist-builder.full-bleed.entries-open .card {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
   }
 
   .playlist-builder.full-bleed .yt-badge {
@@ -949,11 +1005,17 @@
   }
 
   .playlist-builder.full-bleed .entries-container {
+    height: auto;
     max-height: none;
     border-radius: 0;
     background: transparent;
     margin: 0 -16px;
-    padding: 6px 16px 16px 16px;
+    padding: 6px 16px 0 16px;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
   }
 
   /* View header with back and download buttons */
@@ -1168,7 +1230,7 @@
 
   .playlist-builder.full-bleed .main-row {
     gap: 16px;
-    padding: 12px 0;
+    padding: 8px 0;
   }
 
   .left {
@@ -1402,6 +1464,13 @@
     margin-top: 10px;
     padding-top: 10px;
     border-top: 1px solid rgba(255, 255, 255, 0.05);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .playlist-builder.full-bleed.entries-open .entries-panel {
+    flex: 1;
   }
 
   .entries-toolbar {
@@ -1514,11 +1583,15 @@
 
   /* Entries container */
   .entries-container {
+    height: 400px;
     max-height: 400px;
-    overflow-y: auto;
+    overflow: hidden;
     border-radius: 8px;
     background: rgba(0, 0, 0, 0.2);
     padding: 6px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
   }
 
   /* More options */

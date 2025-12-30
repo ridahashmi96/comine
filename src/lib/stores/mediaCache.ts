@@ -121,6 +121,7 @@ export interface CacheEntry {
 
 const CONFIG = {
   maxEntries: 100,
+  maxUiStateEntries: 30,
   ttl: {
     preview: 60 * 60 * 1000,
     videoInfo: 30 * 60 * 1000,
@@ -137,6 +138,10 @@ class UnifiedMediaCache {
   private cache: Map<string, CacheEntry> = new Map();
   private accessOrder: string[] = [];
   private store = writable<Map<string, CacheEntry>>(this.cache);
+
+  private uiStateCache: Map<string, { state: NonNullable<CacheEntry['uiState']>; updatedAt: number }> =
+    new Map();
+  private uiStateAccessOrder: string[] = [];
 
   private normalizeUrl(url: string): string {
     if (!url) return '';
@@ -236,6 +241,22 @@ class UnifiedMediaCache {
       playlistInfoUpdatedAt: null,
       channelInfoUpdatedAt: null,
     };
+  }
+
+  private touchUiStateAccessOrder(key: string): void {
+    const idx = this.uiStateAccessOrder.indexOf(key);
+    if (idx !== -1) {
+      this.uiStateAccessOrder.splice(idx, 1);
+    }
+    this.uiStateAccessOrder.push(key);
+  }
+
+  private evictUiStateIfNeeded(): void {
+    while (this.uiStateCache.size > CONFIG.maxUiStateEntries && this.uiStateAccessOrder.length > 0) {
+      const oldest = this.uiStateAccessOrder.shift()!;
+      this.uiStateCache.delete(oldest);
+      this.log('EVICT_UI_STATE', oldest);
+    }
   }
 
   private detectType(url: string): 'video' | 'playlist' | 'channel' | 'unknown' {
@@ -380,9 +401,11 @@ class UnifiedMediaCache {
   }
 
   setUIState(url: string, state: Partial<NonNullable<CacheEntry['uiState']>>): void {
+    const key = this.normalizeUrl(url);
     const entry = this.getOrCreate(url);
 
-    entry.uiState = {
+    const existing = this.getUIState(url);
+    const base: NonNullable<CacheEntry['uiState']> = {
       scrollTop: 0,
       selectedMode: 'some',
       selectedIds: [],
@@ -392,9 +415,17 @@ class UnifiedMediaCache {
       searchQuery: '',
       selectedVideo: 'best',
       selectedAudio: 'best',
-      ...entry.uiState,
+    };
+
+    const nextState: NonNullable<CacheEntry['uiState']> = {
+      ...base,
+      ...(existing ?? {}),
       ...state,
     };
+
+    this.uiStateCache.set(key, { state: nextState, updatedAt: Date.now() });
+    this.touchUiStateAccessOrder(key);
+    this.evictUiStateIfNeeded();
     entry.lastAccessedAt = Date.now();
 
     this.log('SET_UI_STATE', url, state);
@@ -463,8 +494,18 @@ class UnifiedMediaCache {
   }
 
   getUIState(url: string): CacheEntry['uiState'] | null {
-    const entry = this.get(url);
-    return entry?.uiState ?? null;
+    const key = this.normalizeUrl(url);
+    const entry = this.uiStateCache.get(key);
+    if (!entry) return null;
+
+    if (Date.now() - entry.updatedAt > CONFIG.ttl.uiState) {
+      this.uiStateCache.delete(key);
+      this.uiStateAccessOrder = this.uiStateAccessOrder.filter((k) => k !== key);
+      return null;
+    }
+
+    this.touchUiStateAccessOrder(key);
+    return entry.state;
   }
 
   hasAnyData(url: string): boolean {
@@ -533,13 +574,6 @@ class UnifiedMediaCache {
   private evictIfNeeded(): void {
     while (this.cache.size > CONFIG.maxEntries && this.accessOrder.length > 0) {
       const oldest = this.accessOrder.shift()!;
-      const entry = this.cache.get(oldest);
-
-      if (entry?.uiState) {
-        this.accessOrder.push(oldest);
-        continue;
-      }
-
       this.cache.delete(oldest);
       this.log('EVICT', oldest);
     }
@@ -549,6 +583,8 @@ class UnifiedMediaCache {
     const key = this.normalizeUrl(url);
     this.cache.delete(key);
     this.accessOrder = this.accessOrder.filter((k) => k !== key);
+    this.uiStateCache.delete(key);
+    this.uiStateAccessOrder = this.uiStateAccessOrder.filter((k) => k !== key);
     this.log('DELETE', url);
     this.notifyChange();
   }
@@ -556,6 +592,8 @@ class UnifiedMediaCache {
   clear(): void {
     this.cache.clear();
     this.accessOrder = [];
+    this.uiStateCache.clear();
+    this.uiStateAccessOrder = [];
     this.log('CLEAR', 'all');
     this.notifyChange();
   }
@@ -563,6 +601,18 @@ class UnifiedMediaCache {
   clearStale(): void {
     const now = Date.now();
     const keysToDelete: string[] = [];
+
+    const uiStateKeysToDelete: string[] = [];
+    for (const [key, entry] of this.uiStateCache) {
+      if (now - entry.updatedAt > CONFIG.ttl.uiState) {
+        uiStateKeysToDelete.push(key);
+      }
+    }
+
+    for (const key of uiStateKeysToDelete) {
+      this.uiStateCache.delete(key);
+      this.uiStateAccessOrder = this.uiStateAccessOrder.filter((k) => k !== key);
+    }
 
     for (const [key, entry] of this.cache) {
       const previewStale =
@@ -573,11 +623,11 @@ class UnifiedMediaCache {
         !entry.formatsUpdatedAt || now - entry.formatsUpdatedAt > CONFIG.ttl.formats;
       const playlistInfoStale =
         !entry.playlistInfoUpdatedAt || now - entry.playlistInfoUpdatedAt > CONFIG.ttl.playlistInfo;
+      const channelInfoStale =
+        !entry.channelInfoUpdatedAt || now - entry.channelInfoUpdatedAt > CONFIG.ttl.channelInfo;
 
-      if (previewStale && videoInfoStale && formatsStale && playlistInfoStale) {
-        if (!entry.uiState) {
-          keysToDelete.push(key);
-        }
+      if (previewStale && videoInfoStale && formatsStale && playlistInfoStale && channelInfoStale) {
+        if (!this.uiStateCache.has(key)) keysToDelete.push(key);
       }
     }
 
@@ -609,8 +659,9 @@ class UnifiedMediaCache {
       if (entry.type === 'video') videos++;
       if (entry.type === 'playlist') playlists++;
       if (entry.type === 'channel') channels++;
-      if (entry.uiState) withUIState++;
     }
+
+    withUIState = this.uiStateCache.size;
 
     return {
       size: this.cache.size,

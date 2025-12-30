@@ -1013,7 +1013,7 @@
     pointer-events: none;
     overflow-x: hidden;
     overflow-y: auto;
-    padding: 0 6px 16px 16px;
+    padding: 0 0 0 18px;
     margin-right: 4px;
     margin-bottom: 4px;
     mask-image: linear-gradient(to bottom, black, black 0px, black calc(100% - 25px), transparent);
@@ -1027,6 +1027,12 @@
     &:not(.active) * {
       transition: none !important;
       animation: none !important;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .view-container {
+      padding: 0 0 0 0;
     }
   }
 

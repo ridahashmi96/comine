@@ -19,7 +19,6 @@ import {
   downloadOnAndroid,
   getVideoInfoOnAndroid,
   waitForAndroidYtDlp,
-  processYtmThumbnailOnAndroid,
   type DownloadProgress as AndroidProgress,
 } from '$lib/utils/android';
 
@@ -677,8 +676,6 @@ function createQueueStore() {
       pendingItem.title || url
     );
 
-    let ytmThumbnailPromise: Promise<void> | null = null;
-
     try {
       const hasPrefetchedInfo = pendingItem.options?.prefetchedInfo?.title;
       if (!hasPrefetchedInfo) {
@@ -689,34 +686,6 @@ function createQueueStore() {
           pendingItem.options?.customCookies
         );
         videoInfoPromises.set(itemId, infoPromise);
-      } else {
-        // Process thumbnail for audio downloads (letterbox cropping)
-        const isAudioDownload = pendingItem.options?.downloadMode === 'audio';
-        const currentThumbnail = pendingItem.thumbnail;
-        if (isAudioDownload && currentThumbnail && !currentThumbnail.startsWith('data:image/')) {
-          ytmThumbnailPromise = (async () => {
-            try {
-              let processedThumbnail: string;
-              if (isAndroid()) {
-                processedThumbnail = await processYtmThumbnailOnAndroid(currentThumbnail);
-              } else {
-                processedThumbnail = await invoke<string>('process_ytm_thumbnail', {
-                  thumbnailUrl: currentThumbnail,
-                });
-              }
-              if (processedThumbnail !== currentThumbnail) {
-                update((state) => ({
-                  ...state,
-                  items: state.items.map((item) =>
-                    item.id === itemId ? { ...item, thumbnail: processedThumbnail } : item
-                  ),
-                }));
-              }
-            } catch (e) {
-              logs.warn('queue', `Failed to process thumbnail: ${e}`);
-            }
-          })();
-        }
       }
 
       let filePath = '';
@@ -827,32 +796,6 @@ function createQueueStore() {
             ? pendingItem.playlistTitle
             : null;
 
-        let currentItem = get({ subscribe }).items.find((i) => i.id === itemId);
-        let croppedThumbnailData = currentItem?.thumbnail?.startsWith('data:image/')
-          ? currentItem.thumbnail
-          : null;
-
-        if (
-          ytmThumbnailPromise &&
-          isAudioDownload &&
-          currentSettings.embedThumbnail &&
-          !croppedThumbnailData
-        ) {
-          logs.info('queue', 'Waiting for YTM thumbnail processing before download...');
-          try {
-            await ytmThumbnailPromise;
-            currentItem = get({ subscribe }).items.find((i) => i.id === itemId);
-            croppedThumbnailData = currentItem?.thumbnail?.startsWith('data:image/')
-              ? currentItem.thumbnail
-              : null;
-            if (croppedThumbnailData) {
-              logs.info('queue', 'Got cropped thumbnail, starting download with it');
-            }
-          } catch (e) {
-            logs.warn('queue', `Thumbnail processing failed, continuing without crop: ${e}`);
-          }
-        }
-
         const proxyConfig = getProxyConfig();
 
         const downloadPromise = invoke<string>('download_video', {
@@ -869,7 +812,7 @@ function createQueueStore() {
           customCookies: pendingItem.options?.customCookies ?? '',
           downloadPath: downloadPath,
           embedThumbnail: isAudioDownload && currentSettings.embedThumbnail,
-          croppedThumbnailData: croppedThumbnailData,
+          thumbnailUrlForEmbed: pendingItem.thumbnail || '',
           playlistTitle: playlistTitle,
           proxyConfig: proxyConfig,
           sponsorBlock: currentSettings.sponsorBlock,
@@ -1093,27 +1036,6 @@ function createQueueStore() {
             'queue',
             `Desktop video info (attempt ${attempt}): title=${info.title}, uploader=${info.uploader}, uploader_id=${info.uploader_id}`
           );
-        }
-
-        const isYouTubeMusic = /music\.youtube\.com/i.test(url);
-        if (isYouTubeMusic && info.thumbnail) {
-          logs.info('queue', 'YouTube Music detected, processing thumbnail for 1:1 crop');
-          try {
-            let processedThumbnail: string;
-            if (isAndroid()) {
-              processedThumbnail = await processYtmThumbnailOnAndroid(info.thumbnail);
-            } else {
-              processedThumbnail = await invoke<string>('process_ytm_thumbnail', {
-                thumbnailUrl: info.thumbnail,
-              });
-            }
-            if (processedThumbnail !== info.thumbnail) {
-              logs.info('queue', 'Thumbnail cropped to 1:1 square');
-              info.thumbnail = processedThumbnail;
-            }
-          } catch (e) {
-            logs.warn('queue', `Failed to process YTM thumbnail: ${e}`);
-          }
         }
 
         const isTwitter = /(?:twitter\.com|x\.com)/i.test(url);

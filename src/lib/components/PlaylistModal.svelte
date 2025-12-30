@@ -117,6 +117,11 @@
   );
   let someSelected = $derived(selectedCount > 0 && !allSelected);
 
+  const INITIAL_PREFETCH_TARGET = 300;
+  const INITIAL_PREFETCH_DELAY_MS = 80;
+  let isPrefetching = $state(false);
+  let prefetchTimer: ReturnType<typeof setTimeout> | null = null;
+
   $effect(() => {
     if (open && url) {
       downloadModeOverride = null;
@@ -142,6 +147,10 @@
   });
 
   async function loadPlaylist() {
+    if (prefetchTimer) {
+      clearTimeout(prefetchTimer);
+      prefetchTimer = null;
+    }
     loading = true;
     error = null;
     playlistInfo = null;
@@ -157,7 +166,6 @@
         info = (await getPlaylistInfoOnAndroid(url)) as PlaylistInfo;
       } else {
         loadingStatus = $t('playlist.fetchingInfo');
-        console.log('[PlaylistModal] Invoking get_playlist_info...');
         info = await invoke<PlaylistInfo>('get_playlist_info', {
           url,
           offset: 0,
@@ -166,49 +174,10 @@
           customCookies: customCookies || null,
           proxyConfig: getProxyConfig(),
         });
-        console.log(
-          '[PlaylistModal] First batch returned, entries:',
-          info?.entries?.length,
-          'has_more:',
-          info?.has_more
-        );
-
-        while (info.has_more && info.total_count > 0) {
-          const currentOffset = info.entries.length;
-          loadingStatus = $t('playlist.loadingEntries')
-            .replace('{loaded}', String(currentOffset))
-            .replace('{total}', String(info.total_count));
-
-          console.log('[PlaylistModal] Fetching more entries at offset:', currentOffset);
-          const moreInfo = await invoke<PlaylistInfo>('get_playlist_info', {
-            url,
-            offset: currentOffset,
-            limit: 100,
-            cookiesFromBrowser: cookiesFromBrowser || null,
-            customCookies: customCookies || null,
-            proxyConfig: getProxyConfig(),
-          });
-          console.log(
-            '[PlaylistModal] Got more entries:',
-            moreInfo?.entries?.length,
-            'has_more:',
-            moreInfo?.has_more
-          );
-
-          info = {
-            ...info,
-            entries: [...info.entries, ...moreInfo.entries],
-            has_more: moreInfo.has_more,
-          };
-        }
-        console.log('[PlaylistModal] Loop complete, total entries:', info.entries.length);
       }
 
       playlistInfo = info;
-      console.log('[PlaylistModal] Loaded playlist with', info.entries.length, 'entries');
-
       selectedIdsArray = info.entries.map((e) => e.id);
-      console.log('[PlaylistModal] Selected', selectedIdsArray.length, 'entries');
 
       const newSettings = new Map<string, EntrySettings>();
       info.entries.forEach((e) => {
@@ -220,15 +189,55 @@
         }
       });
       perItemSettings = newSettings;
-      console.log('[PlaylistModal] Set per-item settings for', newSettings.size, 'music entries');
-      console.log('[PlaylistModal] SUCCESS - About to set loading=false');
+
+      if (!isAndroid() && info.has_more && info.entries.length < INITIAL_PREFETCH_TARGET) {
+        if (prefetchTimer) clearTimeout(prefetchTimer);
+        prefetchTimer = setTimeout(() => {
+          prefetchTimer = null;
+          void prefetchInitialEntries();
+        }, INITIAL_PREFETCH_DELAY_MS);
+      }
     } catch (e) {
       console.error('[PlaylistModal] ERROR:', e);
       error = String(e);
     } finally {
-      console.log('[PlaylistModal] Finally block - setting loading=false');
       loading = false;
       loadingStatus = '';
+    }
+  }
+
+  async function prefetchInitialEntries(): Promise<void> {
+    if (isAndroid()) return;
+    if (!playlistInfo?.has_more) return;
+    if (searchQuery) return;
+    if (isPrefetching) return;
+    if (playlistInfo.entries.length >= INITIAL_PREFETCH_TARGET) return;
+
+    isPrefetching = true;
+    try {
+      while (playlistInfo?.has_more && playlistInfo.entries.length < INITIAL_PREFETCH_TARGET) {
+        if (searchQuery) break;
+        const beforeLen = playlistInfo.entries.length;
+        await loadMoreEntries();
+        const afterLen = playlistInfo?.entries.length ?? 0;
+        if (afterLen <= beforeLen) break;
+        await new Promise<void>((r) => setTimeout(r, 0));
+      }
+    } finally {
+      isPrefetching = false;
+    }
+  }
+
+  async function ensureAllEntriesLoaded(): Promise<void> {
+    if (isAndroid()) return;
+    if (!playlistInfo) return;
+    let safety = 0;
+    while (playlistInfo?.has_more && safety++ < 500) {
+      const beforeLen = playlistInfo.entries.length;
+      await loadMoreEntries();
+      if (!playlistInfo) return;
+      const afterLen = playlistInfo.entries.length;
+      if (afterLen <= beforeLen) break;
     }
   }
 
@@ -277,9 +286,7 @@
     if (!allSelected && playlistInfo?.has_more && !loadingAll) {
       loadingAll = true;
       try {
-        while (playlistInfo.has_more) {
-          await loadMoreEntries();
-        }
+        await ensureAllEntriesLoaded();
       } finally {
         loadingAll = false;
       }
@@ -333,8 +340,18 @@
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   }
 
-  function handleDownload() {
+  async function handleDownload() {
     if (!playlistInfo) return;
+
+    if (!isAndroid() && !searchQuery && playlistInfo.has_more && !loadingAll) {
+      loadingAll = true;
+      try {
+        await ensureAllEntriesLoaded();
+      } finally {
+        loadingAll = false;
+      }
+      if (!playlistInfo) return;
+    }
 
     let entries = playlistInfo.entries
       .filter((e) => selectedIds.has(e.id))
@@ -361,6 +378,10 @@
   }
 
   function close() {
+    if (prefetchTimer) {
+      clearTimeout(prefetchTimer);
+      prefetchTimer = null;
+    }
     open = false;
     onclose?.();
   }
@@ -485,6 +506,22 @@
               {/if}
             </button>
           </div>
+
+          {#if !isAndroid() && playlistInfo.has_more}
+            <div class="load-status">
+              <span class="load-text">
+                Showing {playlistInfo.entries.length}/{playlistInfo.total_count}
+              </span>
+              {#if searchQuery}
+                <span class="load-hint">Search is limited to loaded items</span>
+              {:else}
+                <span class="load-hint">Scroll to load more</span>
+              {/if}
+              {#if isPrefetching && !searchQuery}
+                <span class="load-hint">Loading…</span>
+              {/if}
+            </div>
+          {/if}
 
           <!-- Global Settings -->
           <div class="global-settings">
@@ -767,6 +804,24 @@
     padding: 12px 20px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     flex-shrink: 0;
+  }
+
+  .load-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 8px 0 10px 0;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 12px;
+  }
+
+  .load-text {
+    white-space: nowrap;
+  }
+
+  .load-hint {
+    white-space: nowrap;
+    opacity: 0.85;
   }
 
   .search-wrapper {

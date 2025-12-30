@@ -959,84 +959,7 @@ class MainActivity : TauriActivity() {
     
     @JavascriptInterface
     fun processYtmThumbnail(thumbnailUrl: String, callbackName: String) {
-      infoExecutor.execute {
-        try {
-          sendLog("info", "Processing YTM thumbnail: $thumbnailUrl")
-          
-          val url = java.net.URL(thumbnailUrl)
-          val connection = url.openConnection() as java.net.HttpURLConnection
-          connection.connectTimeout = 10000
-          connection.readTimeout = 10000
-          connection.requestMethod = "GET"
-          
-          val inputStream = connection.inputStream
-          val imageBytes = inputStream.readBytes()
-          inputStream.close()
-          connection.disconnect()
-          
-          sendLog("debug", "Downloaded thumbnail: ${imageBytes.size} bytes")
-          
-          val options = android.graphics.BitmapFactory.Options().apply {
-            inMutable = false
-          }
-          val bitmap = android.graphics.BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size, options)
-          
-          if (bitmap == null) {
-            sendLog("error", "Failed to decode thumbnail bitmap")
-            sendCallback(callbackName, JSONObject().apply { put("url", thumbnailUrl) }.toString())
-            return@execute
-          }
-          
-          val width = bitmap.width
-          val height = bitmap.height
-          sendLog("debug", "Thumbnail dimensions: ${width}x${height}")
-          
-          if (width <= height) {
-            sendLog("info", "Thumbnail is not letterboxed (width <= height)")
-            bitmap.recycle()
-            sendCallback(callbackName, JSONObject().apply { put("url", thumbnailUrl) }.toString())
-            return@execute
-          }
-          
-          val squareSize = height
-          val barWidth = (width - squareSize) / 2
-          
-          if (barWidth < width / 20) {
-            sendLog("info", "Bars too small to crop")
-            bitmap.recycle()
-            sendCallback(callbackName, JSONObject().apply { put("url", thumbnailUrl) }.toString())
-            return@execute
-          }
-          
-          if (!isLetterboxed(bitmap, barWidth)) {
-            sendLog("info", "Thumbnail bars are not solid color, not letterboxed")
-            bitmap.recycle()
-            sendCallback(callbackName, JSONObject().apply { put("url", thumbnailUrl) }.toString())
-            return@execute
-          }
-          
-          sendLog("info", "Detected letterboxed thumbnail, cropping to center square")
-          
-          val cropped = android.graphics.Bitmap.createBitmap(bitmap, barWidth, 0, squareSize, squareSize)
-          bitmap.recycle()
-          
-          val outputStream = java.io.ByteArrayOutputStream()
-          cropped.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, outputStream)
-          cropped.recycle()
-          
-          val base64Data = android.util.Base64.encodeToString(outputStream.toByteArray(), android.util.Base64.NO_WRAP)
-          val dataUri = "data:image/jpeg;base64,$base64Data"
-          
-          sendLog("info", "Cropped thumbnail: ${imageBytes.size} bytes -> ${dataUri.length} chars")
-          
-          sendCallback(callbackName, JSONObject().apply { put("url", dataUri) }.toString())
-          
-        } catch (e: Exception) {
-          Log.e(TAG, "Failed to process thumbnail", e)
-          sendLog("error", "Failed to process thumbnail: ${e.message}")
-          sendCallback(callbackName, JSONObject().apply { put("url", thumbnailUrl) }.toString())
-        }
-      }
+      sendCallback(callbackName, JSONObject().apply { put("url", thumbnailUrl) }.toString())
     }
     
     private fun isLetterboxed(bitmap: android.graphics.Bitmap, barWidth: Int): Boolean {
@@ -1158,6 +1081,13 @@ class MainActivity : TauriActivity() {
           } else if (isAudioOnly) {
             request.addOption("-x")
             request.addOption("--audio-format", "m4a")
+            if (ffmpegAvailable) {
+              request.addOption("--embed-thumbnail")
+              request.addOption("--convert-thumbnails", "jpg")
+              sendLog("info", "Embedding thumbnail as cover art (yt-dlp)")
+            } else {
+              sendLog("warn", "FFmpeg not available, cannot embed thumbnail")
+            }
             sendLog("info", "Audio-only download, extracting to m4a")
           } else if (!ffmpegAvailable) {
             sendLog("warn", "FFmpeg not available, using single-stream format")

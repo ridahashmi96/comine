@@ -3,7 +3,6 @@ import { sveltekit } from '@sveltejs/kit/vite';
 import { execSync } from 'child_process';
 import { readFileSync } from 'fs';
 
-// @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
 function getGitInfo() {
