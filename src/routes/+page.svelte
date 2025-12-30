@@ -26,6 +26,8 @@
     type PlaylistEntry,
   } from '$lib/components/PlaylistBuilder.svelte';
   import TrackBuilder from '$lib/components/TrackBuilder.svelte';
+  import ChannelBuilder, { type ChannelSelection } from '$lib/components/ChannelBuilder.svelte';
+  import { type ChannelEntry } from '$lib/stores/mediaCache';
   import ViewStack, { type ViewInstance } from '$lib/components/ViewStack.svelte';
   import type { IconName } from '$lib/components/Icon.svelte';
 
@@ -49,7 +51,13 @@
     type AudioQuality,
     getProxyConfig,
   } from '$lib/stores/settings';
-  import { cleanUrl, isLikelyPlaylist, isValidMediaUrl, isDirectFileUrl } from '$lib/utils/format';
+  import {
+    cleanUrl,
+    isLikelyPlaylist,
+    isLikelyChannel,
+    isValidMediaUrl,
+    isDirectFileUrl,
+  } from '$lib/utils/format';
 
   let url = $state('');
   let status = $state('');
@@ -70,14 +78,21 @@
     return checkIsYouTubeUrl(urlStr) && isLikelyPlaylist(urlStr.trim());
   }
 
+  function checkIsChannelUrl(urlStr: string): boolean {
+    if (!urlStr.trim()) return false;
+    return checkIsYouTubeUrl(urlStr) && isLikelyChannel(urlStr.trim());
+  }
+
   // Derived state for current URL detection
   let isYouTubeUrl = $derived(checkIsYouTubeUrl(url));
   let isPlaylistUrl = $derived(checkIsPlaylistUrl(url));
+  let isChannelUrl = $derived(checkIsChannelUrl(url));
 
   // Check for URL params on mount
   $effect(() => {
     const urlParam = $page.url.searchParams.get('url');
     const openPlaylist = $page.url.searchParams.get('openPlaylist') === '1';
+    const openChannel = $page.url.searchParams.get('openChannel') === '1';
     const openFormat = $page.url.searchParams.get('openFormat') === '1';
 
     if (urlParam) {
@@ -86,6 +101,8 @@
         navigation.openVideo(urlParam);
       } else if (openPlaylist) {
         navigation.openPlaylist(urlParam);
+      } else if (openChannel) {
+        navigation.openChannel(urlParam);
       }
       window.history.replaceState({}, '', window.location.pathname);
     }
@@ -392,7 +409,6 @@
       case 'home':
         return $t('nav.download');
       case 'playlist':
-        // Show truncated playlist title if available
         const title = prev.cachedData?.title;
         if (title) {
           return title.length > 20 ? title.slice(0, 20) + '…' : title;
@@ -401,7 +417,11 @@
       case 'video':
         return prev.cachedData?.title?.slice(0, 20) + '…' || $t('download.tracks.title');
       case 'channel':
-        return prev.channelName || $t('common.back');
+        const channelName = prev.cachedData?.title;
+        if (channelName) {
+          return channelName.length > 20 ? channelName.slice(0, 20) + '…' : channelName;
+        }
+        return $t('channel.title');
       default:
         return undefined;
     }
@@ -499,6 +519,73 @@
     });
   }
 
+  function handleChannelDownload(selection: ChannelSelection) {
+    logs.info(
+      'channel',
+      `Downloading ${selection.entries.length} items from channel: ${selection.channelInfo.name}`
+    );
+
+    const globalOptions = {
+      videoQuality,
+      audioQuality,
+      convertToMp4,
+      remux,
+      useHLS,
+      clearMetadata,
+      dontShowInHistory,
+      useAria2,
+      ignoreMixes,
+      cookiesFromBrowser,
+      customCookies,
+    };
+
+    const queueEntries = selection.entries.map((e) => ({
+      url: e.entry.url,
+      title: e.entry.title,
+      thumbnail: e.entry.thumbnail ?? undefined,
+      author: selection.channelInfo.name,
+      duration: e.entry.duration ?? undefined,
+      downloadMode: e.settings.downloadMode,
+    }));
+
+    queue.addPlaylist(
+      queueEntries,
+      {
+        playlistId: selection.channelInfo.id,
+        playlistTitle: selection.channelInfo.name,
+        usePlaylistFolder: selection.channelInfo.useChannelFolder,
+      },
+      globalOptions
+    );
+
+    toast.success(
+      $t('playlist.notification.downloadStarted').replace(
+        '{count}',
+        selection.entries.length.toString()
+      )
+    );
+    navigation.goHome();
+    url = '';
+  }
+
+  function handleOpenChannelItem(entry: ChannelEntry) {
+    navigation.openVideo(entry.url, {
+      title: entry.title,
+      thumbnail: entry.thumbnail ?? undefined,
+      duration: entry.duration ?? undefined,
+    });
+  }
+
+  function handleOpenChannelFromVideo(
+    channelUrl: string,
+    previewData?: { name?: string; thumbnail?: string }
+  ) {
+    navigation.openChannel(channelUrl, {
+      title: previewData?.name, // Channel name stored as title in MediaPreview
+      thumbnail: previewData?.thumbnail,
+    });
+  }
+
   async function quickDownload() {
     if (!url.trim()) {
       status = `⚠️ ${$t('download.placeholder')}`;
@@ -559,7 +646,9 @@
   function openAdvancedView() {
     if (!url.trim()) return;
 
-    if (isPlaylistUrl) {
+    if (isChannelUrl) {
+      navigation.openChannel(url.trim());
+    } else if (isPlaylistUrl) {
       navigation.openPlaylist(url.trim());
     } else if (isYouTubeUrl) {
       navigation.openVideo(url.trim());
@@ -589,14 +678,20 @@
                 <!-- URL Input -->
                 <div class="url-input-wrapper">
                   <Icon name="link" size={18} />
-                  {#if url.trim() && canDownload && (isYouTubeUrl || isPlaylistUrl)}
+                  {#if url.trim() && canDownload && (isYouTubeUrl || isPlaylistUrl || isChannelUrl)}
                     <button
                       class="input-badge"
                       class:playlist={isPlaylistUrl}
+                      class:channel={isChannelUrl}
                       onclick={openAdvancedView}
                     >
-                      <Icon name={isPlaylistUrl ? 'playlist' : 'play'} size={12} />
-                      <span>{isPlaylistUrl ? 'Playlist' : 'YouTube'}</span>
+                      <Icon
+                        name={isChannelUrl ? 'user' : isPlaylistUrl ? 'playlist' : 'play'}
+                        size={12}
+                      />
+                      <span
+                        >{isChannelUrl ? 'Channel' : isPlaylistUrl ? 'Playlist' : 'YouTube'}</span
+                      >
                     </button>
                   {/if}
                   <input
@@ -605,7 +700,7 @@
                     class="url-input"
                     disabled={!canDownload}
                   />
-                  {#if url.trim() && canDownload && (isYouTubeUrl || isPlaylistUrl)}
+                  {#if url.trim() && canDownload && (isYouTubeUrl || isPlaylistUrl || isChannelUrl)}
                     <button
                       class="customize-btn"
                       onclick={openAdvancedView}
@@ -757,6 +852,7 @@
                 showHeader={true}
                 onback={handleBack}
                 ondownload={handleVideoDownload}
+                onopenchannel={handleOpenChannelFromVideo}
                 backLabel={backLabel()}
                 prefetchedInfo={view.cachedData}
               />
@@ -776,17 +872,17 @@
               />
             {:else if view.type === 'channel'}
               <!-- CHANNEL VIEW -->
-              <div class="page-content">
-                <div class="coming-soon">
-                  <Icon name="user" size={48} />
-                  <h2>Channel View</h2>
-                  <p>Coming soon...</p>
-                  <button class="back-btn" onclick={handleBack}>
-                    <Icon name="alt_arrow_rigth" size={18} class="rotate-180" />
-                    <span>{$t('common.back')}</span>
-                  </button>
-                </div>
-              </div>
+              <ChannelBuilder
+                url={view.url ?? ''}
+                {cookiesFromBrowser}
+                {customCookies}
+                showHeader={true}
+                onback={handleBack}
+                ondownload={handleChannelDownload}
+                onopenitem={handleOpenChannelItem}
+                backLabel={backLabel()}
+                prefetchedInfo={view.cachedData}
+              />
             {/if}
           </div>
         {/key}
@@ -1274,6 +1370,15 @@
 
   .input-badge.playlist:hover {
     background: rgba(255, 165, 0, 0.25);
+  }
+
+  .input-badge.channel {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+  }
+
+  .input-badge.channel:hover {
+    background: rgba(239, 68, 68, 0.25);
   }
 
   .customize-btn {

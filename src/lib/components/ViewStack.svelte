@@ -3,8 +3,6 @@
     id: string;
     type: 'home' | 'video' | 'playlist' | 'channel';
     url?: string;
-    channelId?: string;
-    channelName?: string;
     cachedData?: {
       title?: string;
       thumbnail?: string;
@@ -37,7 +35,6 @@
   function getViewId(view: ViewState, index: number): string {
     if (view.type === 'home') return 'home-0';
     if (view.url) return `${view.type}-${view.url}`;
-    if (view.channelId) return `channel-${view.channelId}`;
     return `${view.type}-${index}-${Date.now()}`;
   }
 
@@ -48,8 +45,6 @@
       id: getViewId(current, stack.length - 1),
       type: current.type,
       url: current.url,
-      channelId: current.channelId,
-      channelName: current.channelName,
       cachedData: current.cachedData,
       mountedAt: Date.now(),
     };
@@ -70,8 +65,6 @@
           id: newId,
           type: topView.type,
           url: topView.url,
-          channelId: topView.channelId,
-          channelName: topView.channelName,
           cachedData: topView.cachedData,
           mountedAt: Date.now(),
         };

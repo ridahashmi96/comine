@@ -22,6 +22,12 @@
     type VideoViewState,
     type CachedVideoInfo,
   } from '$lib/stores/viewState';
+  import {
+    mediaCache,
+    convertBackendFormats,
+    type VideoInfo as UnifiedVideoInfo,
+    type VideoFormat as UnifiedVideoFormat,
+  } from '$lib/stores/mediaCache';
 
   interface VideoFormat {
     format_id: string;
@@ -51,6 +57,8 @@
     like_count?: number | null;
     description?: string | null;
     upload_date?: string | null;
+    channel_url?: string | null;
+    channel_id?: string | null;
   }
 
   export interface TrackSelection {
@@ -68,7 +76,6 @@
     embedMetadata?: boolean;
   }
 
-  // Prefetched info from playlist/search results
   export interface PrefetchedInfo {
     title?: string;
     thumbnail?: string;
@@ -82,6 +89,10 @@
     customCookies?: string;
     ondownload?: (selection: TrackSelection) => void;
     onback?: () => void;
+    onopenchannel?: (
+      channelUrl: string,
+      previewData?: { name?: string; thumbnail?: string }
+    ) => void;
     showHeader?: boolean;
     backLabel?: string;
     prefetchedInfo?: PrefetchedInfo;
@@ -93,6 +104,7 @@
     customCookies = '',
     ondownload,
     onback,
+    onopenchannel,
     showHeader = false,
     backLabel,
     prefetchedInfo,
@@ -101,17 +113,58 @@
   const CACHE_TTL = 10 * 60 * 1000;
 
   function getInitialState() {
-    const cached = viewStateCache.get<VideoViewState>('video', url);
+    const uiState = mediaCache.getUIState(url);
+    const cachedFormats = mediaCache.getFormats(url);
+    const cachedVideoInfo = mediaCache.getVideoInfo(url);
+    const cachedPreview = mediaCache.getBestPreview(url);
 
+    const legacyCached = viewStateCache.get<VideoViewState>('video', url);
     const androidCachedData = isAndroid() ? androidDataCache.getVideo(url) : null;
 
+    let info: VideoInfo | null = null;
+    if (cachedVideoInfo && cachedFormats) {
+      info = {
+        title: cachedVideoInfo.title,
+        author: cachedVideoInfo.author,
+        thumbnail: cachedVideoInfo.thumbnail,
+        duration: cachedVideoInfo.duration,
+        view_count: cachedVideoInfo.viewCount,
+        like_count: cachedVideoInfo.likeCount,
+        description: cachedVideoInfo.description,
+        upload_date: cachedVideoInfo.uploadDate,
+        channel_url: cachedVideoInfo.channelUrl,
+        channel_id: cachedVideoInfo.channelId,
+        formats: cachedFormats.map((f) => ({
+          format_id: f.formatId,
+          ext: f.ext,
+          resolution: f.resolution,
+          fps: f.fps,
+          vcodec: f.vcodec,
+          acodec: f.acodec,
+          filesize: f.filesize,
+          filesize_approx: f.filesizeApprox,
+          tbr: f.tbr,
+          vbr: f.vbr,
+          abr: f.abr,
+          asr: f.asr,
+          format_note: f.formatNote,
+          has_video: f.hasVideo,
+          has_audio: f.hasAudio,
+        })),
+      };
+    } else if (androidCachedData) {
+      info = androidCachedData as VideoInfo;
+    }
+
+    const hasFullData = !!info;
+
     return {
-      info: androidCachedData as VideoInfo | null,
-      selectedVideo: cached?.selectedVideo ?? 'best',
-      selectedAudio: cached?.selectedAudio ?? 'best',
-      loading: !androidCachedData,
-      lastLoadedUrl: androidCachedData ? url : '',
-      fromCache: !!androidCachedData,
+      info,
+      selectedVideo: uiState?.selectedVideo ?? legacyCached?.selectedVideo ?? 'best',
+      selectedAudio: uiState?.selectedAudio ?? legacyCached?.selectedAudio ?? 'best',
+      loading: !hasFullData,
+      lastLoadedUrl: hasFullData ? url : '',
+      fromCache: hasFullData,
     };
   }
 
@@ -258,7 +311,6 @@
   }
   $effect(() => {
     if (selectedVideo === 'none' && selectedAudio === 'none') {
-      // Reset audio to best when user tries to select no video + no audio
       selectedAudio = 'best';
     }
   });
@@ -279,6 +331,17 @@
       .sort((a, b) => (b.abr ?? 0) - (a.abr ?? 0)) ?? []
   );
 
+  function getBestAudioFormat(options?: { preferM4a?: boolean }) {
+    if (audioFormats.length === 0) return null;
+
+    if (options?.preferM4a) {
+      const bestM4a = audioFormats.find((f) => f.ext === 'm4a');
+      return bestM4a ?? audioFormats[0];
+    }
+
+    return audioFormats[0];
+  }
+
   let bestVideoDetails = $derived(() => {
     if (videoFormats.length === 0) return '';
     const best = videoFormats[0];
@@ -287,7 +350,8 @@
 
   let bestAudioDetails = $derived(() => {
     if (audioFormats.length === 0) return '';
-    const best = audioFormats[0];
+    const best = getBestAudioFormat({ preferM4a: selectedVideo === 'none' });
+    if (!best) return '';
     return makeAudioLabel(best);
   });
 
@@ -372,7 +436,8 @@
 
     if (selectedAudio !== 'none') {
       if (selectedAudio === 'best' && audioFormats.length > 0) {
-        const size = audioFormats[0].filesize ?? audioFormats[0].filesize_approx;
+        const best = getBestAudioFormat({ preferM4a: selectedVideo === 'none' });
+        const size = best?.filesize ?? best?.filesize_approx;
         if (size) {
           total += size;
           hasEstimate = true;
@@ -409,7 +474,8 @@
       }
     } else if (selectedVideo === 'none') {
       if (selectedAudio === 'best') {
-        formatString = 'bestaudio';
+        const best = getBestAudioFormat({ preferM4a: true });
+        formatString = best?.format_id ?? 'bestaudio';
         downloadMode = 'audio';
       } else {
         formatString = selectedAudio;
@@ -453,6 +519,18 @@
     ondownload?.(buildSelection());
   }
 
+  function handleOpenChannel() {
+    const channelUrl = info?.channel_url;
+    if (!channelUrl || !onopenchannel) return;
+
+    onopenchannel(channelUrl, {
+      name: info?.author ?? undefined,
+      thumbnail: undefined, // Video thumbnail is not the channel thumbnail
+    });
+  }
+
+  let canOpenChannel = $derived(!!info?.channel_url && !!onopenchannel);
+
   $effect(() => {
     if (url && url !== lastLoadedUrl && !info) {
       loadInfo();
@@ -460,7 +538,49 @@
   });
 
   function saveToCache() {
-    if (info && url) {
+    if (url) {
+      mediaCache.setUIState(url, {
+        selectedVideo,
+        selectedAudio,
+        scrollTop: 0,
+      });
+
+      if (info) {
+        mediaCache.setVideoInfo(url, {
+          title: info.title,
+          author: info.author,
+          thumbnail: info.thumbnail,
+          duration: info.duration,
+          viewCount: info.view_count ?? null,
+          likeCount: info.like_count ?? null,
+          uploadDate: info.upload_date ?? null,
+          description: info.description ?? null,
+          channelUrl: info.channel_url ?? null,
+          channelId: info.channel_id ?? null,
+        });
+
+        mediaCache.setFormats(
+          url,
+          info.formats.map((f) => ({
+            formatId: f.format_id,
+            ext: f.ext,
+            resolution: f.resolution,
+            fps: f.fps,
+            vcodec: f.vcodec,
+            acodec: f.acodec,
+            filesize: f.filesize,
+            filesizeApprox: f.filesize_approx,
+            tbr: f.tbr,
+            vbr: f.vbr,
+            abr: f.abr,
+            asr: f.asr,
+            formatNote: f.format_note,
+            hasVideo: f.has_video,
+            hasAudio: f.has_audio,
+          }))
+        );
+      }
+
       viewStateCache.set<VideoViewState>({
         type: 'video',
         url,
@@ -470,7 +590,7 @@
         timestamp: Date.now(),
       });
 
-      if (isAndroid()) {
+      if (isAndroid() && info) {
         androidDataCache.setVideo(url, {
           title: info.title,
           author: info.author ?? '',
@@ -597,6 +717,7 @@
       }
 
       info = loadedInfo;
+      saveToCache();
 
       if (info.thumbnail) {
         processThumbnail(info.thumbnail);
@@ -682,9 +803,18 @@
               <h1 class="video-title">{displayTitle}</h1>
               <div class="video-meta">
                 {#if displayAuthor}
-                  <span class="channel">
+                  <!-- svelte-ignore a11y_click_events_have_key_events -->
+                  <!-- svelte-ignore a11y_no_static_element_interactions -->
+                  <span
+                    class="channel"
+                    class:clickable={canOpenChannel}
+                    onclick={canOpenChannel ? handleOpenChannel : undefined}
+                  >
                     <span class="channel-avatar-placeholder"><Icon name="user" size={12} /></span>
                     {displayAuthor}
+                    {#if canOpenChannel}
+                      <Icon name="alt_arrow_rigth" size={12} class="channel-arrow" />
+                    {/if}
                   </span>
                 {/if}
                 {#if displayDuration && !info?.view_count}
@@ -814,9 +944,36 @@
               <div class="title-skel skeleton"></div>
               <div class="meta-skel skeleton"></div>
             {:else if displayTitle || info}
-              <span class="title">{displayTitle}</span>
+              <span class="title-row">
+                <span class="title">{displayTitle}</span>
+                <button
+                  class="copy-link-btn"
+                  onclick={() => {
+                    navigator.clipboard.writeText(url);
+                    import('$lib/components/Toast.svelte').then((m) =>
+                      m.toast.success($t('common.copied'))
+                    );
+                  }}
+                  title={$t('common.copyLink')}
+                >
+                  <Icon name="link" size={12} />
+                </button>
+              </span>
               <span class="meta">
-                {#if displayAuthor}{displayAuthor}{/if}
+                {#if displayAuthor}
+                  <!-- svelte-ignore a11y_click_events_have_key_events -->
+                  <!-- svelte-ignore a11y_no_static_element_interactions -->
+                  <span
+                    class="channel-link"
+                    class:clickable={canOpenChannel}
+                    onclick={canOpenChannel ? handleOpenChannel : undefined}
+                  >
+                    {displayAuthor}
+                    {#if canOpenChannel}
+                      <Icon name="alt_arrow_rigth" size={10} class="link-arrow" />
+                    {/if}
+                  </span>
+                {/if}
                 {#if displayDuration}
                   {#if displayAuthor}
                     ·
@@ -1195,6 +1352,29 @@
     color: rgba(255, 255, 255, 0.9);
     font-weight: 500;
     gap: 6px;
+    transition: color 0.15s ease;
+  }
+
+  .video-meta .channel.clickable {
+    cursor: pointer;
+  }
+
+  .video-meta .channel.clickable:hover {
+    color: var(--accent);
+  }
+
+  .video-meta .channel :global(.channel-arrow) {
+    opacity: 0;
+    transition:
+      opacity 0.15s ease,
+      transform 0.15s ease;
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  .video-meta .channel.clickable:hover :global(.channel-arrow) {
+    opacity: 1;
+    transform: translateX(2px);
+    color: var(--accent);
   }
 
   .channel-avatar-placeholder {
@@ -1551,6 +1731,12 @@
     flex: 1;
   }
 
+  .title-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
   .title {
     font-size: 13px;
     font-weight: 600;
@@ -1564,12 +1750,59 @@
     line-height: 1.3;
   }
 
+  .copy-link-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    background: rgba(255, 255, 255, 0.08);
+    border: none;
+    border-radius: 4px;
+    color: rgba(255, 255, 255, 0.5);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+  }
+
+  .copy-link-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: rgba(255, 255, 255, 0.9);
+  }
+
   .meta {
     font-size: 11px;
     color: rgba(255, 255, 255, 0.45);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .meta .channel-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    transition: color 0.15s ease;
+  }
+
+  .meta .channel-link.clickable {
+    cursor: pointer;
+  }
+
+  .meta .channel-link.clickable:hover {
+    color: var(--accent);
+  }
+
+  .meta .channel-link :global(.link-arrow) {
+    opacity: 0;
+    transition:
+      opacity 0.15s ease,
+      transform 0.15s ease;
+  }
+
+  .meta .channel-link.clickable:hover :global(.link-arrow) {
+    opacity: 1;
+    transform: translateX(2px);
   }
 
   .stats-row {

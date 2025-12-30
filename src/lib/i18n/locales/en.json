@@ -12,6 +12,25 @@
     "info": "Info",
     "logs": "Logs"
   },
+  "channel": {
+    "title": "Channel",
+    "loading": "Loading channel...",
+    "videos": "Videos",
+    "shorts": "Shorts",
+    "live": "Live",
+    "subscribers": "subscribers",
+    "search": "Search videos...",
+    "selectAll": "Select all",
+    "deselectAll": "Deselect all",
+    "downloadSelected": "Download selected",
+    "noResults": "No videos match your search",
+    "noVideos": "No videos found",
+    "noShorts": "No shorts found",
+    "noLive": "No live streams found",
+    "openVideo": "Open video",
+    "viewCount": "{count} views",
+    "uploaded": "Uploaded {date}"
+  },
   "playlist": {
     "title": "Playlist",
     "loading": "Loading playlist...",
@@ -219,6 +238,8 @@
       "name": "Name",
       "size": "Size"
     },
+    "openInApp": "Open in app",
+    "openAuthor": "View author",
     "queue": {
       "pause": "Pause queue",
       "resume": "Resume queue",
@@ -544,6 +565,7 @@
     "retry": "Retry",
     "copy": "Copy",
     "copied": "Copied!",
+    "copyLink": "Copy link",
     "search": "Search",
     "noResults": "No results found",
     "download": "Download",

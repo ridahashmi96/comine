@@ -27,6 +27,8 @@
     pendingDownloadsCount,
     groupedDownloads,
   } from '$lib/stores/queue';
+  import { navigation } from '$lib/stores/navigation';
+  import { isLikelyPlaylist, isLikelyChannel } from '$lib/utils/format';
   import Icon from '$lib/components/Icon.svelte';
   import Chip from '$lib/components/Chip.svelte';
   import Divider from '$lib/components/Divider.svelte';
@@ -200,6 +202,41 @@
   function handleRedownload(e: MouseEvent, url: string) {
     e.stopPropagation();
     goto(`/?url=${encodeURIComponent(url)}`);
+  }
+
+  function handleOpenVideoView(e: MouseEvent, item: HistoryItem) {
+    e.stopPropagation();
+    if (!item.url) return;
+
+    const isYouTube = /youtube\.com|youtu\.be/i.test(item.url);
+    if (!isYouTube) {
+      goto(`/?url=${encodeURIComponent(item.url)}`);
+      return;
+    }
+
+    navigation.openVideo(item.url, {
+      title: item.title,
+      thumbnail: item.thumbnail,
+      author: item.author,
+    });
+    goto('/');
+  }
+
+  function handleOpenChannelView(e: MouseEvent, item: HistoryItem) {
+    e.stopPropagation();
+    if (!item.author || !item.url) return;
+
+    const isYouTube = /youtube\.com|youtu\.be/i.test(item.url);
+    if (!isYouTube) return;
+
+    const channelSearchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(item.author)}&sp=EgIQAg%253D%253D`;
+
+    navigation.openVideo(item.url, {
+      title: item.title,
+      thumbnail: item.thumbnail,
+      author: item.author,
+    });
+    goto('/');
   }
 
   async function handleOpenFile(e: MouseEvent, filePath: string) {
@@ -829,9 +866,21 @@
                           {/if}
                         </div>
                         <div class="card-info">
-                          <span class="card-title">{subItem.title}</span>
+                          <!-- svelte-ignore a11y_click_events_have_key_events -->
+                          <!-- svelte-ignore a11y_no_static_element_interactions -->
+                          <span
+                            class="card-title clickable"
+                            onclick={(e) => handleOpenVideoView(e, subItem)}
+                            title={$t('downloads.openInApp')}>{subItem.title}</span
+                          >
                           <div class="card-meta">
-                            <span class="card-author">{subItem.author}</span>
+                            <!-- svelte-ignore a11y_click_events_have_key_events -->
+                            <!-- svelte-ignore a11y_no_static_element_interactions -->
+                            <span
+                              class="card-author clickable"
+                              onclick={(e) => handleOpenChannelView(e, subItem)}
+                              title={$t('downloads.openAuthor')}>{subItem.author}</span
+                            >
                             <span class="card-size">{formatFileSize(subItem.size)}</span>
                           </div>
                         </div>
@@ -950,9 +999,21 @@
                         {/if}
                       </div>
                       <div class="card-info">
-                        <span class="card-title">{singleItem.title}</span>
+                        <!-- svelte-ignore a11y_click_events_have_key_events -->
+                        <!-- svelte-ignore a11y_no_static_element_interactions -->
+                        <span
+                          class="card-title clickable"
+                          onclick={(e) => handleOpenVideoView(e, singleItem)}
+                          title={$t('downloads.openInApp')}>{singleItem.title}</span
+                        >
                         <div class="card-meta">
-                          <span class="card-author">{singleItem.author}</span>
+                          <!-- svelte-ignore a11y_click_events_have_key_events -->
+                          <!-- svelte-ignore a11y_no_static_element_interactions -->
+                          <span
+                            class="card-author clickable"
+                            onclick={(e) => handleOpenChannelView(e, singleItem)}
+                            title={$t('downloads.openAuthor')}>{singleItem.author}</span
+                          >
                           <span class="card-size">{formatFileSize(singleItem.size)}</span>
                         </div>
                       </div>
@@ -1061,8 +1122,20 @@
                               {/if}
                             </div>
                             <div class="col-metadata">
-                              <span class="item-title">{subItem.title}</span>
-                              <span class="item-author">{subItem.author}</span>
+                              <!-- svelte-ignore a11y_click_events_have_key_events -->
+                              <!-- svelte-ignore a11y_no_static_element_interactions -->
+                              <span
+                                class="item-title clickable"
+                                onclick={(e) => handleOpenVideoView(e, subItem)}
+                                title={$t('downloads.openInApp')}>{subItem.title}</span
+                              >
+                              <!-- svelte-ignore a11y_click_events_have_key_events -->
+                              <!-- svelte-ignore a11y_no_static_element_interactions -->
+                              <span
+                                class="item-author clickable"
+                                onclick={(e) => handleOpenChannelView(e, subItem)}
+                                title={$t('downloads.openAuthor')}>{subItem.author}</span
+                              >
                             </div>
                             <div class="col-actions">
                               {#if hoveredItemId === subItem.id}
@@ -1164,8 +1237,20 @@
                       {/if}
                     </div>
                     <div class="col-metadata">
-                      <span class="item-title">{singleItem.title}</span>
-                      <span class="item-author">{singleItem.author}</span>
+                      <!-- svelte-ignore a11y_click_events_have_key_events -->
+                      <!-- svelte-ignore a11y_no_static_element_interactions -->
+                      <span
+                        class="item-title clickable"
+                        onclick={(e) => handleOpenVideoView(e, singleItem)}
+                        title={$t('downloads.openInApp')}>{singleItem.title}</span
+                      >
+                      <!-- svelte-ignore a11y_click_events_have_key_events -->
+                      <!-- svelte-ignore a11y_no_static_element_interactions -->
+                      <span
+                        class="item-author clickable"
+                        onclick={(e) => handleOpenChannelView(e, singleItem)}
+                        title={$t('downloads.openAuthor')}>{singleItem.author}</span
+                      >
                     </div>
                     <div class="col-actions">
                       {#if hoveredItemId === singleItem.id}
@@ -1951,12 +2036,30 @@
     text-overflow: ellipsis;
   }
 
+  .item-title.clickable {
+    cursor: pointer;
+    transition: color 0.15s ease;
+  }
+
+  .item-title.clickable:hover {
+    color: var(--accent, #6366f1);
+  }
+
   .item-author {
     font-size: 12px;
     color: rgba(255, 255, 255, 0.5);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .item-author.clickable {
+    cursor: pointer;
+    transition: color 0.15s ease;
+  }
+
+  .item-author.clickable:hover {
+    color: var(--accent, #6366f1);
   }
 
   /* Actions */
@@ -2283,6 +2386,15 @@
     line-height: 1.3;
   }
 
+  .card-title.clickable {
+    cursor: pointer;
+    transition: color 0.15s ease;
+  }
+
+  .card-title.clickable:hover {
+    color: var(--accent, #6366f1);
+  }
+
   .card-meta {
     display: flex;
     align-items: center;
@@ -2298,6 +2410,15 @@
     text-overflow: ellipsis;
     flex: 1;
     min-width: 0;
+  }
+
+  .card-author.clickable {
+    cursor: pointer;
+    transition: color 0.15s ease;
+  }
+
+  .card-author.clickable:hover {
+    color: var(--accent, #6366f1);
   }
 
   .card-size {

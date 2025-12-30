@@ -148,7 +148,6 @@ export function isLikelyPlaylist(urlStr: string): boolean {
     if (/\/album\b/i.test(pathname)) return true;
     if (/\/sets?\b/i.test(pathname)) return true;
     if (/\/collection\b/i.test(pathname)) return true;
-    if (/\/channel\b/i.test(pathname)) return true;
 
     return false;
   } catch {
@@ -156,9 +155,34 @@ export function isLikelyPlaylist(urlStr: string): boolean {
   }
 }
 
-/**
- * Check if a URL matches configured media URL patterns
- */
+export function isLikelyChannel(urlStr: string): boolean {
+  try {
+    const urlObj = new URL(urlStr);
+    const hostname = urlObj.hostname.toLowerCase();
+    const pathname = urlObj.pathname.toLowerCase();
+
+    if (hostname.includes('youtube.com') || hostname.includes('youtu.be')) {
+      if (urlObj.searchParams.has('v') || urlObj.searchParams.has('list')) {
+        return false;
+      }
+      // /channel/UCxxxx, /c/ChannelName, /@handle, /user/username
+      if (/^\/(channel|c|user)\/[^/]+/i.test(pathname)) return true;
+      if (/^\/@[^/]+/i.test(pathname)) return true;
+      // /ChannelName/videos, /ChannelName/shorts, /ChannelName/live, /ChannelName/streams
+      if (
+        /^\/[^/]+\/(videos|shorts|live|streams|playlists|community|channels|about)\/?$/i.test(
+          pathname
+        )
+      )
+        return true;
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 export function isValidMediaUrl(text: string, patterns: string[]): boolean {
   try {
     const urlObj = new URL(text);
@@ -170,11 +194,6 @@ export function isValidMediaUrl(text: string, patterns: string[]): boolean {
   }
 }
 
-/**
- * Extract a quick thumbnail URL from a video URL (YouTube only)
- * Returns null for non-YouTube URLs - caller should wait for yt-dlp metadata
- * This allows showing YouTube thumbnails immediately without waiting for yt-dlp
- */
 export function getQuickThumbnail(urlStr: string): string | null {
   try {
     const urlObj = new URL(urlStr);
@@ -203,17 +222,63 @@ export function getQuickThumbnail(urlStr: string): string | null {
   }
 }
 
-/**
- * @deprecated Use getQuickThumbnail instead - renamed for clarity
- */
+type YouTubeThumbSize = 'default' | 'mq' | 'hq' | 'sd' | 'maxres';
+
+export function normalizeYouTubeThumbnailUrl(
+  thumbnailUrl: string,
+  size: YouTubeThumbSize = 'mq'
+): string {
+  try {
+    const u = new URL(thumbnailUrl);
+    const host = u.hostname.toLowerCase();
+    if (!host.includes('ytimg.com')) return thumbnailUrl;
+
+    // Common forms:
+    // - https://i.ytimg.com/vi/<id>/mqdefault.jpg
+    // - https://i.ytimg.com/vi/<id>/maxresdefault.jpg
+    // - https://i.ytimg.com/vi/<id>/hqdefault.jpg
+    const wanted =
+      size === 'default'
+        ? 'default.jpg'
+        : size === 'mq'
+          ? 'mqdefault.jpg'
+          : size === 'hq'
+            ? 'hqdefault.jpg'
+            : size === 'sd'
+              ? 'sddefault.jpg'
+              : 'maxresdefault.jpg';
+
+    u.pathname = u.pathname.replace(
+      /(\/vi\/[^/]+\/)(?:default|mqdefault|hqdefault|sddefault|maxresdefault)\.jpg$/i,
+      `$1${wanted}`
+    );
+
+    return u.toString();
+  } catch {
+    return thumbnailUrl;
+  }
+}
+
+export function getDisplayThumbnailUrl(
+  mediaUrl: string,
+  thumbnailUrl: string | null | undefined,
+  size: YouTubeThumbSize = 'mq'
+): string | null {
+  const thumb = thumbnailUrl ?? getQuickThumbnail(mediaUrl);
+  if (!thumb) return null;
+
+  // Force YouTube thumbs to known sizes.
+  if (/ytimg\.com/i.test(thumb)) {
+    return normalizeYouTubeThumbnailUrl(thumb, size);
+  }
+
+  return thumb;
+}
+
 export function getQuickYouTubeThumbnail(urlStr: string): string | null {
   return getQuickThumbnail(urlStr);
 }
 
-/**
- * Clean a URL by removing tracking parameters and normalizing
- * Supports multiple platforms: YouTube, Twitter/X, Instagram, TikTok, etc.
- */
 export function cleanUrl(url: string, options?: { ignoreMixes?: boolean }): string {
   try {
     const parsed = new URL(url);
@@ -258,7 +323,6 @@ export function cleanUrl(url: string, options?: { ignoreMixes?: boolean }): stri
       parsed.searchParams.delete('img_index');
     }
 
-    // TikTok-specific cleaning
     if (hostname.includes('tiktok.com')) {
       parsed.searchParams.delete('is_copy_url');
       parsed.searchParams.delete('is_from_webapp');
@@ -272,13 +336,11 @@ export function cleanUrl(url: string, options?: { ignoreMixes?: boolean }): stri
       parsed.searchParams.delete('share_app_id');
     }
 
-    // SoundCloud-specific cleaning
     if (hostname.includes('soundcloud.com')) {
       parsed.searchParams.delete('si');
       parsed.searchParams.delete('ref');
     }
 
-    // Reddit-specific cleaning
     if (hostname.includes('reddit.com')) {
       parsed.searchParams.delete('share_id');
       parsed.searchParams.delete('utm_name');
@@ -314,7 +376,6 @@ export function cleanUrl(url: string, options?: { ignoreMixes?: boolean }): stri
 }
 
 const FILE_EXTENSIONS = [
-  // Archives
   'zip',
   'rar',
   '7z',
@@ -324,7 +385,6 @@ const FILE_EXTENSIONS = [
   'xz',
   'tgz',
   'tbz2',
-  // Applications
   'exe',
   'msi',
   'dmg',
@@ -335,7 +395,6 @@ const FILE_EXTENSIONS = [
   'jar',
   'apk',
   'ipa',
-  // Documents
   'pdf',
   'doc',
   'docx',
@@ -346,7 +405,6 @@ const FILE_EXTENSIONS = [
   'odt',
   'ods',
   'odp',
-  // Images
   'jpg',
   'jpeg',
   'png',
@@ -357,7 +415,6 @@ const FILE_EXTENSIONS = [
   'ico',
   'tiff',
   'psd',
-  // Media
   'mp4',
   'mkv',
   'avi',
@@ -370,7 +427,6 @@ const FILE_EXTENSIONS = [
   'aac',
   'm4a',
   'm4v',
-  // Other
   'iso',
   'img',
   'bin',
@@ -380,10 +436,6 @@ const FILE_EXTENSIONS = [
   'xci',
 ];
 
-/**
- * Check if a URL points to a direct file download (not a media platform)
- * Returns the detected filename if it's a file URL, null otherwise
- */
 export function isDirectFileUrl(text: string): { isFile: boolean; filename: string | null } {
   try {
     const url = new URL(text);

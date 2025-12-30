@@ -1627,6 +1627,8 @@ struct VideoFormats {
     like_count: Option<u64>,
     description: Option<String>,
     upload_date: Option<String>,
+    channel_url: Option<String>,
+    channel_id: Option<String>,
 }
 
 #[tauri::command]
@@ -1766,6 +1768,8 @@ async fn get_video_formats(
         let like_count = json["like_count"].as_u64();
         let description = json["description"].as_str().map(|s| s.to_string());
         let upload_date = json["upload_date"].as_str().map(|s| s.to_string());
+        let channel_url = json["channel_url"].as_str().map(|s| s.to_string());
+        let channel_id = json["channel_id"].as_str().map(|s| s.to_string());
 
         let formats_json = json["formats"].as_array().ok_or("No formats found")?;
 
@@ -1835,6 +1839,8 @@ async fn get_video_formats(
             like_count,
             description,
             upload_date,
+            channel_url,
+            channel_id,
         };
 
         {
@@ -2465,6 +2471,8 @@ pub struct NotificationData {
     pub compact: bool,
     #[serde(default)]
     pub is_playlist: bool,
+    #[serde(default)]
+    pub is_channel: bool,
     #[serde(default = "default_download_label")]
     pub download_label: String,
     #[serde(default = "default_dismiss_label")]
@@ -2761,12 +2769,13 @@ async fn show_notification_window(
             .unwrap_or_default();
         let compact = if data.compact { "1" } else { "0" };
         let is_playlist = if data.is_playlist { "1" } else { "0" };
+        let is_channel = if data.is_channel { "1" } else { "0" };
         let download_label = urlencoding::encode(&data.download_label);
         let dismiss_label = urlencoding::encode(&data.dismiss_label);
 
         let notification_url = format!(
-            "/notification?title={}&body={}&thumbnail={}&url={}&window_id={}&compact={}&dl={}&dm={}&is_playlist={}",
-            title_encoded, body_encoded, thumbnail_encoded, url_encoded, window_label, compact, download_label, dismiss_label, is_playlist
+            "/notification?title={}&body={}&thumbnail={}&url={}&window_id={}&compact={}&dl={}&dm={}&is_playlist={}&is_channel={}",
+            title_encoded, body_encoded, thumbnail_encoded, url_encoded, window_label, compact, download_label, dismiss_label, is_playlist, is_channel
         );
 
         info!(

@@ -22,7 +22,9 @@
   const downloadLabel = params.get('dl') || 'Download';
   const dismissLabel = params.get('dm') || 'Dismiss';
   const isPlaylist = params.get('is_playlist') === '1';
+  const isChannel = params.get('is_channel') === '1';
   const viewPlaylistLabel = 'View Playlist';
+  const viewChannelLabel = 'View Channel';
 
   const isYouTube = /youtube\.com|youtu\.be/i.test(mediaUrl);
 
@@ -91,6 +93,7 @@
           uploader: body ? body.split(' • ')[0] : null,
           downloadMode: mode,
           isPlaylist: isPlaylist,
+          isChannel: isChannel,
         },
       });
     } catch (e) {
@@ -244,7 +247,41 @@
     </div>
 
     <div class="actions-compact">
-      {#if isPlaylist}
+      {#if isChannel}
+        <!-- Channel: Single View Channel button -->
+        <button
+          class="icon-btn download channel"
+          class:downloading={isDownloading}
+          onclick={() => handleDownload('auto')}
+          title={viewChannelLabel}
+          disabled={isDownloading}
+        >
+          {#if isDownloading}
+            <svg class="spinner" viewBox="0 0 24 24" width="18" height="18">
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="2"
+                fill="none"
+                stroke-dasharray="31.4 31.4"
+                stroke-linecap="round"
+              />
+            </svg>
+          {:else}
+            <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
+              <circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2" />
+              <path
+                d="M4 20C4 16.6863 7.13401 14 11 14H13C16.866 14 20 16.6863 20 20"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+            </svg>
+          {/if}
+        </button>
+      {:else if isPlaylist}
         <!-- Playlist: Single View Playlist button -->
         <button
           class="icon-btn download playlist"
@@ -433,7 +470,43 @@
     </div>
 
     <div class="actions">
-      {#if isPlaylist}
+      {#if isChannel}
+        <!-- Channel: Single View Channel button -->
+        <button
+          class="btn download channel"
+          class:downloading={isDownloading}
+          class:full-width={true}
+          onclick={() => handleDownload('auto')}
+          disabled={isDownloading}
+        >
+          {#if isDownloading}
+            <svg class="spinner" viewBox="0 0 24 24" width="14" height="14">
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="2"
+                fill="none"
+                stroke-dasharray="31.4 31.4"
+                stroke-linecap="round"
+              />
+            </svg>
+            Opening...
+          {:else}
+            <svg viewBox="0 0 24 24" fill="none" width="14" height="14">
+              <circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2" />
+              <path
+                d="M4 20C4 16.6863 7.13401 14 11 14H13C16.866 14 20 16.6863 20 20"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+            </svg>
+            {viewChannelLabel}
+          {/if}
+        </button>
+      {:else if isPlaylist}
         <!-- Playlist: Single View Playlist button -->
         <button
           class="btn download playlist"
@@ -913,5 +986,22 @@
   .icon-btn.playlist {
     width: 32px;
     height: 32px;
+  }
+
+  /* Channel button - red accent */
+  .icon-btn.channel {
+    width: 32px;
+    height: 32px;
+    background: #ef4444;
+  }
+  .icon-btn.channel:hover:not(:disabled) {
+    background: #dc2626;
+  }
+
+  .btn.channel {
+    background: #ef4444;
+  }
+  .btn.channel:hover:not(:disabled) {
+    background: #dc2626;
   }
 </style>

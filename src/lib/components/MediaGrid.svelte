@@ -39,10 +39,14 @@
   };
 
   interface Props {
-    items: MediaItemData[];
-    selectedIds: Set<string>;
+    items: any[];
+    mapItem?: (item: any) => MediaItemData;
+    selectedIds: Set<string> | ((id: string) => boolean);
     viewMode?: ViewMode;
-    perItemSettings: Map<string, MediaItemSettings> | Record<string, MediaItemSettings>;
+    perItemSettings:
+      | Map<string, Partial<MediaItemSettings>>
+      | Record<string, Partial<MediaItemSettings>>;
+    getDefaultSettings?: (item: MediaItemData) => MediaItemSettings;
     loading?: boolean;
     initialScrollTop?: number;
     ontoggle?: (id: string) => void;
@@ -53,9 +57,11 @@
 
   let {
     items,
+    mapItem,
     selectedIds,
     viewMode = 'list',
     perItemSettings,
+    getDefaultSettings,
     loading = false,
     initialScrollTop = 0,
     ontoggle,
@@ -68,20 +74,28 @@
 
   const ITEM_HEIGHT = 56;
   const GRID_ITEM_HEIGHT = 180;
-  const BUFFER_COUNT = 5; // Reduced buffer for faster switching
+  const BUFFER_COUNT = 5;
 
   let containerEl: HTMLDivElement | null = $state(null);
-  let scrollTop = $state(initialScrollTop);
+  let scrollTop = $state(0);
   let containerHeight = $state(600);
-  let lastViewMode = $state(viewMode);
+  let lastViewMode = $state<ViewMode>('list');
+  let didInitScroll = $state(false);
 
   function bindContainer(el: HTMLDivElement) {
     containerEl = el;
-    // Restore scroll immediately, synchronously
-    if (el && initialScrollTop > 0) {
+    if (el && initialScrollTop > 0 && !didInitScroll) {
       el.scrollTop = initialScrollTop;
+      scrollTop = initialScrollTop;
+      didInitScroll = true;
     }
   }
+
+  $effect(() => {
+    if (lastViewMode === 'list' && viewMode !== 'list') {
+      lastViewMode = viewMode;
+    }
+  });
 
   $effect(() => {
     if (viewMode !== lastViewMode && containerEl && items.length > 50) {
@@ -133,9 +147,14 @@
     return { startIdx, endIdx };
   });
 
-  let visibleItems = $derived(
+  let rawVisibleItems = $derived(
     items.length <= 50 ? items : items.slice(visibleRange.startIdx, visibleRange.endIdx)
   );
+
+  let visibleItems = $derived.by<MediaItemData[]>(() => {
+    if (!mapItem) return rawVisibleItems as MediaItemData[];
+    return (rawVisibleItems as any[]).map(mapItem);
+  });
 
   let totalHeight = $derived.by(() => {
     if (items.length <= 50) return 'auto';
@@ -149,11 +168,19 @@
     return startRow * itemHeight;
   });
 
-  function getSettings(id: string): MediaItemSettings {
-    if (perItemSettings instanceof Map) {
-      return perItemSettings.get(id) ?? DEFAULT_SETTINGS;
-    }
-    return perItemSettings[id] ?? DEFAULT_SETTINGS;
+  function isItemSelected(id: string): boolean {
+    if (typeof selectedIds === 'function') return selectedIds(id);
+    return selectedIds.has(id);
+  }
+
+  function getSettings(item: MediaItemData): MediaItemSettings {
+    const base = getDefaultSettings ? getDefaultSettings(item) : DEFAULT_SETTINGS;
+    const override =
+      perItemSettings instanceof Map
+        ? (perItemSettings.get(item.id) ?? {})
+        : (perItemSettings[item.id] ?? {});
+
+    return { ...base, ...override };
   }
 
   const MODE_ICONS: Record<string, IconName> = { audio: 'music', mute: 'video', auto: 'download' };
@@ -173,10 +200,10 @@
 
   const MODES: Array<'auto' | 'audio' | 'mute'> = ['auto', 'audio', 'mute'];
 
-  function cycleMode(id: string) {
-    const current = getSettings(id).downloadMode;
+  function cycleMode(item: MediaItemData) {
+    const current = getSettings(item).downloadMode;
     const nextIndex = (MODES.indexOf(current) + 1) % 3;
-    onupdatesettings?.(id, { downloadMode: MODES[nextIndex] });
+    onupdatesettings?.(item.id, { downloadMode: MODES[nextIndex] });
   }
 </script>
 
@@ -207,8 +234,8 @@
       <div class="virtual-spacer" style="height: {totalHeight}; position: relative;">
         <div class="virtual-content" style="transform: translateY({offsetTop}px);">
           {#each visibleItems as item (item.id)}
-            {@const isSelected = selectedIds.has(item.id)}
-            {@const settings = getSettings(item.id)}
+            {@const isSelected = isItemSelected(item.id)}
+            {@const settings = getSettings(item)}
             {@const isHovered = hoveredItemId === item.id}
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -224,7 +251,14 @@
               </div>
               <div class="item-thumb">
                 {#if item.thumbnail}
-                  <img src={item.thumbnail} alt="" loading="lazy" />
+                  <img
+                    src={item.thumbnail}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    fetchpriority="low"
+                    referrerpolicy="no-referrer"
+                  />
                 {:else}
                   <div class="thumb-placeholder">
                     <Icon name="video" size={16} />
@@ -255,7 +289,7 @@
                 class:mute={settings.downloadMode === 'mute'}
                 onclick={(e) => {
                   e.stopPropagation();
-                  cycleMode(item.id);
+                  cycleMode(item);
                 }}
                 use:tooltip={getModeLabel(settings.downloadMode)}
               >
@@ -294,8 +328,8 @@
       <div class="virtual-spacer-grid" style="min-height: {totalHeight};">
         <div class="virtual-content-grid" style="transform: translateY({offsetTop}px);">
           {#each visibleItems as item (item.id)}
-            {@const isSelected = selectedIds.has(item.id)}
-            {@const settings = getSettings(item.id)}
+            {@const isSelected = isItemSelected(item.id)}
+            {@const settings = getSettings(item)}
             {@const isHovered = hoveredItemId === item.id}
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -308,7 +342,14 @@
             >
               <div class="card-thumb">
                 {#if item.thumbnail}
-                  <img src={item.thumbnail} alt="" loading="lazy" />
+                  <img
+                    src={item.thumbnail}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    fetchpriority="low"
+                    referrerpolicy="no-referrer"
+                  />
                 {:else}
                   <div class="card-thumb-placeholder">
                     <Icon name="video" size={28} />
@@ -327,7 +368,7 @@
                   class:hidden={isHovered}
                   onclick={(e) => {
                     e.stopPropagation();
-                    cycleMode(item.id);
+                    cycleMode(item);
                   }}
                   use:tooltip={getModeLabel(settings.downloadMode)}
                 >
@@ -340,7 +381,7 @@
                     class:mute={settings.downloadMode === 'mute'}
                     onclick={(e) => {
                       e.stopPropagation();
-                      cycleMode(item.id);
+                      cycleMode(item);
                     }}
                   >
                     <Icon name={getModeIcon(settings.downloadMode)} size={14} />
@@ -384,6 +425,11 @@
     display: flex;
     flex-direction: column;
     contain: layout style;
+  }
+
+  .list-view:not(.virtualized) .virtual-spacer,
+  .list-view:not(.virtualized) .virtual-content {
+    display: contents;
   }
 
   .list-view.virtualized {
@@ -557,10 +603,18 @@
 
   /* ===== Grid View ===== */
   .grid-view {
+    contain: layout style;
+  }
+
+  .grid-view:not(.virtualized) {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
     gap: 10px;
-    contain: layout style;
+  }
+
+  .grid-view:not(.virtualized) .virtual-spacer-grid,
+  .grid-view:not(.virtualized) .virtual-content-grid {
+    display: contents;
   }
 
   .grid-view.virtualized {

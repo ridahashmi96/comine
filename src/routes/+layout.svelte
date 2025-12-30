@@ -33,6 +33,7 @@
   import {
     cleanUrl,
     isLikelyPlaylist,
+    isLikelyChannel,
     isValidMediaUrl,
     getQuickThumbnail,
     isDirectFileUrl,
@@ -50,6 +51,7 @@
     clearDismissedVersionIfUpdated,
   } from '$lib/stores/updates';
   import { navigation } from '$lib/stores/navigation';
+  import { mediaCache } from '$lib/stores/mediaCache';
   import NotificationPopup from '$lib/components/NotificationPopup.svelte';
 
   let { children }: { children: Snippet } = $props();
@@ -311,6 +313,7 @@
         uploader?: string | null;
         downloadMode?: 'auto' | 'audio' | 'mute';
         isPlaylist?: boolean | null;
+        isChannel?: boolean | null;
         isFile?: boolean | null;
         openTrackBuilder?: boolean | null;
         fileInfo?: {
@@ -328,10 +331,11 @@
         const url = cleanUrl(rawUrl);
         const notificationDownloadMode = metadata?.downloadMode;
         const isPlaylistNotification = metadata?.isPlaylist === true;
+        const isChannelNotification = metadata?.isChannel === true;
         const isFileNotification = metadata?.isFile === true;
         logs.info(
           'layout',
-          `notification-start-download received: ${url}, isPlaylist: ${isPlaylistNotification}, isFile: ${isFileNotification}`
+          `notification-start-download received: ${url}, isPlaylist: ${isPlaylistNotification}, isChannel: ${isChannelNotification}, isFile: ${isFileNotification}`
         );
         logs.debug(
           'layout',
@@ -358,6 +362,36 @@
           return;
         }
 
+        if (isChannelNotification) {
+          logs.info('layout', `Channel detected - showing window and opening channel view: ${url}`);
+
+          if (appWindow) {
+            try {
+              await appWindow.show();
+              await appWindow.setFocus();
+            } catch (e) {
+              logs.warn('layout', `Failed to show/focus window: ${e}`);
+            }
+          }
+
+          if (metadata?.title || metadata?.thumbnail || metadata?.uploader) {
+            mediaCache.setPreview(url, {
+              title: metadata.title || undefined,
+              thumbnail: metadata.thumbnail || undefined,
+              author: metadata.uploader || undefined,
+            });
+          }
+
+          navigation.openChannel(url, {
+            title: metadata?.title || undefined,
+            thumbnail: metadata?.thumbnail || undefined,
+            author: metadata?.uploader || undefined,
+          });
+          await goto('/');
+          toast.info($t('channel.notification.opening') || 'Opening channel...');
+          return;
+        }
+
         if (isPlaylistNotification) {
           logs.info(
             'layout',
@@ -373,12 +407,20 @@
             }
           }
 
-          // Navigate directly with prefetched data - no placeholders!
+          if (metadata?.title || metadata?.thumbnail || metadata?.uploader) {
+            mediaCache.setPreview(url, {
+              title: metadata.title || undefined,
+              thumbnail: metadata.thumbnail || undefined,
+              author: metadata.uploader || undefined,
+            });
+          }
+
           navigation.openPlaylist(url, {
             title: metadata?.title || undefined,
             thumbnail: metadata?.thumbnail || undefined,
             author: metadata?.uploader || undefined,
           });
+          await goto('/');
           toast.info($t('playlist.notification.openingModal'));
           return;
         }
@@ -395,12 +437,20 @@
             }
           }
 
-          // Navigate directly with prefetched data - no placeholders!
+          if (metadata?.title || metadata?.thumbnail || metadata?.uploader) {
+            mediaCache.setPreview(url, {
+              title: metadata.title || undefined,
+              thumbnail: metadata.thumbnail || undefined,
+              author: metadata.uploader || undefined,
+            });
+          }
+
           navigation.openVideo(url, {
             title: metadata?.title || undefined,
             thumbnail: metadata?.thumbnail || undefined,
             author: metadata?.uploader || undefined,
           });
+          await goto('/');
           return;
         }
 
@@ -478,7 +528,6 @@
     if (cleanupShareIntent) {
       cleanupShareIntent();
     }
-    // Clean up any orphaned Android callbacks
     if (isAndroid()) {
       cleanupAndroidCallbacks();
     }
@@ -574,8 +623,6 @@
           await handleDetectedFileUrl(text, fileCheck.filename);
         }
       } catch (err) {
-        // Silently ignore errors when clipboard contains non-text content (e.g., images)
-        // These are expected and not actual errors
         const errorStr = String(err);
         if (
           errorStr.includes('not available in the requested format') ||
@@ -678,10 +725,69 @@
       return;
     }
 
-    const isPlaylist = isLikelyPlaylist(url);
+    const isChannel = isLikelyChannel(url);
+    const isPlaylist = !isChannel && isLikelyPlaylist(url);
 
     try {
       const currentSettings = getSettings();
+
+      if (isChannel && !isAndroid()) {
+        interface ChannelInfo {
+          is_playlist: boolean;
+          id: string | null;
+          title: string;
+          channel?: string | null;
+          uploader?: string | null;
+          uploader_id?: string | null;
+          thumbnail: string | null;
+          total_count: number;
+          channel_follower_count?: number | null;
+        }
+        const channelInfo = await invoke<ChannelInfo>('get_playlist_info', {
+          url,
+          offset: 0,
+          limit: 1,
+          cookiesFromBrowser: currentSettings.cookiesFromBrowser || null,
+          customCookies: currentSettings.customCookies || null,
+          proxyConfig: getProxyConfig(),
+        });
+
+        const channelName =
+          channelInfo.channel || channelInfo.uploader || channelInfo.title || 'Channel';
+        const handle = channelInfo.uploader_id ? `@${channelInfo.uploader_id}` : '';
+
+        logs.info('layout', `Channel info: name=${channelName}, videos=${channelInfo.total_count}`);
+
+        if (channelInfo.total_count > 0) {
+          logs.info(
+            'layout',
+            `Showing channel notification: ${channelName} (${channelInfo.total_count} videos)`
+          );
+
+          mediaCache.setPreview(url, {
+            title: channelName || undefined,
+            thumbnail: channelInfo.thumbnail || undefined,
+            author: handle || undefined,
+          });
+
+          await invoke('show_notification_window', {
+            data: {
+              title: channelName,
+              body: `${channelInfo.total_count} videos${handle ? ` • ${handle}` : ''}`,
+              thumbnail: channelInfo.thumbnail,
+              url: url,
+              compact: currentSettings.compactNotifications,
+              download_label: $t('notification.downloadButton'),
+              dismiss_label: $t('notification.dismissButton'),
+              is_channel: true,
+            },
+            position: currentSettings.notificationPosition,
+            monitor: currentSettings.notificationMonitor,
+            offset: currentSettings.notificationOffset,
+          });
+          return;
+        }
+      }
 
       if (isPlaylist && !isAndroid()) {
         interface PlaylistInfo {
@@ -710,6 +816,13 @@
             'layout',
             `Showing playlist notification: ${playlistInfo.title} (${playlistInfo.total_count} items}`
           );
+
+          mediaCache.setPreview(url, {
+            title: playlistInfo.title || undefined,
+            thumbnail: playlistInfo.thumbnail || undefined,
+            author: playlistInfo.uploader || undefined,
+          });
+
           await invoke('show_notification_window', {
             data: {
               title: playlistInfo.title || $t('playlist.notification.detected'),
@@ -765,6 +878,14 @@
         isTwitter && videoInfo.uploader_id
           ? `@${videoInfo.uploader_id}`
           : videoInfo.uploader || videoInfo.channel || videoInfo.creator || '';
+
+      mediaCache.setPreview(url, {
+        title: videoInfo.title || undefined,
+        thumbnail: originalThumbnailUrl || undefined,
+        author: authorDisplay || undefined,
+        duration: videoInfo.duration,
+      });
+
       await invoke('show_notification_window', {
         data: {
           title: videoInfo.title || $t('notification.mediaDetected'),

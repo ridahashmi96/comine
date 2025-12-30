@@ -4,7 +4,7 @@
   import { tooltip } from '$lib/actions/tooltip';
   import { settings, type DownloadMode, getProxyConfig } from '$lib/stores/settings';
   import { isAndroid, getPlaylistInfoOnAndroid } from '$lib/utils/android';
-  import { formatDuration, formatSize, getDisplayThumbnailUrl } from '$lib/utils/format';
+  import { formatDuration, getDisplayThumbnailUrl } from '$lib/utils/format';
   import Icon from './Icon.svelte';
   import Checkbox from './Checkbox.svelte';
   import Select from './Select.svelte';
@@ -13,52 +13,32 @@
     type MediaItemData,
     type MediaItemSettings,
   } from './MediaGrid.svelte';
-  import { viewStateCache, androidDataCache, type PlaylistViewState } from '$lib/stores/viewState';
   import {
     mediaCache,
-    convertBackendPlaylistInfo,
-    type PlaylistInfo as UnifiedPlaylistInfo,
-    type PlaylistEntry as UnifiedPlaylistEntry,
+    convertBackendChannelInfo,
+    type ChannelInfo,
+    type ChannelEntry,
   } from '$lib/stores/mediaCache';
+  import { viewStateCache, type PlaylistViewState } from '$lib/stores/viewState';
+  import { navigation } from '$lib/stores/navigation';
 
-  const CACHE_TTL = 10 * 60 * 1000;
+  export type { ChannelEntry };
 
-  function getTotalDuration(entries: UnifiedPlaylistEntry[] | undefined): number | null {
-    if (!entries || entries.length === 0) return null;
-    let total = 0;
-    let hasAny = false;
-    for (const e of entries) {
-      if (e.duration) {
-        total += e.duration;
-        hasAny = true;
-      }
-    }
-    return hasAny ? total : null;
+  function formatNumber(num: number | null | undefined): string {
+    if (num == null) return '';
+    if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(1)}M`;
+    if (num >= 1_000) return `${(num / 1_000).toFixed(1)}K`;
+    return num.toString();
   }
 
-  export type PlaylistEntry = UnifiedPlaylistEntry;
-
-  type PlaylistInfo = UnifiedPlaylistInfo;
-
-  interface BackendPlaylistEntry {
-    id: string;
-    url: string;
-    title: string;
-    duration?: number | null;
-    thumbnail?: string | null;
-    uploader?: string | null;
-    is_music: boolean;
+  export interface ChannelSelection {
+    entries: SelectedChannelEntry[];
+    channelInfo: { id: string; name: string; useChannelFolder: boolean };
   }
 
-  interface BackendPlaylistInfo {
-    is_playlist: boolean;
-    id: string | null;
-    title: string;
-    uploader: string | null;
-    thumbnail: string | null;
-    total_count: number;
-    entries: BackendPlaylistEntry[];
-    has_more: boolean;
+  export interface SelectedChannelEntry {
+    entry: ChannelEntry;
+    settings: EntrySettings;
   }
 
   export interface EntrySettings {
@@ -72,41 +52,31 @@
     subLangs?: string;
   }
 
-  export interface PlaylistSelection {
-    entries: SelectedEntry[];
-    playlistInfo: { id: string; title: string; usePlaylistFolder: boolean };
-  }
-
-  export interface SelectedEntry {
-    entry: PlaylistEntry;
-    settings: EntrySettings;
-  }
-
-  export interface PrefetchedPlaylistInfo {
-    title?: string;
+  export interface PrefetchedChannelInfo {
+    name?: string;
     thumbnail?: string;
-    author?: string;
-    entryCount?: number;
+    handle?: string;
+    subscriberCount?: number;
   }
+
+  type ChannelTab = 'videos' | 'shorts' | 'live';
 
   interface Props {
     url: string;
     cookiesFromBrowser?: string;
     customCookies?: string;
-    defaultDownloadMode?: DownloadMode;
-    ondownload?: (selection: PlaylistSelection) => void;
+    ondownload?: (selection: ChannelSelection) => void;
     onback?: () => void;
-    onopenitem?: (entry: PlaylistEntry) => void;
+    onopenitem?: (entry: ChannelEntry) => void;
     showHeader?: boolean;
     backLabel?: string;
-    prefetchedInfo?: PrefetchedPlaylistInfo;
+    prefetchedInfo?: PrefetchedChannelInfo;
   }
 
   let {
     url,
     cookiesFromBrowser = '',
     customCookies = '',
-    defaultDownloadMode = 'auto',
     ondownload,
     onback,
     onopenitem,
@@ -117,44 +87,37 @@
 
   function getInitialState() {
     const uiState = mediaCache.getUIState(url);
-    const cachedPlaylistInfo = mediaCache.getPlaylistInfo(url);
-    const legacyCached = viewStateCache.get<PlaylistViewState>('playlist', url);
-    const androidCachedData = isAndroid() ? androidDataCache.getPlaylist(url) : null;
+    const cachedChannelInfo = mediaCache.getChannelInfo(url);
 
-    let playlistInfo: PlaylistInfo | null = null;
-    if (cachedPlaylistInfo) {
-      playlistInfo = cachedPlaylistInfo;
-    } else if (androidCachedData) {
-      playlistInfo = convertBackendPlaylistInfo(androidCachedData as BackendPlaylistInfo);
-    }
+    let channelInfo: ChannelInfo | null = cachedChannelInfo;
+    const hasFullData = !!channelInfo;
 
-    const hasFullData = !!playlistInfo;
-
-    if (uiState || legacyCached) {
-      const legacySelected = legacyCached?.selectedIds ?? [];
-      const rawSelectedMode = uiState?.selectedMode;
-      const rawSelectedIds = uiState?.selectedIds ?? legacySelected;
-      const rawDeselectedIds = uiState?.deselectedIds ?? [];
+    if (uiState) {
+      const rawSelectedMode = uiState.selectedMode;
+      const rawSelectedIds = uiState.selectedIds ?? [];
+      const rawDeselectedIds = uiState.deselectedIds ?? [];
 
       const inferredMode: 'all' | 'some' = (() => {
         if (rawSelectedMode) return rawSelectedMode;
-        if (!playlistInfo) return rawSelectedIds.length > 0 ? 'some' : 'all';
-        return rawSelectedIds.length >= (playlistInfo.totalCount ?? playlistInfo.entries.length)
+        if (!channelInfo) return rawSelectedIds.length > 0 ? 'some' : 'all';
+        return rawSelectedIds.length >= (channelInfo.totalCount ?? channelInfo.entries.length)
           ? 'all'
           : 'some';
       })();
 
       return {
-        playlistInfo,
+        channelInfo,
         selectedMode: inferredMode,
         selectedIds: inferredMode === 'some' ? rawSelectedIds : [],
         deselectedIds: inferredMode === 'all' ? rawDeselectedIds : [],
-        perItemSettingsObj: (uiState?.perItemSettings ??
-          legacyCached?.perItemSettings ??
-          {}) as Record<string, Partial<MediaItemSettings>>,
-        scrollTop: uiState?.scrollTop ?? legacyCached?.scrollTop ?? 0,
-        viewMode: (uiState?.viewMode ?? legacyCached?.viewMode ?? 'list') as ViewMode,
-        searchQuery: uiState?.searchQuery ?? legacyCached?.searchQuery ?? '',
+        perItemSettingsObj: (uiState.perItemSettings ?? {}) as Record<
+          string,
+          Partial<MediaItemSettings>
+        >,
+        scrollTop: uiState.scrollTop ?? 0,
+        viewMode: (uiState.viewMode ?? 'grid') as ViewMode,
+        searchQuery: uiState.searchQuery ?? '',
+        channelTab: (uiState.channelTab ?? 'videos') as ChannelTab,
         loading: !hasFullData,
         lastLoadedUrl: hasFullData ? url : '',
         fromCache: hasFullData,
@@ -162,14 +125,15 @@
     }
 
     return {
-      playlistInfo,
-      selectedMode: 'all' as const,
+      channelInfo,
+      selectedMode: 'some' as const,
       selectedIds: [] as string[],
       deselectedIds: [] as string[],
       perItemSettingsObj: {} as Record<string, Partial<MediaItemSettings>>,
       scrollTop: 0,
-      viewMode: 'list' as const,
+      viewMode: 'grid' as ViewMode,
       searchQuery: '',
+      channelTab: 'videos' as ChannelTab,
       loading: !hasFullData,
       lastLoadedUrl: hasFullData ? url : '',
       fromCache: hasFullData,
@@ -177,13 +141,11 @@
   }
 
   const initialState = getInitialState();
-  let playlistInfo = $state<PlaylistInfo | null>(initialState.playlistInfo);
+  let channelInfo = $state<ChannelInfo | null>(initialState.channelInfo);
   let loading = $state(initialState.loading);
   let error = $state<string | null>(null);
   let lastLoadedUrl = $state(initialState.lastLoadedUrl);
-
-  let playlistInfoCached = $state<boolean>(initialState.fromCache);
-
+  let channelInfoCached = $state<boolean>(initialState.fromCache);
   let destroyed = false;
 
   let selectedMode = $state<'all' | 'some'>(initialState.selectedMode);
@@ -199,15 +161,10 @@
   );
 
   let currentScrollTop = $state(initialState.scrollTop);
-
   let searchQuery = $state(initialState.searchQuery);
-  let showEntries = $state(true);
   let viewMode = $state<ViewMode>(initialState.viewMode);
-  let showMoreOptions = $state(false);
-
-  type DownloadOrder = 'queue' | 'reverse' | 'shuffle';
-  let downloadOrder = $state<DownloadOrder>('queue');
-  let usePlaylistFolder = $state(true);
+  let activeTab = $state<ChannelTab>(initialState.channelTab);
+  let useChannelFolder = $state(true);
 
   let globalVideoQuality = $state($settings.defaultVideoQuality ?? 'max');
   let globalAudioQuality = $state($settings.defaultAudioQuality ?? 'best');
@@ -231,24 +188,22 @@
   ];
 
   let globalSkipSponsors = $state(true);
-  let globalSkipIntros = $state(false);
   let globalEmbedChapters = $state(true);
   let globalEmbedThumbnail = $state(true);
   let globalEmbedMetadata = $state(true);
-  let globalEmbedSubs = $state(false);
-  let globalSubLangs = $state('en');
-
-  let isYouTubeMusicUrl = $derived(url.toLowerCase().includes('music.youtube.com'));
   let bulkMode = $state<DownloadMode | null>(null);
 
-  let displayTitle = $derived(playlistInfo?.title ?? prefetchedInfo?.title ?? '');
+  let displayName = $derived(channelInfo?.name ?? prefetchedInfo?.name ?? '');
   let displayThumbnail = $derived.by(() => {
-    const raw = playlistInfo?.thumbnail ?? prefetchedInfo?.thumbnail ?? null;
+    const raw = channelInfo?.thumbnail ?? prefetchedInfo?.thumbnail ?? null;
     return raw ? (getDisplayThumbnailUrl(url, raw, 'mq') ?? raw) : '';
   });
-  let displayAuthor = $derived(playlistInfo?.uploader ?? prefetchedInfo?.author ?? '');
-  let displayCount = $derived(playlistInfo?.totalCount ?? prefetchedInfo?.entryCount ?? null);
-  let hasPrefetchedInfo = $derived(!!prefetchedInfo?.title || !!prefetchedInfo?.thumbnail);
+  let displayHandle = $derived(channelInfo?.handle ?? prefetchedInfo?.handle ?? '');
+  let displaySubscribers = $derived(
+    channelInfo?.subscriberCount ?? prefetchedInfo?.subscriberCount ?? null
+  );
+  let displayCount = $derived(channelInfo?.totalCount ?? null);
+  let hasPrefetchedInfo = $derived(!!prefetchedInfo?.name || !!prefetchedInfo?.thumbnail);
 
   function applyModeToAll(mode: DownloadMode) {
     bulkMode = mode;
@@ -269,19 +224,39 @@
     }, 150);
   });
 
-  let filteredEntries = $derived.by(() => {
-    const entries = playlistInfo?.entries ?? [];
-    if (!searchQueryDebounced) return entries;
-    const q = searchQueryDebounced.toLowerCase();
-    return entries.filter(
-      (e) => e.title.toLowerCase().includes(q) || e.uploader?.toLowerCase().includes(q)
-    );
+  let tabEntries = $derived.by(() => {
+    const entries = channelInfo?.entries ?? [];
+    switch (activeTab) {
+      case 'videos':
+        return entries.filter((e) => !e.isShort && !e.isLive);
+      case 'shorts':
+        return entries.filter((e) => e.isShort);
+      case 'live':
+        return entries.filter((e) => e.isLive);
+      default:
+        return entries;
+    }
   });
 
-  let selectedCount = $derived.by(() => {
-    const total = playlistInfo?.entries.length ?? 0;
-    return selectedMode === 'all' ? Math.max(0, total - deselectedIds.size) : selectedSomeIds.size;
+  let filteredEntries = $derived.by(() => {
+    if (!searchQueryDebounced) return tabEntries;
+    const q = searchQueryDebounced.toLowerCase();
+    return tabEntries.filter((e) => e.title.toLowerCase().includes(q));
   });
+
+  let tabCounts = $derived.by(() => ({
+    videos: (channelInfo?.entries ?? []).filter((e) => !e.isShort && !e.isLive).length,
+    shorts: (channelInfo?.entries ?? []).filter((e) => e.isShort).length,
+    live: (channelInfo?.entries ?? []).filter((e) => e.isLive).length,
+  }));
+
+  let selectedCount = $derived.by(() => {
+    const entries = channelInfo?.entries ?? [];
+    return selectedMode === 'all'
+      ? Math.max(0, entries.length - deselectedIds.size)
+      : selectedSomeIds.size;
+  });
+
   let allSelected = $derived.by(() => {
     if (filteredEntries.length === 0) return false;
     for (const e of filteredEntries) {
@@ -290,72 +265,25 @@
     return true;
   });
 
-  let estimatedSizeDebounced = $state<string | null>(null);
-  let sizeCalcTimer: ReturnType<typeof setTimeout> | null = null;
-
-  $effect(() => {
-    const _ = [selectedCount, Object.keys(perItemSettingsObj).length, playlistInfo?.entries.length];
-
-    if (sizeCalcTimer) clearTimeout(sizeCalcTimer);
-    sizeCalcTimer = setTimeout(() => {
-      estimatedSizeDebounced = calculateEstimatedSize();
-    }, 200);
-  });
-
-  function calculateEstimatedSize(): string | null {
-    if (!playlistInfo || selectedCount === 0) return null;
-
-    let totalSeconds = 0;
-    let audioSeconds = 0;
-    let videoSeconds = 0;
-
-    for (const entry of playlistInfo.entries) {
-      if (!isSelected(entry.id) || !entry.duration) continue;
-
-      const settings = getEntrySettings(entry);
-      const mode = settings.downloadMode;
-
-      if (mode === 'audio') {
-        audioSeconds += entry.duration;
-      } else {
-        videoSeconds += entry.duration;
-      }
-      totalSeconds += entry.duration;
-    }
-
-    if (totalSeconds === 0) return null;
-
-    const audioBytes = audioSeconds * 16 * 1024; // 128kbps
-    const videoBytes = videoSeconds * 312 * 1024; // ~2.5Mbps for 720p
-
-    const totalBytes = audioBytes + videoBytes;
-    return totalBytes > 0 ? formatSize(totalBytes) : null;
-  }
-
-  let estimatedSize = $derived(() => estimatedSizeDebounced);
-
-  function getDefaultSettings(isMusic: boolean): EntrySettings {
-    const mode: DownloadMode = bulkMode ?? (isYouTubeMusicUrl || isMusic ? 'audio' : 'auto');
+  function getDefaultSettings(): EntrySettings {
+    const mode: DownloadMode = bulkMode ?? 'auto';
     return {
       downloadMode: mode,
       skipSponsors: globalSkipSponsors,
-      skipIntros: globalSkipIntros,
       embedChapters: globalEmbedChapters,
       embedThumbnail: globalEmbedThumbnail,
       embedMetadata: globalEmbedMetadata,
-      embedSubs: globalEmbedSubs,
-      subLangs: globalSubLangs,
     };
   }
 
-  function getEntrySettings(entry: PlaylistEntry): EntrySettings {
-    const base = getDefaultSettings(entry.isMusic);
+  function getEntrySettings(entry: ChannelEntry): EntrySettings {
+    const base = getDefaultSettings();
     const override = perItemSettingsObj[entry.id] ?? {};
     return { ...base, ...override };
   }
 
   function handleOpenItem(mediaItem: MediaItemData) {
-    const entry = playlistInfo?.entries.find((e) => e.id === mediaItem.id);
+    const entry = channelInfo?.entries.find((e) => e.id === mediaItem.id);
     if (entry && onopenitem) {
       onopenitem(entry);
     }
@@ -371,26 +299,14 @@
         scrollTop: currentScrollTop,
         viewMode,
         searchQuery,
+        channelTab: activeTab,
       });
-
-      if (playlistInfo) {
-        viewStateCache.set<PlaylistViewState>({
-          type: 'playlist',
-          url,
-          selectedIds: selectedMode === 'some' ? [...selectedSomeIds] : [],
-          perItemSettings: perItemSettingsObj as any,
-          scrollTop: currentScrollTop,
-          viewMode,
-          searchQuery,
-          timestamp: Date.now(),
-        });
-      }
     }
   }
 
   $effect(() => {
-    if (url && url !== lastLoadedUrl && !playlistInfo) {
-      loadPlaylist();
+    if (url && url !== lastLoadedUrl && !channelInfo) {
+      loadChannel();
     }
   });
 
@@ -399,59 +315,59 @@
       destroyed = true;
       saveToCache();
       console.log(
-        `[PlaylistBuilder] Destroying: ${url}, entries: ${playlistInfo?.entries?.length ?? 0}`
+        `[ChannelBuilder] Destroying: ${url}, entries: ${channelInfo?.entries?.length ?? 0}`
       );
-      playlistInfo = null;
+      channelInfo = null;
       perItemSettingsObj = {};
       selectedSomeIds = new Set();
       deselectedIds = new Set();
     };
   });
 
-  async function loadPlaylist() {
+  async function loadChannel() {
     if (destroyed) return;
     loading = true;
     error = null;
-    playlistInfo = null;
+    channelInfo = null;
     selectedMode = 'all';
     selectedSomeIds = new Set();
     deselectedIds = new Set();
     perItemSettingsObj = {};
     lastLoadedUrl = url;
-    usePlaylistFolder = $settings.usePlaylistFolders ?? true;
+    useChannelFolder = $settings.usePlaylistFolders ?? true;
 
     try {
-      let info: BackendPlaylistInfo;
+      let rawInfo: any;
 
       if (isAndroid()) {
-        info = (await getPlaylistInfoOnAndroid(url)) as BackendPlaylistInfo;
+        rawInfo = await getPlaylistInfoOnAndroid(url);
         if (destroyed) return;
       } else {
-        info = await invoke<BackendPlaylistInfo>('get_playlist_info', {
+        rawInfo = await invoke<any>('get_playlist_info', {
           url,
           offset: 0,
-          limit: 100,
+          limit: 200,
           cookiesFromBrowser: cookiesFromBrowser || null,
           customCookies: customCookies || null,
           proxyConfig: getProxyConfig(),
         });
         if (destroyed) return;
 
-        while (info.has_more && info.total_count > 0 && !destroyed) {
-          const currentOffset = info.entries.length;
-          const moreInfo = await invoke<BackendPlaylistInfo>('get_playlist_info', {
+        while (rawInfo.has_more && rawInfo.total_count > 0 && !destroyed) {
+          const currentOffset = rawInfo.entries.length;
+          const moreInfo = await invoke<any>('get_playlist_info', {
             url,
             offset: currentOffset,
-            limit: 100,
+            limit: 200,
             cookiesFromBrowser: cookiesFromBrowser || null,
             customCookies: customCookies || null,
             proxyConfig: getProxyConfig(),
           });
           if (destroyed) return;
 
-          info = {
-            ...info,
-            entries: [...info.entries, ...moreInfo.entries],
+          rawInfo = {
+            ...rawInfo,
+            entries: [...rawInfo.entries, ...moreInfo.entries],
             has_more: moreInfo.has_more,
           };
         }
@@ -460,27 +376,27 @@
       if (destroyed) return;
 
       const seen = new Set<string>();
-      const uniqueEntries = info.entries.filter((e) => {
-        if (seen.has(e.id)) return false;
+      const uniqueEntries = (rawInfo.entries ?? []).filter((e: any) => {
+        if (!e.id || seen.has(e.id)) return false;
         seen.add(e.id);
         return true;
       });
 
-      const unified = convertBackendPlaylistInfo({
-        ...info,
-        entries: uniqueEntries,
-        total_count: uniqueEntries.length,
-      });
+      rawInfo.entries = uniqueEntries;
+      rawInfo.total_count = uniqueEntries.length;
 
-      playlistInfo = unified;
-      selectedMode = 'all';
-      selectedSomeIds = new Set();
+      const unified = convertBackendChannelInfo(rawInfo);
+      channelInfo = unified;
+
+      const videoIds = unified.entries.filter((e) => !e.isShort && !e.isLive).map((e) => e.id);
+      selectedMode = 'some';
+      selectedSomeIds = new Set(videoIds);
       deselectedIds = new Set();
       perItemSettingsObj = {};
 
-      if (!playlistInfoCached) {
-        mediaCache.setPlaylistInfo(url, unified);
-        playlistInfoCached = true;
+      if (!channelInfoCached) {
+        mediaCache.setChannelInfo(url, unified);
+        channelInfoCached = true;
       }
 
       saveToCache();
@@ -548,59 +464,74 @@
     perItemSettingsObj = { ...perItemSettingsObj, [id]: updated };
   }
 
-  const downloadOrderOptions = [
-    { value: 'queue', label: $t('playlist.order.queue') },
-    { value: 'reverse', label: $t('playlist.order.reverse') },
-    { value: 'shuffle', label: $t('playlist.order.shuffle') },
-  ];
-
   function handleDownload() {
-    if (!playlistInfo || selectedCount === 0) return;
+    if (!channelInfo || selectedCount === 0) return;
 
-    let entries = playlistInfo.entries
+    const entries = channelInfo.entries
       .filter((e) => isSelected(e.id))
       .map((e) => ({
         entry: e,
         settings: getEntrySettings(e),
       }));
 
-    switch (downloadOrder) {
-      case 'reverse':
-        entries = entries.reverse();
-        break;
-      case 'shuffle':
-        entries = entries.sort(() => Math.random() - 0.5);
-        break;
-    }
-
-    const selection: PlaylistSelection = {
+    const selection: ChannelSelection = {
       entries,
-      playlistInfo: {
-        id: playlistInfo?.id ?? '',
-        title: playlistInfo?.title ?? 'Playlist',
-        usePlaylistFolder,
+      channelInfo: {
+        id: channelInfo.id ?? '',
+        name: channelInfo.name ?? 'Channel',
+        useChannelFolder,
       },
     };
 
     ondownload?.(selection);
   }
+
+  function mapEntryToMediaItem(e: ChannelEntry): MediaItemData {
+    return {
+      id: e.id,
+      title: e.title,
+      thumbnail: getDisplayThumbnailUrl(e.url, e.thumbnail, viewMode === 'list' ? 'default' : 'mq'),
+      duration: e.duration,
+      author: e.viewCount ? formatNumber(e.viewCount) + ' views' : null,
+      isMusic: false,
+    };
+  }
+
+  function getTotalDuration(entries: ChannelEntry[]): number | null {
+    let total = 0;
+    let hasAny = false;
+    for (const e of entries) {
+      if (e.duration) {
+        total += e.duration;
+        hasAny = true;
+      }
+    }
+    return hasAny ? total : null;
+  }
+
+  let showEntries = $state(true);
+  let showMoreOptions = $state(false);
+
+  const downloadOrderOptions = [
+    { value: 'queue', label: $t('playlist.order.queue') },
+    { value: 'reverse', label: $t('playlist.order.reverse') },
+    { value: 'shuffle', label: $t('playlist.order.shuffle') },
+  ];
+  let downloadOrder = $state<'queue' | 'reverse' | 'shuffle'>('queue');
 </script>
 
-<div class="playlist-builder" class:full-bleed={showHeader}>
+<div class="channel-builder" class:full-bleed={showHeader}>
   {#if showHeader}
     <div class="view-header">
       <button class="back-btn" onclick={onback}>
         <Icon name="alt_arrow_rigth" size={16} class="rotate-180" />
         <span>{backLabel || $t('common.back')}</span>
       </button>
-      <div class="header-badge playlist">
-        <Icon name="playlist" size={12} />
-        <span>Playlist</span>
+      <div class="header-badge channel">
+        <Icon name="user" size={12} />
+        <span>{$t('channel.title')}</span>
       </div>
       <div class="header-spacer"></div>
-      {#if estimatedSize()}
-        <span class="size-estimate">~{estimatedSize()}</span>
-      {/if}
       <button
         class="header-download-btn"
         onclick={handleDownload}
@@ -612,8 +543,8 @@
     </div>
   {:else}
     <div class="yt-badge">
-      <Icon name="playlist" size={14} />
-      <span>YouTube Playlist</span>
+      <Icon name="user" size={14} />
+      <span>YouTube Channel</span>
     </div>
   {/if}
 
@@ -622,11 +553,12 @@
       <div class="error-state">
         <Icon name="warning" size={18} />
         <span>{error}</span>
-        <button class="retry-btn" onclick={loadPlaylist}>
+        <button class="retry-btn" onclick={loadChannel}>
           <Icon name="restart" size={14} />
         </button>
       </div>
     {:else}
+      <!-- Main row: avatar + info + mode selector -->
       <div class="main-row">
         <div class="left">
           {#if displayThumbnail}
@@ -634,12 +566,12 @@
           {:else if loading && !hasPrefetchedInfo}
             <div class="thumb skeleton"></div>
           {:else}
-            <div class="thumb empty"><Icon name="playlist" size={showHeader ? 32 : 20} /></div>
+            <div class="thumb empty"><Icon name="user" size={showHeader ? 32 : 24} /></div>
           {/if}
           <div class="info">
-            {#if displayTitle || playlistInfo}
+            {#if displayName || channelInfo}
               <span class="title-row">
-                <span class="title">{displayTitle || 'Playlist'}</span>
+                <span class="title">{displayName || $t('channel.title')}</span>
                 <button
                   class="copy-link-btn"
                   onclick={() => {
@@ -654,19 +586,23 @@
                 </button>
               </span>
               <span class="meta">
-                {#if displayAuthor}<span class="author"
-                    ><Icon name="user" size={12} />{displayAuthor}</span
+                {#if displayHandle}<span class="handle">{displayHandle}</span>{/if}
+                {#if displaySubscribers}<span class="meta-item"
+                    ><Icon name="user" size={12} />{formatNumber(displaySubscribers)} subscribers</span
                   >{/if}
                 {#if displayCount}<span class="meta-item"
                     ><Icon name="video" size={12} />{displayCount}
-                    {$t('playlist.videos')}</span
+                    {$t('channel.videos').toLowerCase()}</span
                   >{/if}
-                {#if playlistInfo && getTotalDuration(playlistInfo.entries)}<span class="meta-item"
+                {#if channelInfo && getTotalDuration(channelInfo.entries)}<span class="meta-item"
                     ><Icon name="clock" size={12} />{formatDuration(
-                      getTotalDuration(playlistInfo.entries)!
+                      getTotalDuration(channelInfo.entries)!
                     )}</span
                   >{/if}
               </span>
+              {#if channelInfo?.description}
+                <p class="description">{channelInfo.description}</p>
+              {/if}
             {:else if loading}
               <div class="title-skel skeleton"></div>
               <div class="meta-skel skeleton"></div>
@@ -678,7 +614,7 @@
           <div class="mode-selector">
             <button
               class="mode-btn"
-              class:active={bulkMode === 'auto' || (!bulkMode && !isYouTubeMusicUrl)}
+              class:active={bulkMode === 'auto' || !bulkMode}
               onclick={() => applyModeToAll('auto')}
               disabled={loading}
             >
@@ -687,7 +623,7 @@
             </button>
             <button
               class="mode-btn"
-              class:active={bulkMode === 'audio' || (!bulkMode && isYouTubeMusicUrl)}
+              class:active={bulkMode === 'audio'}
               onclick={() => applyModeToAll('audio')}
               disabled={loading}
             >
@@ -707,12 +643,13 @@
         </div>
       </div>
 
+      <!-- Extras row: folder checkbox, more options, entries toggle -->
       <div class="extras-row">
         <Checkbox
-          checked={usePlaylistFolder}
+          checked={useChannelFolder}
           label={$t('playlist.createFolder')}
           disabled={loading}
-          onchange={(v: boolean) => (usePlaylistFolder = v)}
+          onchange={(v: boolean) => (useChannelFolder = v)}
         />
         <div class="spacer"></div>
         <button
@@ -726,14 +663,15 @@
         <button
           class="entries-toggle"
           onclick={() => (showEntries = !showEntries)}
-          disabled={loading}
+          disabled={loading && !channelInfo}
         >
-          <span class="selected-badge">{selectedCount}/{playlistInfo?.totalCount ?? 0}</span>
+          <span class="selected-badge">{selectedCount}/{channelInfo?.totalCount ?? 0}</span>
           <Icon name={showEntries ? 'chevron_up' : 'chevron_down'} size={14} />
           <span>videos</span>
         </button>
       </div>
 
+      <!-- More options panel -->
       {#if showMoreOptions}
         <div class="more-options">
           <div class="options-row">
@@ -765,17 +703,11 @@
 
           <div class="options-row">
             <div class="option-group">
-              <span class="group-label">
-                <span>SponsorBlock</span>
-              </span>
+              <span class="group-label">SponsorBlock</span>
               <div class="option-grid">
                 <Checkbox
                   bind:checked={globalSkipSponsors}
                   label={$t('download.tracks.skipSponsors')}
-                />
-                <Checkbox
-                  bind:checked={globalSkipIntros}
-                  label={$t('download.tracks.skipIntros')}
                 />
               </div>
             </div>
@@ -797,31 +729,51 @@
                 />
               </div>
             </div>
-
-            <div class="option-group">
-              <span class="group-label">{$t('download.tracks.subtitles')}</span>
-              <div class="subs-row">
-                <Checkbox bind:checked={globalEmbedSubs} label={$t('download.tracks.embedSubs')} />
-                {#if globalEmbedSubs}
-                  <input
-                    type="text"
-                    class="lang-input"
-                    bind:value={globalSubLangs}
-                    placeholder="en"
-                  />
-                {/if}
-              </div>
-            </div>
           </div>
         </div>
       {/if}
 
-      {#if showEntries && playlistInfo}
+      <!-- Entries panel -->
+      {#if showEntries && (channelInfo || loading)}
         <div class="entries-panel">
+          <!-- Tab bar -->
+          {#if channelInfo}
+            <div class="tab-bar">
+              <button
+                class="tab-btn"
+                class:active={activeTab === 'videos'}
+                onclick={() => (activeTab = 'videos')}
+              >
+                <Icon name="video" size={14} />
+                <span>{$t('channel.videos')}</span>
+                <span class="tab-count">{tabCounts.videos}</span>
+              </button>
+              <button
+                class="tab-btn"
+                class:active={activeTab === 'shorts'}
+                onclick={() => (activeTab = 'shorts')}
+              >
+                <Icon name="play" size={14} />
+                <span>{$t('channel.shorts')}</span>
+                <span class="tab-count">{tabCounts.shorts}</span>
+              </button>
+              <button
+                class="tab-btn"
+                class:active={activeTab === 'live'}
+                onclick={() => (activeTab = 'live')}
+              >
+                <Icon name="eye_line_duotone" size={14} />
+                <span>{$t('channel.live')}</span>
+                <span class="tab-count">{tabCounts.live}</span>
+              </button>
+            </div>
+          {/if}
+
+          <!-- Toolbar -->
           <div class="entries-toolbar">
             <div class="search-box">
               <Icon name="search" size={14} />
-              <input type="text" bind:value={searchQuery} placeholder={$t('playlist.search')} />
+              <input type="text" bind:value={searchQuery} placeholder={$t('channel.search')} />
               {#if searchQuery}
                 <button class="clear-btn" onclick={() => (searchQuery = '')}>
                   <Icon name="close" size={12} />
@@ -849,60 +801,75 @@
                 </button>
               </div>
 
-              <button class="select-all-btn" onclick={toggleSelectAll}>
+              <button
+                class="select-all-btn"
+                onclick={toggleSelectAll}
+                disabled={loading || !channelInfo}
+              >
                 <Checkbox checked={allSelected} disabled />
-                <span>{allSelected ? $t('playlist.deselectAll') : $t('playlist.selectAll')}</span>
+                <span>{allSelected ? $t('channel.deselectAll') : $t('channel.selectAll')}</span>
               </button>
             </div>
           </div>
 
+          <!-- Entries grid -->
           <div class="entries-container">
-            <MediaGrid
-              items={filteredEntries}
-              mapItem={(e: PlaylistEntry) => ({
-                id: e.id,
-                title: e.title,
-                thumbnail: getDisplayThumbnailUrl(
-                  e.url,
-                  e.thumbnail,
-                  viewMode === 'list' ? 'default' : 'mq'
-                ),
-                duration: e.duration,
-                author: e.uploader,
-                isMusic: e.isMusic,
-              })}
-              selectedIds={isSelected}
-              getDefaultSettings={(item) => getDefaultSettings(!!item.isMusic)}
-              {viewMode}
-              perItemSettings={perItemSettingsObj}
-              {loading}
-              initialScrollTop={currentScrollTop}
-              ontoggle={toggleEntry}
-              onupdatesettings={updateEntrySettings}
-              onopenitem={onopenitem ? handleOpenItem : undefined}
-              onscroll={(pos) => {
-                currentScrollTop = pos;
-              }}
-            />
+            {#if loading && !channelInfo}
+              <div class="loading-state">
+                <div class="spinner"></div>
+                <span>{$t('channel.loading')}</span>
+              </div>
+            {:else if filteredEntries.length === 0}
+              <div class="empty-state">
+                <Icon name="video" size={32} />
+                <span>
+                  {#if searchQuery}
+                    {$t('channel.noResults')}
+                  {:else if activeTab === 'videos'}
+                    {$t('channel.noVideos')}
+                  {:else if activeTab === 'shorts'}
+                    {$t('channel.noShorts')}
+                  {:else}
+                    {$t('channel.noLive')}
+                  {/if}
+                </span>
+              </div>
+            {:else}
+              <MediaGrid
+                items={filteredEntries}
+                mapItem={mapEntryToMediaItem}
+                selectedIds={isSelected}
+                getDefaultSettings={() => getDefaultSettings()}
+                {viewMode}
+                perItemSettings={perItemSettingsObj}
+                {loading}
+                initialScrollTop={currentScrollTop}
+                ontoggle={toggleEntry}
+                onupdatesettings={updateEntrySettings}
+                onopenitem={onopenitem ? handleOpenItem : undefined}
+                onscroll={(pos) => {
+                  currentScrollTop = pos;
+                }}
+              />
+            {/if}
           </div>
         </div>
       {/if}
 
+      <!-- Footer download button (non-header mode) -->
       {#if !showHeader && ondownload}
         <div class="footer-actions">
-          {#if estimatedSize()}
-            <span class="size-estimate">~{estimatedSize()}</span>
-          {/if}
+          <div class="spacer"></div>
           <button
-            class="download-btn footer-download"
+            class="download-btn"
             onclick={handleDownload}
             disabled={loading || selectedCount === 0}
           >
             <Icon name="download" size={18} />
-            <span
-              >{$t('common.download')}
-              {selectedCount > 0 ? `(${selectedCount} ${$t('playlist.videos')})` : ''}</span
-            >
+            <span>
+              {$t('common.download')}
+              {selectedCount > 0 ? `(${selectedCount})` : ''}
+            </span>
           </button>
         </div>
       {/if}
@@ -911,14 +878,14 @@
 </div>
 
 <style>
-  .playlist-builder {
+  .channel-builder {
     display: flex;
     flex-direction: column;
     gap: 6px;
     animation: fadeIn 0.2s ease-out;
   }
 
-  .playlist-builder.full-bleed {
+  .channel-builder.full-bleed {
     margin: 0 -8px 0 -16px;
     padding: 0;
     height: 100%;
@@ -926,7 +893,7 @@
     flex-direction: column;
   }
 
-  .playlist-builder.full-bleed .view-header {
+  .channel-builder.full-bleed .view-header {
     position: sticky;
     top: 0;
     z-index: 10;
@@ -935,20 +902,16 @@
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   }
 
-  .playlist-builder.full-bleed .card {
+  .channel-builder.full-bleed .card {
     background: transparent;
     border: none;
     border-radius: 0;
-    padding: 0 16px 16px 16px;
+    padding: 12px 16px 16px 16px;
     flex: 1;
     overflow-y: auto;
   }
 
-  .playlist-builder.full-bleed .yt-badge {
-    display: none;
-  }
-
-  .playlist-builder.full-bleed .entries-container {
+  .channel-builder.full-bleed .entries-container {
     max-height: none;
     border-radius: 0;
     background: transparent;
@@ -956,7 +919,6 @@
     padding: 6px 16px 16px 16px;
   }
 
-  /* View header with back and download buttons */
   .view-header {
     display: flex;
     align-items: center;
@@ -997,14 +959,28 @@
     color: white;
   }
 
+  .yt-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 12px;
+    font-weight: 500;
+    margin-bottom: 4px;
+  }
+
   .header-badge {
-    display: none; /* Hide on mobile, show via media query */
+    display: none;
     align-items: center;
     gap: 5px;
     padding: 4px 10px;
-    background: rgba(255, 0, 0, 0.12);
+    background: rgba(99, 102, 241, 0.12);
     border-radius: 6px;
-    color: #ff6b6b;
+    color: #818cf8;
     font-size: 11px;
     font-weight: 600;
   }
@@ -1015,21 +991,14 @@
     }
   }
 
-  .header-badge.playlist {
-    background: rgba(255, 165, 0, 0.12);
-    color: #ffa500;
+  .header-badge.channel {
+    background: rgba(99, 102, 241, 0.12);
+    color: #818cf8;
   }
 
   .header-spacer {
     flex: 1;
     min-width: 8px;
-  }
-
-  .size-estimate {
-    font-size: 12px;
-    color: rgba(255, 255, 255, 0.5);
-    font-weight: 500;
-    flex-shrink: 0;
   }
 
   .header-download-btn {
@@ -1068,6 +1037,577 @@
     cursor: not-allowed;
   }
 
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 12px;
+    padding: 12px;
+  }
+
+  .error-state {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px;
+    background: rgba(239, 68, 68, 0.1);
+    border-radius: 8px;
+    color: #ef4444;
+    font-size: 13px;
+  }
+
+  .retry-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border: none;
+    border-radius: 6px;
+    color: white;
+    cursor: pointer;
+    margin-left: auto;
+  }
+
+  .retry-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+  }
+
+  /* Main row: thumbnail + info + mode selector */
+  .main-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .left {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .thumb {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: rgba(255, 255, 255, 0.05);
+    flex-shrink: 0;
+  }
+
+  .thumb.empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255, 255, 255, 0.3);
+  }
+
+  .thumb.skeleton {
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  .info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-top: 4px;
+  }
+
+  .title-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .title {
+    font-size: 15px;
+    font-weight: 600;
+    color: white;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  .copy-link-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    background: rgba(255, 255, 255, 0.08);
+    border: none;
+    border-radius: 4px;
+    color: rgba(255, 255, 255, 0.5);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+  }
+
+  .copy-link-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  .meta .handle {
+    color: rgba(255, 255, 255, 0.7);
+    font-weight: 500;
+  }
+
+  .meta-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .description {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.45);
+    line-height: 1.4;
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  .title-skel {
+    width: 180px;
+    height: 18px;
+    border-radius: 4px;
+  }
+
+  .meta-skel {
+    width: 120px;
+    height: 14px;
+    border-radius: 4px;
+  }
+
+  .right {
+    flex-shrink: 0;
+  }
+
+  .mode-selector {
+    display: flex;
+    gap: 3px;
+    background: rgba(255, 255, 255, 0.03);
+    padding: 3px;
+    border-radius: 8px;
+  }
+
+  .mode-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 10px;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .mode-btn:hover:not(:disabled) {
+    color: white;
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .mode-btn.active {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+  }
+
+  .mode-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* Extras row */
+  .extras-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+  }
+
+  .spacer {
+    flex: 1;
+  }
+
+  .more-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 10px;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .more-btn:hover,
+  .more-btn.active {
+    background: rgba(255, 255, 255, 0.05);
+    color: white;
+  }
+
+  .entries-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .entries-toggle:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.06);
+    color: white;
+  }
+
+  .entries-toggle:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .selected-badge {
+    padding: 2px 8px;
+    background: var(--accent, #6366f1);
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    color: white;
+  }
+
+  /* More options panel */
+  .more-options {
+    margin-top: 10px;
+    padding: 10px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    animation: fadeIn 0.15s ease-out;
+  }
+
+  .options-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .option-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 140px;
+  }
+
+  .option-group.compact {
+    min-width: 120px;
+    flex: 1;
+  }
+
+  .group-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.5);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .option-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  /* Tab bar */
+  .tab-bar {
+    display: flex;
+    gap: 3px;
+    padding: 3px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 8px;
+    overflow-x: auto;
+    margin-bottom: 8px;
+  }
+
+  .tab-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+
+  .tab-btn:hover {
+    color: white;
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .tab-btn.active {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+  }
+
+  .tab-count {
+    padding: 2px 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  .tab-btn.active .tab-count {
+    background: rgba(255, 255, 255, 0.15);
+    color: white;
+  }
+
+  /* Entries panel */
+  .entries-panel {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .entries-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+
+  .search-box {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    min-width: 140px;
+    padding: 6px 10px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+  }
+
+  .search-box input {
+    flex: 1;
+    background: none;
+    border: none;
+    color: white;
+    font-size: 13px;
+    outline: none;
+    min-width: 80px;
+  }
+
+  .search-box input::placeholder {
+    color: rgba(255, 255, 255, 0.3);
+  }
+
+  .clear-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: rgba(255, 255, 255, 0.4);
+    cursor: pointer;
+  }
+
+  .clear-btn:hover {
+    color: white;
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .view-toggle {
+    display: flex;
+    gap: 2px;
+    background: rgba(255, 255, 255, 0.03);
+    padding: 3px;
+    border-radius: 6px;
+  }
+
+  .view-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: rgba(255, 255, 255, 0.4);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .view-btn:hover {
+    color: white;
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .view-btn.active {
+    color: white;
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .select-all-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .select-all-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.08);
+    color: white;
+  }
+
+  .select-all-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .entries-container {
+    max-height: 400px;
+    overflow-y: auto;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.2);
+    padding: 6px;
+  }
+
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 40px 24px;
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 14px;
+  }
+
+  .loading-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 40px 24px;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 14px;
+  }
+
+  .spinner {
+    width: 28px;
+    height: 28px;
+    border: 3px solid rgba(255, 255, 255, 0.1);
+    border-top-color: var(--accent, #6366f1);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @keyframes pulse {
+    0%,
+    100% {
+      opacity: 0.4;
+    }
+    50% {
+      opacity: 0.7;
+    }
+  }
+
+  .skeleton {
+    background: rgba(255, 255, 255, 0.08);
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  /* Footer */
+  .footer-actions {
+    margin-top: 8px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
   .download-btn {
     display: flex;
     align-items: center;
@@ -1091,582 +1631,23 @@
   .download-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+    transform: none;
   }
 
-  /* Footer actions */
-  .footer-actions {
-    margin-top: 12px;
-    padding-top: 12px;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
-    display: flex;
-    justify-content: flex-end;
-  }
-
-  .footer-download {
-    padding: 12px 24px;
-  }
-
-  @keyframes fadeIn {
-    from {
-      opacity: 0;
-      transform: translateY(-4px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  .yt-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 10px;
-    background: rgba(255, 0, 0, 0.15);
-    border-radius: 6px;
-    color: #ff6b6b;
-    font-size: 12px;
-    font-weight: 600;
-    width: fit-content;
-  }
-
-  .card {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 12px;
-    padding: 12px;
-  }
-
-  .error-state {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 8px;
-    color: rgba(239, 68, 68, 0.9);
-  }
-
-  .retry-btn {
-    margin-left: auto;
-    padding: 6px;
-    background: rgba(255, 255, 255, 0.06);
-    border: none;
-    border-radius: 6px;
-    color: rgba(255, 255, 255, 0.6);
-    cursor: pointer;
-  }
-
-  .retry-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: white;
-  }
-
-  .main-row {
-    display: flex;
-    gap: 14px;
-    padding: 4px 0;
-  }
-
-  .playlist-builder.full-bleed .main-row {
-    gap: 16px;
-    padding: 12px 0;
-  }
-
-  .left {
-    display: flex;
-    gap: 12px;
-    flex: 1;
-    min-width: 0;
-  }
-
-  .thumb {
-    width: 72px;
-    height: 72px;
-    border-radius: 8px;
-    object-fit: cover;
-    flex-shrink: 0;
-    background: rgba(255, 255, 255, 0.04);
-  }
-
-  .playlist-builder.full-bleed .thumb {
-    width: 120px;
-    height: 120px;
-    border-radius: 10px;
-  }
-
-  .thumb.empty {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: rgba(255, 255, 255, 0.2);
-  }
-
-  .info {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 4px;
-    min-width: 0;
-    flex: 1;
-  }
-
-  .playlist-builder.full-bleed .info {
-    gap: 6px;
-  }
-
-  .title-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .title {
-    font-size: 13px;
-    font-weight: 600;
-    color: white;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-    line-height: 1.3;
-  }
-
-  .copy-link-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 22px;
-    height: 22px;
-    background: rgba(255, 255, 255, 0.08);
-    border: none;
-    border-radius: 4px;
-    color: rgba(255, 255, 255, 0.5);
-    cursor: pointer;
-    transition: all 0.15s ease;
-    flex-shrink: 0;
-  }
-
-  .copy-link-btn:hover {
-    background: rgba(255, 255, 255, 0.15);
-    color: rgba(255, 255, 255, 0.9);
-  }
-
-  .playlist-builder.full-bleed .title {
-    font-size: 16px;
-    line-height: 1.35;
-  }
-
-  .meta {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-    font-size: 11px;
-    color: rgba(255, 255, 255, 0.45);
-  }
-
-  .playlist-builder.full-bleed .meta {
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.5);
-  }
-
-  .meta .author,
-  .meta .meta-item {
-    display: flex;
-    align-items: center;
-    gap: 3px;
-  }
-
-  .meta .author {
-    font-weight: 500;
-    color: rgba(255, 255, 255, 0.6);
-  }
-
-  .meta .author::after {
-    content: '•';
-    margin-left: 5px;
-    color: rgba(255, 255, 255, 0.3);
-  }
-
-  .meta .meta-item::after {
-    content: '•';
-    margin-left: 5px;
-    color: rgba(255, 255, 255, 0.3);
-  }
-
-  .meta .meta-item:last-child::after {
-    display: none;
-  }
-
-  .playlist-builder.full-bleed .meta .author {
-    color: rgba(255, 255, 255, 0.7);
-  }
-
-  .right {
-    display: flex;
-    gap: 8px;
-    flex-shrink: 0;
-    align-items: center;
-  }
-
-  /* Mode selector in main row */
-  .mode-selector {
-    display: flex;
-    gap: 2px;
-    background: rgba(255, 255, 255, 0.04);
-    border-radius: 8px;
-    padding: 3px;
-  }
-
-  .mode-btn {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    padding: 6px 12px;
-    background: transparent;
-    border: none;
-    border-radius: 6px;
-    color: rgba(255, 255, 255, 0.5);
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.15s;
-    white-space: nowrap;
-  }
-
-  .mode-btn:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.8);
-  }
-
-  .mode-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .mode-btn.active {
-    background: var(--accent, #6366f1);
-    color: white;
-  }
-
-  /* Extras row */
-  .extras-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 10px;
-    padding-top: 10px;
-    border-top: 1px solid rgba(255, 255, 255, 0.05);
-  }
-
-  .spacer {
-    flex: 1;
-  }
-
-  .entries-toggle {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 10px;
-    background: rgba(255, 255, 255, 0.06);
-    border: none;
-    border-radius: 6px;
-    color: rgba(255, 255, 255, 0.7);
-    font-size: 12px;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .entries-toggle:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.1);
-    color: white;
-  }
-
-  .entries-toggle:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .selected-badge {
-    padding: 2px 6px;
-    background: var(--accent, #6366f1);
-    border-radius: 4px;
-    font-size: 11px;
-    font-weight: 600;
-    color: white;
-  }
-
-  /* Entries panel */
-  .entries-panel {
-    margin-top: 10px;
-    padding-top: 10px;
-    border-top: 1px solid rgba(255, 255, 255, 0.05);
-  }
-
-  .entries-toolbar {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 8px;
-    align-items: center;
-  }
-
-  .search-box {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 10px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 6px;
-  }
-
-  .search-box :global(svg) {
-    color: rgba(255, 255, 255, 0.4);
-    flex-shrink: 0;
-  }
-
-  .search-box input {
-    flex: 1;
-    background: transparent;
-    border: none;
-    outline: none;
-    color: white;
-    font-size: 12px;
-    min-width: 0;
-  }
-
-  .search-box input::placeholder {
-    color: rgba(255, 255, 255, 0.4);
-  }
-
-  .clear-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 18px;
-    height: 18px;
-    background: rgba(255, 255, 255, 0.1);
-    border: none;
-    border-radius: 50%;
-    color: rgba(255, 255, 255, 0.6);
-    cursor: pointer;
-  }
-
-  /* View toggle */
-  .view-toggle {
-    display: flex;
-    background: rgba(255, 255, 255, 0.06);
-    border-radius: 6px;
-    padding: 3px;
-    gap: 2px;
-  }
-
-  .view-btn {
-    width: 28px;
-    height: 28px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: none;
-    border-radius: 4px;
-    color: rgba(255, 255, 255, 0.4);
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .view-btn:hover {
-    color: rgba(255, 255, 255, 0.7);
-    background: rgba(255, 255, 255, 0.06);
-  }
-
-  .view-btn.active {
-    background: rgba(255, 255, 255, 0.12);
-    color: white;
-  }
-
-  .select-all-btn {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 10px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 6px;
-    color: rgba(255, 255, 255, 0.7);
-    font-size: 11px;
-    cursor: pointer;
-    white-space: nowrap;
-    flex-shrink: 0;
-  }
-
-  .select-all-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
-  }
-
-  .toolbar-right {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  /* Entries container */
-  .entries-container {
-    max-height: 400px;
-    overflow-y: auto;
-    border-radius: 8px;
-    background: rgba(0, 0, 0, 0.2);
-    padding: 6px;
-  }
-
-  /* More options */
-  .more-btn {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 10px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 6px;
-    color: rgba(255, 255, 255, 0.6);
-    font-size: 11px;
-    cursor: pointer;
-    transition: all 0.15s;
-    white-space: nowrap;
-  }
-
-  .more-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.8);
-  }
-
-  .more-btn.active {
-    color: var(--accent, #6366f1);
-    border-color: var(--accent, #6366f1);
-    background: rgba(99, 102, 241, 0.1);
-  }
-
-  .more-options {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    padding: 12px;
-    background: rgba(0, 0, 0, 0.15);
-    border-radius: 8px;
-    margin-top: 10px;
-  }
-
-  .options-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 16px;
-  }
-
-  .option-group {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    min-width: 120px;
-  }
-
-  .option-group.compact {
-    min-width: 100px;
-  }
-
-  .group-label {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 10px;
-    color: rgba(255, 255, 255, 0.4);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    font-weight: 500;
-  }
-
-  .option-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 12px;
-  }
-
-  .subs-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .lang-input {
-    flex: 1;
-    max-width: 200px;
-    padding: 6px 10px;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 6px;
-    color: white;
-    font-size: 12px;
-    font-family: inherit;
-    outline: none;
-    transition: border-color 0.15s;
-  }
-
-  .lang-input::placeholder {
-    color: rgba(255, 255, 255, 0.3);
-  }
-
-  .lang-input:focus {
-    border-color: var(--accent, #6366f1);
-  }
-
-  .lang-input:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  /* Skeleton */
-  .skeleton {
-    background: linear-gradient(
-      90deg,
-      rgba(255, 255, 255, 0.04) 0%,
-      rgba(255, 255, 255, 0.08) 50%,
-      rgba(255, 255, 255, 0.04) 100%
-    );
-    background-size: 200% 100%;
-    animation: shimmer 1.5s infinite;
-    border-radius: 4px;
-  }
-
-  @keyframes shimmer {
-    0% {
-      background-position: 200% 0;
-    }
-    100% {
-      background-position: -200% 0;
-    }
-  }
-
-  .title-skel {
-    height: 14px;
-    width: 90%;
-  }
-
-  .meta-skel {
-    height: 10px;
-    width: 50%;
-  }
-
-  /* Mobile */
-  @media (max-width: 560px) {
+  /* Responsive adjustments */
+  @media (max-width: 480px) {
     .main-row {
       flex-direction: column;
       gap: 12px;
     }
 
+    .left {
+      width: 100%;
+    }
+
     .thumb {
-      width: 64px;
-      height: 64px;
+      width: 56px;
+      height: 56px;
     }
 
     .right {
@@ -1683,41 +1664,12 @@
       justify-content: center;
     }
 
-    .extras-row {
-      flex-wrap: wrap;
-      gap: 6px;
+    .options-row {
+      flex-direction: column;
     }
 
-    .entries-toolbar {
-      flex-wrap: wrap;
-    }
-
-    .search-box {
+    .option-group.compact {
       width: 100%;
-      order: 1;
     }
-
-    .view-toggle {
-      order: 2;
-    }
-
-    .select-all-btn {
-      order: 3;
-      flex: 1;
-      justify-content: center;
-    }
-
-    .entries-container {
-      max-height: 300px;
-    }
-
-    .playlist-builder.full-bleed .entries-container {
-      max-height: none;
-    }
-  }
-
-  /* Utility classes */
-  :global(.rotate-180) {
-    transform: rotate(180deg);
   }
 </style>
