@@ -2098,19 +2098,17 @@
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     gap: 12px;
     padding: 0;
-    content-visibility: auto;
-    contain-intrinsic-size: auto 400px;
   }
 
   .grid-card {
+    display: flex;
+    flex-direction: column;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 10px;
     overflow: hidden;
     transition: all 0.2s ease;
     cursor: pointer;
-    content-visibility: auto;
-    contain-intrinsic-size: auto 200px;
   }
 
   .grid-card:hover {
