@@ -8,8 +8,23 @@ export interface RGB {
   b: number;
 }
 
-const COLOR_CACHE_MAX_SIZE = 200;
+const COLOR_CACHE_MAX_SIZE = 100;
 const colorCache = new Map<string, RGB>();
+
+let sharedCanvas: HTMLCanvasElement | null = null;
+let sharedCtx: CanvasRenderingContext2D | null = null;
+const SAMPLE_SIZE = 50;
+
+function getSharedCanvas(): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null {
+  if (!sharedCanvas) {
+    sharedCanvas = document.createElement('canvas');
+    sharedCanvas.width = SAMPLE_SIZE;
+    sharedCanvas.height = SAMPLE_SIZE;
+    sharedCtx = sharedCanvas.getContext('2d', { willReadFrequently: true });
+  }
+  if (!sharedCtx) return null;
+  return { canvas: sharedCanvas, ctx: sharedCtx };
+}
 
 /**
  * Add to cache with LRU eviction
@@ -55,26 +70,32 @@ export async function extractDominantColor(imageUrl: string): Promise<RGB | null
     img.crossOrigin = 'anonymous';
 
     const timeout = setTimeout(() => {
+      img.onload = null;
+      img.onerror = null;
+      img.src = '';
       resolve(null);
     }, 5000);
 
     img.onload = () => {
       clearTimeout(timeout);
       try {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
+        const shared = getSharedCanvas();
+        if (!shared) {
           resolve(null);
           return;
         }
+        const { ctx } = shared;
 
-        const sampleSize = 50;
-        canvas.width = sampleSize;
-        canvas.height = sampleSize;
+        // Clear and draw
+        ctx.clearRect(0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
+        ctx.drawImage(img, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
+        
+        // Clean up image reference to allow GC
+        img.onload = null;
+        img.onerror = null;
+        img.src = '';
 
-        ctx.drawImage(img, 0, 0, sampleSize, sampleSize);
-
-        const imageData = ctx.getImageData(0, 0, sampleSize, sampleSize);
+        const imageData = ctx.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
         const pixels = imageData.data;
 
         let bestColor: RGB = { r: 99, g: 102, b: 241 };
@@ -132,6 +153,9 @@ export async function extractDominantColor(imageUrl: string): Promise<RGB | null
 
     img.onerror = () => {
       clearTimeout(timeout);
+      img.onload = null;
+      img.onerror = null;
+      img.src = '';
       resolve(null);
     };
 

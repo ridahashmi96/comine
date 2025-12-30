@@ -78,11 +78,28 @@
   const GRID_GAP = 10;
   const GRID_INFO_EST_HEIGHT = 64;
   const BUFFER_COUNT = 5;
+  const MASK_SIZE = 25;
 
   let containerEl: HTMLDivElement | null = $state(null);
   let scrollTop = $state(0);
   let containerHeight = $state(600);
   let containerWidth = $state(800);
+  let maskStyle = $state('');
+
+  function updateMaskStyle() {
+    if (!containerEl) return;
+    const { scrollTop: st, scrollHeight, clientHeight } = containerEl;
+    const maxScroll = scrollHeight - clientHeight;
+    if (maxScroll <= 0) {
+      maskStyle = '';
+      return;
+    }
+    const topProgress = Math.min(st / MASK_SIZE, 1);
+    const bottomProgress = Math.min((maxScroll - st) / MASK_SIZE, 1);
+    const topFade = topProgress > 0 ? `transparent, black ${MASK_SIZE * topProgress}px` : 'black, black 0px';
+    const bottomFade = bottomProgress > 0 ? `black calc(100% - ${MASK_SIZE * bottomProgress}px), transparent` : 'black 100%, black 100%';
+    maskStyle = `mask-image: linear-gradient(to bottom, ${topFade}, ${bottomFade}); -webkit-mask-image: linear-gradient(to bottom, ${topFade}, ${bottomFade});`;
+  }
   let lastViewMode = $state<ViewMode>('list');
   let didInitScroll = $state(false);
 
@@ -120,6 +137,7 @@
       scrollTop = initialScrollTop;
       didInitScroll = true;
     }
+    setTimeout(updateMaskStyle, 50);
   }
 
   $effect(() => {
@@ -154,6 +172,7 @@
 
   let scrollRAF: number | null = null;
   function handleScroll(e: Event) {
+    updateMaskStyle();
     if (scrollRAF) return;
     scrollRAF = requestAnimationFrame(() => {
       const target = e.target as HTMLDivElement;
@@ -261,6 +280,7 @@
     onscroll={handleScroll}
     bind:clientHeight={containerHeight}
     bind:clientWidth={containerWidth}
+    style={maskStyle}
   >
     {#if loading}
       {#each Array(5) as _, i (i)}
@@ -356,6 +376,7 @@
     onscroll={handleScroll}
     bind:clientHeight={containerHeight}
     bind:clientWidth={containerWidth}
+    style={maskStyle}
   >
     {#if loading}
       {#each Array(6) as _, i (i)}
@@ -485,6 +506,9 @@
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
     touch-action: pan-y;
+    margin-right: 4px;
+    margin-bottom: 4px;
+    padding-right: 6px;
   }
 
   .list-view:not(.virtualized) .virtual-spacer,
@@ -662,12 +686,14 @@
   /* ===== Grid View ===== */
   .grid-view {
     contain: layout style;
-    padding-right: 8px;
+    padding-right: 6px;
     overflow-y: auto;
     max-height: 100%;
     flex: 1;
     min-height: 0;
     will-change: scroll-position;
+    margin-right: 4px;
+    margin-bottom: 4px;
   }
   
   @media (max-width: 480px) {

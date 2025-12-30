@@ -33,29 +33,58 @@
   import Chip from '$lib/components/Chip.svelte';
   import Divider from '$lib/components/Divider.svelte';
   import Select from '$lib/components/Select.svelte';
-  import ScrollArea from '$lib/components/ScrollArea.svelte';
   import { tooltip } from '$lib/actions/tooltip';
   import { extractDominantColor, generateColorVars, type RGB } from '$lib/utils/color';
   import { saveScrollPosition, getScrollPosition } from '$lib/stores/scroll';
 
   const ROUTE_PATH = '/downloads';
+  const ITEM_HEIGHT = 56;
+  const DATE_HEADER_HEIGHT = 44;
+  const PLAYLIST_HEADER_HEIGHT = 60;
+  const BUFFER_COUNT = 5;
 
-  let scrollAreaRef: ScrollArea | undefined = $state(undefined);
+  type FlatRowType =
+    | { kind: 'date'; label: string }
+    | { kind: 'single'; item: HistoryItem }
+    | { kind: 'playlist'; group: HistoryPlaylistGroup }
+    | { kind: 'playlist-child'; item: HistoryItem; playlistId: string };
+
+  let containerEl: HTMLDivElement | null = $state(null);
+  let scrollTop = $state(0);
+  let containerHeight = $state(600);
+  let maskStyle = $state('');
+  const MASK_SIZE = 25;
 
   beforeNavigate(() => {
-    const pos = scrollAreaRef?.getScroll() ?? 0;
-    saveScrollPosition(ROUTE_PATH, pos);
+    saveScrollPosition(ROUTE_PATH, scrollTop);
   });
+
+  function updateMaskStyle() {
+    if (!containerEl) return;
+    const { scrollTop: st, scrollHeight, clientHeight } = containerEl;
+    const maxScroll = scrollHeight - clientHeight;
+    if (maxScroll <= 0) {
+      maskStyle = '';
+      return;
+    }
+    const topProgress = Math.min(st / MASK_SIZE, 1);
+    const bottomProgress = Math.min((maxScroll - st) / MASK_SIZE, 1);
+    const topFade = topProgress > 0 ? `transparent, black ${MASK_SIZE * topProgress}px` : 'black, black 0px';
+    const bottomFade = bottomProgress > 0 ? `black calc(100% - ${MASK_SIZE * bottomProgress}px), transparent` : 'black 100%, black 100%';
+    maskStyle = `mask-image: linear-gradient(to bottom, ${topFade}, ${bottomFade}); -webkit-mask-image: linear-gradient(to bottom, ${topFade}, ${bottomFade});`;
+  }
 
   onMount(() => {
     const savedPosition = getScrollPosition(ROUTE_PATH);
-    if (savedPosition > 0) {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          scrollAreaRef?.restoreScroll(savedPosition);
-        });
-      });
+    if (savedPosition > 0 && containerEl) {
+      containerEl.scrollTop = savedPosition;
+      scrollTop = savedPosition;
     }
+    setTimeout(updateMaskStyle, 50);
+
+    const resizeObserver = new ResizeObserver(updateMaskStyle);
+    if (containerEl) resizeObserver.observe(containerEl);
+    return () => resizeObserver.disconnect();
   });
 
   let missingFiles = $state<Set<string>>(new Set());
@@ -111,7 +140,6 @@
   }
 
   let collapsedPlaylists = $state<Set<string>>(new Set());
-
   let collapsedHistoryPlaylists = $state<Set<string>>(new Set());
 
   function togglePlaylistExpanded(playlistId: string) {
@@ -132,6 +160,89 @@
       next.add(playlistId);
     }
     collapsedHistoryPlaylists = next;
+  }
+
+  let flatRows = $derived.by<FlatRowType[]>(() => {
+    const rows: FlatRowType[] = [];
+    for (const group of $playlistGroupedHistory) {
+      rows.push({ kind: 'date', label: group.label });
+      for (const item of group.items) {
+        if (isPlaylistGroup(item)) {
+          const pg = item as HistoryPlaylistGroup;
+          rows.push({ kind: 'playlist', group: pg });
+          if (!collapsedHistoryPlaylists.has(pg.playlistId)) {
+            for (const child of pg.items) {
+              rows.push({ kind: 'playlist-child', item: child, playlistId: pg.playlistId });
+            }
+          }
+        } else {
+          rows.push({ kind: 'single', item: item as HistoryItem });
+        }
+      }
+    }
+    return rows;
+  });
+
+  function getRowHeight(row: FlatRowType): number {
+    switch (row.kind) {
+      case 'date': return DATE_HEADER_HEIGHT;
+      case 'playlist': return PLAYLIST_HEADER_HEIGHT;
+      default: return ITEM_HEIGHT;
+    }
+  }
+
+  let rowOffsets = $derived.by(() => {
+    const offsets: number[] = [];
+    let y = 0;
+    for (const row of flatRows) {
+      offsets.push(y);
+      y += getRowHeight(row);
+    }
+    return offsets;
+  });
+
+  let totalHeight = $derived(
+    flatRows.length > 0
+      ? rowOffsets[flatRows.length - 1] + getRowHeight(flatRows[flatRows.length - 1])
+      : 0
+  );
+
+  let visibleRange = $derived.by(() => {
+    if (flatRows.length <= 30) return { startIdx: 0, endIdx: flatRows.length };
+
+    const viewTop = scrollTop;
+    const viewBottom = scrollTop + containerHeight;
+
+    let startIdx = 0;
+    for (let i = 0; i < rowOffsets.length; i++) {
+      if (rowOffsets[i] + getRowHeight(flatRows[i]) >= viewTop - BUFFER_COUNT * ITEM_HEIGHT) {
+        startIdx = i;
+        break;
+      }
+    }
+
+    let endIdx = flatRows.length;
+    for (let i = startIdx; i < rowOffsets.length; i++) {
+      if (rowOffsets[i] > viewBottom + BUFFER_COUNT * ITEM_HEIGHT) {
+        endIdx = i;
+        break;
+      }
+    }
+
+    return { startIdx: Math.max(0, startIdx), endIdx: Math.min(flatRows.length, endIdx) };
+  });
+
+  let visibleRows = $derived(flatRows.slice(visibleRange.startIdx, visibleRange.endIdx));
+  let offsetTop = $derived(visibleRange.startIdx > 0 ? rowOffsets[visibleRange.startIdx] : 0);
+
+  let scrollRAF: number | null = null;
+  function handleScroll(e: Event) {
+    updateMaskStyle();
+    if (scrollRAF) return;
+    scrollRAF = requestAnimationFrame(() => {
+      scrollTop = (e.target as HTMLDivElement).scrollTop;
+      scrollRAF = null;
+    });
   }
 
   let activeDownloads = $derived(
@@ -382,7 +493,13 @@
     </div>
   </div>
 
-  <ScrollArea bind:this={scrollAreaRef}>
+  <div
+    class="scroll-container"
+    bind:this={containerEl}
+    bind:clientHeight={containerHeight}
+    onscroll={handleScroll}
+    style={maskStyle}
+  >
     {#if activeDownloads.length > 0}
       {@const grouped = filteredGroupedDownloads()}
       <div class="section-header">
@@ -494,6 +611,8 @@
                           <img
                             src={download.thumbnail}
                             alt=""
+                            loading="lazy"
+                            decoding="async"
                             onload={() => extractItemColor(download.id, download.thumbnail)}
                           />
                         {:else}
@@ -604,6 +723,8 @@
                   <img
                     src={download.thumbnail}
                     alt=""
+                    loading="lazy"
+                    decoding="async"
                     onload={() => extractItemColor(download.id, download.thumbnail)}
                   />
                 {:else}
@@ -703,24 +824,258 @@
     {/if}
 
     <!-- History List -->
-    <div class="history-list" class:grid-view={viewMode === 'grid'}>
-      {#if $playlistGroupedHistory.length === 0}
-        <div class="empty-state">
-          <Icon name="download" size={48} />
-          <p>{$t('downloads.empty')}</p>
-          <p class="empty-hint">{$t('downloads.startHint')}</p>
-        </div>
-      {:else}
-        {#each $playlistGroupedHistory as group}
-          <div class="date-group">
-            <span class="date-label">{group.label}</span>
-
-            {#if viewMode === 'grid'}
-              <!-- Grid View - unified grid with all items inline -->
+    {#if viewMode === 'list'}
+      <div class="history-list">
+        {#if flatRows.length === 0}
+          <div class="empty-state">
+            <Icon name="download" size={48} />
+            <p>{$t('downloads.empty')}</p>
+            <p class="empty-hint">{$t('downloads.startHint')}</p>
+          </div>
+        {:else}
+          <div class="virtual-spacer" style="height: {totalHeight}px;">
+            <div class="virtual-content" style="transform: translateY({offsetTop}px);">
+              {#each visibleRows as row (row.kind === 'date' ? `date-${row.label}` : row.kind === 'playlist' ? `pl-${row.group.playlistId}` : row.kind === 'playlist-child' ? `plc-${row.item.id}` : `s-${row.item.id}`)}
+                {#if row.kind === 'date'}
+                  <div class="date-header" style="height: {DATE_HEADER_HEIGHT}px;">
+                    <span class="date-label">{row.label}</span>
+                  </div>
+                {:else if row.kind === 'playlist'}
+                  {@const playlistGroup = row.group}
+                  {@const isExpanded = !collapsedHistoryPlaylists.has(playlistGroup.playlistId)}
+                  {@const playlistThumb = playlistGroup.items[0]?.thumbnail}
+                  <!-- svelte-ignore a11y_no_static_element_interactions -->
+                  <!-- svelte-ignore a11y_click_events_have_key_events -->
+                  <div
+                    class="playlist-header-row"
+                    style="height: {PLAYLIST_HEADER_HEIGHT}px;"
+                    onclick={() => toggleHistoryPlaylistExpanded(playlistGroup.playlistId)}
+                  >
+                    <div class="col-thumb">
+                      <div class="playlist-thumb">
+                        {#if playlistThumb}
+                          <img src={playlistThumb} alt="" />
+                        {:else}
+                          <Icon name="playlist" size={16} />
+                        {/if}
+                      </div>
+                    </div>
+                    <div class="col-metadata">
+                      <span class="item-title">
+                        <span class="expand-icon" class:expanded={isExpanded}>
+                          <Icon name="chevron_down" size={14} />
+                        </span>
+                        {playlistGroup.playlistTitle}
+                      </span>
+                      <span class="item-author">{playlistGroup.items.length} items</span>
+                    </div>
+                    <div class="col-actions"></div>
+                    <div class="col-ext"></div>
+                    <div class="col-size">{formatFileSize(playlistGroup.totalSize)}</div>
+                    <div class="col-length">{formatDuration(playlistGroup.totalDuration)}</div>
+                    <button
+                      class="open-file-btn"
+                      onclick={(e) => {
+                        e.stopPropagation();
+                        handleOpenFile(e, playlistGroup.items[0]?.filePath);
+                      }}
+                      use:tooltip={$t('downloads.openFolder')}
+                    >
+                      <Icon name="folder" size={16} />
+                    </button>
+                  </div>
+                {:else if row.kind === 'playlist-child'}
+                  {@const subItem = row.item}
+                  {@const fileMissing = isFileMissing(subItem.id)}
+                  <!-- svelte-ignore a11y_no_static_element_interactions -->
+                  <div
+                    class="history-item playlist-child"
+                    style="height: {ITEM_HEIGHT}px; {getItemColorStyle(subItem.id)}"
+                    class:file-missing={fileMissing}
+                    onmouseenter={() => (hoveredItemId = subItem.id)}
+                    onmouseleave={() => (hoveredItemId = null)}
+                  >
+                    <div class="col-thumb">
+                      {#if subItem.thumbnail}
+                        <img
+                          src={subItem.thumbnail}
+                          alt=""
+                          class="thumbnail"
+                          loading="lazy"
+                          decoding="async"
+                          onload={() => {
+                            extractItemColor(subItem.id, subItem.thumbnail);
+                            checkFileExists(subItem.id, subItem.filePath);
+                          }}
+                        />
+                      {:else}
+                        <div class="thumbnail-placeholder">
+                          <Icon name={getTypeIcon(subItem.type)} size={20} />
+                        </div>
+                        {(() => { checkFileExists(subItem.id, subItem.filePath); return ''; })()}
+                      {/if}
+                      {#if fileMissing}
+                        <div class="thumb-missing-indicator" use:tooltip={$t('downloads.fileMissing')}>
+                          <Icon name="trash" size={12} />
+                        </div>
+                      {:else if hoveredItemId === subItem.id}
+                        <button class="thumb-play-overlay" onclick={(e) => handlePlayFile(e, subItem.filePath)} use:tooltip={$t('downloads.play')}>
+                          <Icon name="play" size={16} />
+                        </button>
+                      {/if}
+                    </div>
+                    <div class="col-metadata">
+                      <!-- svelte-ignore a11y_click_events_have_key_events -->
+                      <!-- svelte-ignore a11y_no_static_element_interactions -->
+                      <span class="item-title clickable" onclick={(e) => handleOpenVideoView(e, subItem)} title={$t('downloads.openInApp')}>{subItem.title}</span>
+                      <!-- svelte-ignore a11y_click_events_have_key_events -->
+                      <!-- svelte-ignore a11y_no_static_element_interactions -->
+                      <span class="item-author clickable" onclick={(e) => handleOpenChannelView(e, subItem)} title={$t('downloads.openAuthor')}>{subItem.author}</span>
+                    </div>
+                    <div class="col-actions">
+                      {#if hoveredItemId === subItem.id}
+                        <div class="action-buttons">
+                          <button class="action-btn" use:tooltip={$t('downloads.redownload')} onclick={(e) => handleRedownload(e, subItem.url)}>
+                            <Icon name="download" size={16} />
+                          </button>
+                        </div>
+                        <div class="action-buttons secondary">
+                          <button class="action-btn" use:tooltip={$t('downloads.openLink')} onclick={(e) => handleOpenLink(e, subItem.url)}>
+                            <Icon name="link" size={16} />
+                          </button>
+                          <button class="action-btn delete" use:tooltip={$t('downloads.delete')} onclick={(e) => handleDelete(e, subItem.id)}>
+                            <Icon name="trash" size={16} />
+                          </button>
+                        </div>
+                      {/if}
+                    </div>
+                    <div class="col-ext"><span class="ext-badge">{subItem.extension.toUpperCase()}</span></div>
+                    <div class="col-size">{formatFileSize(subItem.size)}</div>
+                    <div class="col-length">{formatDuration(subItem.duration)}</div>
+                    <button class="open-file-btn" use:tooltip={$t('downloads.openFolder')} onclick={(e) => handleOpenFile(e, subItem.filePath)}>
+                      <Icon name="folder" size={16} />
+                    </button>
+                  </div>
+                {:else}
+                  {@const singleItem = row.item}
+                  {@const fileMissing = isFileMissing(singleItem.id)}
+                  <!-- svelte-ignore a11y_no_static_element_interactions -->
+                  <div
+                    class="history-item"
+                    style="height: {ITEM_HEIGHT}px; {getItemColorStyle(singleItem.id)}"
+                    class:file-missing={fileMissing}
+                    onmouseenter={() => (hoveredItemId = singleItem.id)}
+                    onmouseleave={() => (hoveredItemId = null)}
+                  >
+                    <div class="col-thumb">
+                      {#if singleItem.thumbnail}
+                        <img
+                          src={singleItem.thumbnail}
+                          alt=""
+                          class="thumbnail"
+                          loading="lazy"
+                          decoding="async"
+                          onload={() => {
+                            extractItemColor(singleItem.id, singleItem.thumbnail);
+                            checkFileExists(singleItem.id, singleItem.filePath);
+                          }}
+                        />
+                      {:else}
+                        <div class="thumbnail-placeholder">
+                          <Icon name={getTypeIcon(singleItem.type)} size={20} />
+                        </div>
+                        {(() => { checkFileExists(singleItem.id, singleItem.filePath); return ''; })()}
+                      {/if}
+                      {#if fileMissing}
+                        <div class="thumb-missing-indicator" use:tooltip={$t('downloads.fileMissing')}>
+                          <Icon name="trash" size={12} />
+                        </div>
+                      {:else if hoveredItemId === singleItem.id}
+                        <button class="thumb-play-overlay" onclick={(e) => handlePlayFile(e, singleItem.filePath)} use:tooltip={$t('downloads.play')}>
+                          <Icon name="play" size={16} />
+                        </button>
+                      {/if}
+                    </div>
+                    <div class="col-metadata">
+                      <!-- svelte-ignore a11y_click_events_have_key_events -->
+                      <!-- svelte-ignore a11y_no_static_element_interactions -->
+                      <span class="item-title clickable" onclick={(e) => handleOpenVideoView(e, singleItem)} title={$t('downloads.openInApp')}>{singleItem.title}</span>
+                      <!-- svelte-ignore a11y_click_events_have_key_events -->
+                      <!-- svelte-ignore a11y_no_static_element_interactions -->
+                      <span class="item-author clickable" onclick={(e) => handleOpenChannelView(e, singleItem)} title={$t('downloads.openAuthor')}>{singleItem.author}</span>
+                    </div>
+                    <div class="col-actions">
+                      {#if hoveredItemId === singleItem.id}
+                        <div class="action-buttons">
+                          <button class="action-btn" use:tooltip={$t('downloads.redownload')} onclick={(e) => handleRedownload(e, singleItem.url)}>
+                            <Icon name="download" size={16} />
+                          </button>
+                          <button class="action-btn expand" use:tooltip={$t('downloads.moreOptions')}>
+                            <Icon name="chevron_down" size={16} />
+                          </button>
+                        </div>
+                        <div class="action-buttons secondary">
+                          <button class="action-btn" use:tooltip={$t('downloads.openLink')} onclick={(e) => handleOpenLink(e, singleItem.url)}>
+                            <Icon name="link" size={16} />
+                          </button>
+                          <button class="action-btn delete" use:tooltip={$t('downloads.delete')} onclick={(e) => handleDelete(e, singleItem.id)}>
+                            <Icon name="trash" size={16} />
+                          </button>
+                        </div>
+                      {/if}
+                    </div>
+                    <div class="col-ext"><span class="ext-badge">{singleItem.extension.toUpperCase()}</span></div>
+                    <div class="col-size">{formatFileSize(singleItem.size)}</div>
+                    <div class="col-length">{formatDuration(singleItem.duration)}</div>
+                    <button class="open-file-btn" use:tooltip={$t('downloads.openFolder')} onclick={(e) => handleOpenFile(e, singleItem.filePath)}>
+                      <Icon name="folder" size={16} />
+                    </button>
+                  </div>
+                {/if}
+              {/each}
+            </div>
+          </div>
+          <p class="end-message">{$t('downloads.endMessage')}</p>
+          {#if $settings.showHistoryStats && $historyStats.totalDownloads > 0}
+            <div class="stats-bar">
+              <div class="stat-item">
+                <span class="stat-value">{$historyStats.totalDownloads}</span>
+                <span class="stat-label">{$t('downloads.stats.totalDownloads')}</span>
+              </div>
+              <div class="stat-divider"></div>
+              <div class="stat-item">
+                <span class="stat-value">{formatFileSize($historyStats.totalSize)}</span>
+                <span class="stat-label">{$t('downloads.stats.totalSize')}</span>
+              </div>
+              <div class="stat-divider"></div>
+              <div class="stat-item">
+                <span class="stat-value">{formatDuration($historyStats.totalDuration)}</span>
+                <span class="stat-label">{$t('downloads.stats.totalDuration')}</span>
+              </div>
+              <div class="stat-divider"></div>
+              <div class="stat-item">
+                <span class="stat-value">{$historyStats.mostCommonFormat.toUpperCase()}</span>
+                <span class="stat-label">{$t('downloads.stats.mostCommon')}</span>
+              </div>
+            </div>
+          {/if}
+        {/if}
+      </div>
+    {:else}
+      <div class="history-list grid-view">
+        {#if $playlistGroupedHistory.length === 0}
+          <div class="empty-state">
+            <Icon name="download" size={48} />
+            <p>{$t('downloads.empty')}</p>
+            <p class="empty-hint">{$t('downloads.startHint')}</p>
+          </div>
+        {:else}
+          {#each $playlistGroupedHistory as group}
+            <div class="date-group">
+              <span class="date-label">{group.label}</span>
               <div class="grid-items">
                 {#each group.items as item}
                   {#if isPlaylistGroup(item)}
-                    <!-- Playlist items with playlist indicator -->
                     {@const playlistGroup = item as HistoryPlaylistGroup}
                     {#each playlistGroup.items as subItem, idx (subItem.id)}
                       {@const fileMissing = isFileMissing(subItem.id)}
@@ -735,132 +1090,38 @@
                       >
                         <div class="card-thumbnail">
                           {#if subItem.thumbnail}
-                            <img
-                              src={subItem.thumbnail}
-                              alt=""
-                              onload={() => {
-                                extractItemColor(subItem.id, subItem.thumbnail);
-                                checkFileExists(subItem.id, subItem.filePath);
-                              }}
-                            />
+                            <img src={subItem.thumbnail} alt="" loading="lazy" decoding="async" onload={() => { extractItemColor(subItem.id, subItem.thumbnail); checkFileExists(subItem.id, subItem.filePath); }} />
                           {:else}
-                            <div
-                              class="card-thumb-placeholder"
-                              use:tooltip={fileMissing ? $t('downloads.fileMissing') : ''}
-                            >
+                            <div class="card-thumb-placeholder" use:tooltip={fileMissing ? $t('downloads.fileMissing') : ''}>
                               <Icon name={getTypeIcon(subItem.type)} size={32} />
                             </div>
-                            {(() => {
-                              checkFileExists(subItem.id, subItem.filePath);
-                              return '';
-                            })()}
+                            {(() => { checkFileExists(subItem.id, subItem.filePath); return ''; })()}
                           {/if}
-                          {#if subItem.duration > 0}
-                            <span class="duration-badge">{formatDuration(subItem.duration)}</span>
-                          {/if}
+                          {#if subItem.duration > 0}<span class="duration-badge">{formatDuration(subItem.duration)}</span>{/if}
                           <span class="type-badge">{subItem.extension.toUpperCase()}</span>
-                          <!-- Playlist indicator badge -->
                           <div class="playlist-badge" use:tooltip={playlistGroup.playlistTitle}>
                             <Icon name="playlist" size={10} />
                             <span>{idx + 1}/{playlistGroup.items.length}</span>
                           </div>
-                          <!-- Missing file indicator -->
                           {#if fileMissing}
-                            <div
-                              class="missing-file-overlay"
-                              use:tooltip={$t('downloads.fileMissing')}
-                            >
-                              <Icon name="trash" size={24} />
-                            </div>
+                            <div class="missing-file-overlay" use:tooltip={$t('downloads.fileMissing')}><Icon name="trash" size={24} /></div>
                           {/if}
                           {#if hoveredItemId === subItem.id && !fileMissing}
                             <div class="card-overlay">
-                              <button
-                                class="play-overlay"
-                                onclick={(e) => {
-                                  e.stopPropagation();
-                                  handlePlayFile(e, subItem.filePath);
-                                }}
-                                use:tooltip={$t('downloads.play')}
-                              >
-                                <Icon name="play" size={24} />
-                              </button>
+                              <button class="play-overlay" onclick={(e) => { e.stopPropagation(); handlePlayFile(e, subItem.filePath); }} use:tooltip={$t('downloads.play')}><Icon name="play" size={24} /></button>
                               <div class="card-actions-bar">
-                                <button
-                                  class="card-action-btn"
-                                  use:tooltip={$t('downloads.openFolder')}
-                                  onclick={(e) => {
-                                    e.stopPropagation();
-                                    handleOpenFile(e, subItem.filePath);
-                                  }}
-                                >
-                                  <Icon name="folder" size={14} />
-                                </button>
-                                <button
-                                  class="card-action-btn"
-                                  use:tooltip={$t('downloads.redownload')}
-                                  onclick={(e) => {
-                                    e.stopPropagation();
-                                    handleRedownload(e, subItem.url);
-                                  }}
-                                >
-                                  <Icon name="download" size={14} />
-                                </button>
-                                <button
-                                  class="card-action-btn"
-                                  use:tooltip={$t('downloads.openLink')}
-                                  onclick={(e) => {
-                                    e.stopPropagation();
-                                    handleOpenLink(e, subItem.url);
-                                  }}
-                                >
-                                  <Icon name="link" size={14} />
-                                </button>
-                                <button
-                                  class="card-action-btn delete"
-                                  use:tooltip={$t('downloads.delete')}
-                                  onclick={(e) => {
-                                    e.stopPropagation();
-                                    handleDelete(e, subItem.id);
-                                  }}
-                                >
-                                  <Icon name="trash" size={14} />
-                                </button>
+                                <button class="card-action-btn" use:tooltip={$t('downloads.openFolder')} onclick={(e) => { e.stopPropagation(); handleOpenFile(e, subItem.filePath); }}><Icon name="folder" size={14} /></button>
+                                <button class="card-action-btn" use:tooltip={$t('downloads.redownload')} onclick={(e) => { e.stopPropagation(); handleRedownload(e, subItem.url); }}><Icon name="download" size={14} /></button>
+                                <button class="card-action-btn" use:tooltip={$t('downloads.openLink')} onclick={(e) => { e.stopPropagation(); handleOpenLink(e, subItem.url); }}><Icon name="link" size={14} /></button>
+                                <button class="card-action-btn delete" use:tooltip={$t('downloads.delete')} onclick={(e) => { e.stopPropagation(); handleDelete(e, subItem.id); }}><Icon name="trash" size={14} /></button>
                               </div>
                             </div>
                           {:else if hoveredItemId === subItem.id && fileMissing}
                             <div class="card-overlay missing">
                               <div class="card-actions-bar">
-                                <button
-                                  class="card-action-btn"
-                                  use:tooltip={$t('downloads.redownload')}
-                                  onclick={(e) => {
-                                    e.stopPropagation();
-                                    handleRedownload(e, subItem.url);
-                                  }}
-                                >
-                                  <Icon name="download" size={14} />
-                                </button>
-                                <button
-                                  class="card-action-btn"
-                                  use:tooltip={$t('downloads.openLink')}
-                                  onclick={(e) => {
-                                    e.stopPropagation();
-                                    handleOpenLink(e, subItem.url);
-                                  }}
-                                >
-                                  <Icon name="link" size={14} />
-                                </button>
-                                <button
-                                  class="card-action-btn delete"
-                                  use:tooltip={$t('downloads.delete')}
-                                  onclick={(e) => {
-                                    e.stopPropagation();
-                                    handleDelete(e, subItem.id);
-                                  }}
-                                >
-                                  <Icon name="trash" size={14} />
-                                </button>
+                                <button class="card-action-btn" use:tooltip={$t('downloads.redownload')} onclick={(e) => { e.stopPropagation(); handleRedownload(e, subItem.url); }}><Icon name="download" size={14} /></button>
+                                <button class="card-action-btn" use:tooltip={$t('downloads.openLink')} onclick={(e) => { e.stopPropagation(); handleOpenLink(e, subItem.url); }}><Icon name="link" size={14} /></button>
+                                <button class="card-action-btn delete" use:tooltip={$t('downloads.delete')} onclick={(e) => { e.stopPropagation(); handleDelete(e, subItem.id); }}><Icon name="trash" size={14} /></button>
                               </div>
                             </div>
                           {/if}
@@ -868,26 +1129,17 @@
                         <div class="card-info">
                           <!-- svelte-ignore a11y_click_events_have_key_events -->
                           <!-- svelte-ignore a11y_no_static_element_interactions -->
-                          <span
-                            class="card-title clickable"
-                            onclick={(e) => handleOpenVideoView(e, subItem)}
-                            title={$t('downloads.openInApp')}>{subItem.title}</span
-                          >
+                          <span class="card-title clickable" onclick={(e) => handleOpenVideoView(e, subItem)} title={$t('downloads.openInApp')}>{subItem.title}</span>
                           <div class="card-meta">
                             <!-- svelte-ignore a11y_click_events_have_key_events -->
                             <!-- svelte-ignore a11y_no_static_element_interactions -->
-                            <span
-                              class="card-author clickable"
-                              onclick={(e) => handleOpenChannelView(e, subItem)}
-                              title={$t('downloads.openAuthor')}>{subItem.author}</span
-                            >
+                            <span class="card-author clickable" onclick={(e) => handleOpenChannelView(e, subItem)} title={$t('downloads.openAuthor')}>{subItem.author}</span>
                             <span class="card-size">{formatFileSize(subItem.size)}</span>
                           </div>
                         </div>
                       </div>
                     {/each}
                   {:else}
-                    <!-- Single Item in Grid -->
                     {@const singleItem = item as HistoryItem}
                     {@const fileMissing = isFileMissing(singleItem.id)}
                     <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -900,100 +1152,32 @@
                     >
                       <div class="card-thumbnail">
                         {#if singleItem.thumbnail}
-                          <img
-                            src={singleItem.thumbnail}
-                            alt=""
-                            onload={() => {
-                              extractItemColor(singleItem.id, singleItem.thumbnail);
-                              checkFileExists(singleItem.id, singleItem.filePath);
-                            }}
-                          />
+                          <img src={singleItem.thumbnail} alt="" loading="lazy" decoding="async" onload={() => { extractItemColor(singleItem.id, singleItem.thumbnail); checkFileExists(singleItem.id, singleItem.filePath); }} />
                         {:else}
-                          <div class="card-thumb-placeholder">
-                            <Icon name={getTypeIcon(singleItem.type)} size={32} />
-                          </div>
-                          {(() => {
-                            checkFileExists(singleItem.id, singleItem.filePath);
-                            return '';
-                          })()}
+                          <div class="card-thumb-placeholder"><Icon name={getTypeIcon(singleItem.type)} size={32} /></div>
+                          {(() => { checkFileExists(singleItem.id, singleItem.filePath); return ''; })()}
                         {/if}
-                        {#if singleItem.duration > 0}
-                          <span class="duration-badge">{formatDuration(singleItem.duration)}</span>
-                        {/if}
+                        {#if singleItem.duration > 0}<span class="duration-badge">{formatDuration(singleItem.duration)}</span>{/if}
                         <span class="type-badge">{singleItem.extension.toUpperCase()}</span>
-                        <!-- Missing file indicator -->
                         {#if fileMissing}
-                          <div
-                            class="missing-file-overlay"
-                            use:tooltip={$t('downloads.fileMissing')}
-                          >
-                            <Icon name="trash" size={24} />
-                          </div>
+                          <div class="missing-file-overlay" use:tooltip={$t('downloads.fileMissing')}><Icon name="trash" size={24} /></div>
                         {/if}
                         {#if hoveredItemId === singleItem.id && !fileMissing}
                           <div class="card-overlay">
-                            <button
-                              class="play-overlay"
-                              onclick={(e) => handlePlayFile(e, singleItem.filePath)}
-                              use:tooltip={$t('downloads.play')}
-                            >
-                              <Icon name="play" size={24} />
-                            </button>
+                            <button class="play-overlay" onclick={(e) => handlePlayFile(e, singleItem.filePath)} use:tooltip={$t('downloads.play')}><Icon name="play" size={24} /></button>
                             <div class="card-actions-bar">
-                              <button
-                                class="card-action-btn"
-                                use:tooltip={$t('downloads.openFolder')}
-                                onclick={(e) => handleOpenFile(e, singleItem.filePath)}
-                              >
-                                <Icon name="folder" size={14} />
-                              </button>
-                              <button
-                                class="card-action-btn"
-                                use:tooltip={$t('downloads.redownload')}
-                                onclick={(e) => handleRedownload(e, singleItem.url)}
-                              >
-                                <Icon name="download" size={14} />
-                              </button>
-                              <button
-                                class="card-action-btn"
-                                use:tooltip={$t('downloads.openLink')}
-                                onclick={(e) => handleOpenLink(e, singleItem.url)}
-                              >
-                                <Icon name="link" size={14} />
-                              </button>
-                              <button
-                                class="card-action-btn delete"
-                                use:tooltip={$t('downloads.delete')}
-                                onclick={(e) => handleDelete(e, singleItem.id)}
-                              >
-                                <Icon name="trash" size={14} />
-                              </button>
+                              <button class="card-action-btn" use:tooltip={$t('downloads.openFolder')} onclick={(e) => handleOpenFile(e, singleItem.filePath)}><Icon name="folder" size={14} /></button>
+                              <button class="card-action-btn" use:tooltip={$t('downloads.redownload')} onclick={(e) => handleRedownload(e, singleItem.url)}><Icon name="download" size={14} /></button>
+                              <button class="card-action-btn" use:tooltip={$t('downloads.openLink')} onclick={(e) => handleOpenLink(e, singleItem.url)}><Icon name="link" size={14} /></button>
+                              <button class="card-action-btn delete" use:tooltip={$t('downloads.delete')} onclick={(e) => handleDelete(e, singleItem.id)}><Icon name="trash" size={14} /></button>
                             </div>
                           </div>
                         {:else if hoveredItemId === singleItem.id && fileMissing}
                           <div class="card-overlay missing">
                             <div class="card-actions-bar">
-                              <button
-                                class="card-action-btn"
-                                use:tooltip={$t('downloads.redownload')}
-                                onclick={(e) => handleRedownload(e, singleItem.url)}
-                              >
-                                <Icon name="download" size={14} />
-                              </button>
-                              <button
-                                class="card-action-btn"
-                                use:tooltip={$t('downloads.openLink')}
-                                onclick={(e) => handleOpenLink(e, singleItem.url)}
-                              >
-                                <Icon name="link" size={14} />
-                              </button>
-                              <button
-                                class="card-action-btn delete"
-                                use:tooltip={$t('downloads.delete')}
-                                onclick={(e) => handleDelete(e, singleItem.id)}
-                              >
-                                <Icon name="trash" size={14} />
-                              </button>
+                              <button class="card-action-btn" use:tooltip={$t('downloads.redownload')} onclick={(e) => handleRedownload(e, singleItem.url)}><Icon name="download" size={14} /></button>
+                              <button class="card-action-btn" use:tooltip={$t('downloads.openLink')} onclick={(e) => handleOpenLink(e, singleItem.url)}><Icon name="link" size={14} /></button>
+                              <button class="card-action-btn delete" use:tooltip={$t('downloads.delete')} onclick={(e) => handleDelete(e, singleItem.id)}><Icon name="trash" size={14} /></button>
                             </div>
                           </div>
                         {/if}
@@ -1001,19 +1185,11 @@
                       <div class="card-info">
                         <!-- svelte-ignore a11y_click_events_have_key_events -->
                         <!-- svelte-ignore a11y_no_static_element_interactions -->
-                        <span
-                          class="card-title clickable"
-                          onclick={(e) => handleOpenVideoView(e, singleItem)}
-                          title={$t('downloads.openInApp')}>{singleItem.title}</span
-                        >
+                        <span class="card-title clickable" onclick={(e) => handleOpenVideoView(e, singleItem)} title={$t('downloads.openInApp')}>{singleItem.title}</span>
                         <div class="card-meta">
                           <!-- svelte-ignore a11y_click_events_have_key_events -->
                           <!-- svelte-ignore a11y_no_static_element_interactions -->
-                          <span
-                            class="card-author clickable"
-                            onclick={(e) => handleOpenChannelView(e, singleItem)}
-                            title={$t('downloads.openAuthor')}>{singleItem.author}</span
-                          >
+                          <span class="card-author clickable" onclick={(e) => handleOpenChannelView(e, singleItem)} title={$t('downloads.openAuthor')}>{singleItem.author}</span>
                           <span class="card-size">{formatFileSize(singleItem.size)}</span>
                         </div>
                       </div>
@@ -1021,324 +1197,36 @@
                   {/if}
                 {/each}
               </div>
-            {:else}
-              <!-- List View -->
-              {#each group.items as item}
-                {#if isPlaylistGroup(item)}
-                  <!-- Playlist Group in List - matches queue style -->
-                  {@const playlistGroup = item as HistoryPlaylistGroup}
-                  {@const isExpanded = !collapsedHistoryPlaylists.has(playlistGroup.playlistId)}
-                  {@const playlistThumb = playlistGroup.items[0]?.thumbnail}
-                  <div class="playlist-group" class:collapsed={!isExpanded}>
-                    <!-- Playlist Header Row - grid layout matching history-item columns -->
-                    <!-- svelte-ignore a11y_no_static_element_interactions -->
-                    <!-- svelte-ignore a11y_click_events_have_key_events -->
-                    <div
-                      class="playlist-header-row"
-                      onclick={() => toggleHistoryPlaylistExpanded(playlistGroup.playlistId)}
-                    >
-                      <div class="col-thumb">
-                        <div class="playlist-thumb">
-                          {#if playlistThumb}
-                            <img src={playlistThumb} alt="" />
-                          {:else}
-                            <Icon name="playlist" size={16} />
-                          {/if}
-                        </div>
-                      </div>
-                      <div class="col-metadata">
-                        <span class="item-title">
-                          <span class="expand-icon" class:expanded={isExpanded}>
-                            <Icon name="chevron_down" size={14} />
-                          </span>
-                          {playlistGroup.playlistTitle}
-                        </span>
-                        <span class="item-author">{playlistGroup.items.length} items</span>
-                      </div>
-                      <div class="col-actions"></div>
-                      <div class="col-ext"></div>
-                      <div class="col-size">{formatFileSize(playlistGroup.totalSize)}</div>
-                      <div class="col-length">{formatDuration(playlistGroup.totalDuration)}</div>
-                      <button
-                        class="open-file-btn"
-                        onclick={(e) => {
-                          e.stopPropagation();
-                          handleOpenFile(e, playlistGroup.items[0]?.filePath);
-                        }}
-                        use:tooltip={$t('downloads.openFolder')}
-                      >
-                        <Icon name="folder" size={16} />
-                      </button>
-                    </div>
-
-                    <!-- Playlist Items (collapsible) -->
-                    {#if isExpanded}
-                      <div class="playlist-items">
-                        {#each playlistGroup.items as subItem (subItem.id)}
-                          {@const fileMissing = isFileMissing(subItem.id)}
-                          <!-- svelte-ignore a11y_no_static_element_interactions -->
-                          <div
-                            class="history-item playlist-child"
-                            class:file-missing={fileMissing}
-                            style={getItemColorStyle(subItem.id)}
-                            onmouseenter={() => (hoveredItemId = subItem.id)}
-                            onmouseleave={() => (hoveredItemId = null)}
-                          >
-                            <div class="col-thumb">
-                              {#if subItem.thumbnail}
-                                <img
-                                  src={subItem.thumbnail}
-                                  alt=""
-                                  class="thumbnail"
-                                  onload={() => {
-                                    extractItemColor(subItem.id, subItem.thumbnail);
-                                    checkFileExists(subItem.id, subItem.filePath);
-                                  }}
-                                />
-                              {:else}
-                                <div class="thumbnail-placeholder">
-                                  <Icon name={getTypeIcon(subItem.type)} size={20} />
-                                </div>
-                                {(() => {
-                                  checkFileExists(subItem.id, subItem.filePath);
-                                  return '';
-                                })()}
-                              {/if}
-                              {#if fileMissing}
-                                <div
-                                  class="thumb-missing-indicator"
-                                  use:tooltip={$t('downloads.fileMissing')}
-                                >
-                                  <Icon name="trash" size={12} />
-                                </div>
-                              {:else if hoveredItemId === subItem.id}
-                                <button
-                                  class="thumb-play-overlay"
-                                  onclick={(e) => handlePlayFile(e, subItem.filePath)}
-                                  use:tooltip={$t('downloads.play')}
-                                >
-                                  <Icon name="play" size={16} />
-                                </button>
-                              {/if}
-                            </div>
-                            <div class="col-metadata">
-                              <!-- svelte-ignore a11y_click_events_have_key_events -->
-                              <!-- svelte-ignore a11y_no_static_element_interactions -->
-                              <span
-                                class="item-title clickable"
-                                onclick={(e) => handleOpenVideoView(e, subItem)}
-                                title={$t('downloads.openInApp')}>{subItem.title}</span
-                              >
-                              <!-- svelte-ignore a11y_click_events_have_key_events -->
-                              <!-- svelte-ignore a11y_no_static_element_interactions -->
-                              <span
-                                class="item-author clickable"
-                                onclick={(e) => handleOpenChannelView(e, subItem)}
-                                title={$t('downloads.openAuthor')}>{subItem.author}</span
-                              >
-                            </div>
-                            <div class="col-actions">
-                              {#if hoveredItemId === subItem.id}
-                                <div class="action-buttons">
-                                  <button
-                                    class="action-btn"
-                                    use:tooltip={$t('downloads.redownload')}
-                                    onclick={(e) => handleRedownload(e, subItem.url)}
-                                  >
-                                    <Icon name="download" size={16} />
-                                  </button>
-                                </div>
-                                <div class="action-buttons secondary">
-                                  <button
-                                    class="action-btn"
-                                    use:tooltip={$t('downloads.openLink')}
-                                    onclick={(e) => handleOpenLink(e, subItem.url)}
-                                  >
-                                    <Icon name="link" size={16} />
-                                  </button>
-                                  <button
-                                    class="action-btn delete"
-                                    use:tooltip={$t('downloads.delete')}
-                                    onclick={(e) => handleDelete(e, subItem.id)}
-                                  >
-                                    <Icon name="trash" size={16} />
-                                  </button>
-                                </div>
-                              {/if}
-                            </div>
-                            <div class="col-ext">
-                              <span class="ext-badge">{subItem.extension.toUpperCase()}</span>
-                            </div>
-                            <div class="col-size">
-                              {formatFileSize(subItem.size)}
-                            </div>
-                            <div class="col-length">
-                              {formatDuration(subItem.duration)}
-                            </div>
-                            <button
-                              class="open-file-btn"
-                              use:tooltip={$t('downloads.openFolder')}
-                              onclick={(e) => handleOpenFile(e, subItem.filePath)}
-                            >
-                              <Icon name="folder" size={16} />
-                            </button>
-                          </div>
-                        {/each}
-                      </div>
-                    {/if}
-                  </div>
-                {:else}
-                  <!-- Single Item in List -->
-                  {@const singleItem = item as HistoryItem}
-                  {@const fileMissing = isFileMissing(singleItem.id)}
-                  <!-- svelte-ignore a11y_no_static_element_interactions -->
-                  <div
-                    class="history-item"
-                    class:file-missing={fileMissing}
-                    style={getItemColorStyle(singleItem.id)}
-                    onmouseenter={() => (hoveredItemId = singleItem.id)}
-                    onmouseleave={() => (hoveredItemId = null)}
-                  >
-                    <div class="col-thumb">
-                      {#if singleItem.thumbnail}
-                        <img
-                          src={singleItem.thumbnail}
-                          alt=""
-                          class="thumbnail"
-                          onload={() => {
-                            extractItemColor(singleItem.id, singleItem.thumbnail);
-                            checkFileExists(singleItem.id, singleItem.filePath);
-                          }}
-                        />
-                      {:else}
-                        <div class="thumbnail-placeholder">
-                          <Icon name={getTypeIcon(singleItem.type)} size={20} />
-                        </div>
-                        {(() => {
-                          checkFileExists(singleItem.id, singleItem.filePath);
-                          return '';
-                        })()}
-                      {/if}
-                      {#if fileMissing}
-                        <div
-                          class="thumb-missing-indicator"
-                          use:tooltip={$t('downloads.fileMissing')}
-                        >
-                          <Icon name="trash" size={12} />
-                        </div>
-                      {:else if hoveredItemId === singleItem.id}
-                        <button
-                          class="thumb-play-overlay"
-                          onclick={(e) => handlePlayFile(e, singleItem.filePath)}
-                          use:tooltip={$t('downloads.play')}
-                        >
-                          <Icon name="play" size={16} />
-                        </button>
-                      {/if}
-                    </div>
-                    <div class="col-metadata">
-                      <!-- svelte-ignore a11y_click_events_have_key_events -->
-                      <!-- svelte-ignore a11y_no_static_element_interactions -->
-                      <span
-                        class="item-title clickable"
-                        onclick={(e) => handleOpenVideoView(e, singleItem)}
-                        title={$t('downloads.openInApp')}>{singleItem.title}</span
-                      >
-                      <!-- svelte-ignore a11y_click_events_have_key_events -->
-                      <!-- svelte-ignore a11y_no_static_element_interactions -->
-                      <span
-                        class="item-author clickable"
-                        onclick={(e) => handleOpenChannelView(e, singleItem)}
-                        title={$t('downloads.openAuthor')}>{singleItem.author}</span
-                      >
-                    </div>
-                    <div class="col-actions">
-                      {#if hoveredItemId === singleItem.id}
-                        <div class="action-buttons">
-                          <button
-                            class="action-btn"
-                            use:tooltip={$t('downloads.redownload')}
-                            onclick={(e) => handleRedownload(e, singleItem.url)}
-                          >
-                            <Icon name="download" size={16} />
-                          </button>
-                          <button
-                            class="action-btn expand"
-                            use:tooltip={$t('downloads.moreOptions')}
-                          >
-                            <Icon name="chevron_down" size={16} />
-                          </button>
-                        </div>
-                        <div class="action-buttons secondary">
-                          <button
-                            class="action-btn"
-                            use:tooltip={$t('downloads.openLink')}
-                            onclick={(e) => handleOpenLink(e, singleItem.url)}
-                          >
-                            <Icon name="link" size={16} />
-                          </button>
-                          <button
-                            class="action-btn delete"
-                            use:tooltip={$t('downloads.delete')}
-                            onclick={(e) => handleDelete(e, singleItem.id)}
-                          >
-                            <Icon name="trash" size={16} />
-                          </button>
-                        </div>
-                      {/if}
-                    </div>
-                    <div class="col-ext">
-                      <span class="ext-badge">{singleItem.extension.toUpperCase()}</span>
-                    </div>
-                    <div class="col-size">
-                      {formatFileSize(singleItem.size)}
-                    </div>
-                    <div class="col-length">
-                      {formatDuration(singleItem.duration)}
-                    </div>
-                    <button
-                      class="open-file-btn"
-                      use:tooltip={$t('downloads.openFolder')}
-                      onclick={(e) => handleOpenFile(e, singleItem.filePath)}
-                    >
-                      <Icon name="folder" size={16} />
-                    </button>
-                  </div>
-                {/if}
-              {/each}
-            {/if}
-          </div>
-        {/each}
-
-        <p class="end-message">{$t('downloads.endMessage')}</p>
-
-        <!-- Statistics Bar -->
-        {#if $settings.showHistoryStats && $historyStats.totalDownloads > 0}
-          <div class="stats-bar">
-            <div class="stat-item">
-              <span class="stat-value">{$historyStats.totalDownloads}</span>
-              <span class="stat-label">{$t('downloads.stats.totalDownloads')}</span>
             </div>
-            <div class="stat-divider"></div>
-            <div class="stat-item">
-              <span class="stat-value">{formatFileSize($historyStats.totalSize)}</span>
-              <span class="stat-label">{$t('downloads.stats.totalSize')}</span>
+          {/each}
+          <p class="end-message">{$t('downloads.endMessage')}</p>
+          {#if $settings.showHistoryStats && $historyStats.totalDownloads > 0}
+            <div class="stats-bar">
+              <div class="stat-item">
+                <span class="stat-value">{$historyStats.totalDownloads}</span>
+                <span class="stat-label">{$t('downloads.stats.totalDownloads')}</span>
+              </div>
+              <div class="stat-divider"></div>
+              <div class="stat-item">
+                <span class="stat-value">{formatFileSize($historyStats.totalSize)}</span>
+                <span class="stat-label">{$t('downloads.stats.totalSize')}</span>
+              </div>
+              <div class="stat-divider"></div>
+              <div class="stat-item">
+                <span class="stat-value">{formatDuration($historyStats.totalDuration)}</span>
+                <span class="stat-label">{$t('downloads.stats.totalDuration')}</span>
+              </div>
+              <div class="stat-divider"></div>
+              <div class="stat-item">
+                <span class="stat-value">{$historyStats.mostCommonFormat.toUpperCase()}</span>
+                <span class="stat-label">{$t('downloads.stats.mostCommon')}</span>
+              </div>
             </div>
-            <div class="stat-divider"></div>
-            <div class="stat-item">
-              <span class="stat-value">{formatDuration($historyStats.totalDuration)}</span>
-              <span class="stat-label">{$t('downloads.stats.totalDuration')}</span>
-            </div>
-            <div class="stat-divider"></div>
-            <div class="stat-item">
-              <span class="stat-value">{$historyStats.mostCommonFormat.toUpperCase()}</span>
-              <span class="stat-label">{$t('downloads.stats.mostCommon')}</span>
-            </div>
-          </div>
+          {/if}
         {/if}
-      {/if}
-    </div>
-  </ScrollArea>
+      </div>
+    {/if}
+  </div>
 </div>
 
 <style>
@@ -1347,6 +1235,16 @@
     height: 100%;
     display: flex;
     flex-direction: column;
+  }
+
+  .scroll-container {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-height: 0;
+    margin-right: 4px;
+    margin-bottom: 4px;
+    padding-right: 6px;
   }
 
   /* Active Downloads Section */
@@ -1811,16 +1709,6 @@
     border-top: 1px solid rgba(255, 255, 255, 0.06);
   }
 
-  /* Playlist child items use same grid as regular history items */
-  .playlist-items .history-item.playlist-child {
-    border-radius: 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  }
-
-  .playlist-items .history-item.playlist-child:last-child {
-    border-bottom: none;
-  }
-
   .playlist-item {
     border-radius: 0;
     border: none;
@@ -1949,16 +1837,37 @@
     padding-bottom: 16px;
   }
 
+  .virtual-spacer {
+    position: relative;
+    width: 100%;
+  }
+
+  .virtual-content {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    will-change: transform;
+  }
+
+  .date-header {
+    display: flex;
+    align-items: center;
+    padding: 12px 12px 8px;
+  }
+
   .date-group {
     margin-bottom: 8px;
+    content-visibility: auto;
+    contain-intrinsic-size: auto 300px;
   }
 
   .date-label {
     display: block;
-    font-size: 13px;
-    font-weight: 600;
+    font-size: 12px;
+    font-weight: 325;
     color: rgba(255, 255, 255, 0.6);
-    padding: 12px 12px 8px;
+    padding: 12px 0 8px;
   }
 
   .history-item {
@@ -2189,6 +2098,8 @@
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     gap: 12px;
     padding: 0;
+    content-visibility: auto;
+    contain-intrinsic-size: auto 400px;
   }
 
   .grid-card {
@@ -2198,6 +2109,8 @@
     overflow: hidden;
     transition: all 0.2s ease;
     cursor: pointer;
+    content-visibility: auto;
+    contain-intrinsic-size: auto 200px;
   }
 
   .grid-card:hover {

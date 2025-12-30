@@ -18,7 +18,6 @@
   import Modal from '$lib/components/Modal.svelte';
   import Checkbox from '$lib/components/Checkbox.svelte';
   import Divider from '$lib/components/Divider.svelte';
-  import PlaylistModal from '$lib/components/PlaylistModal.svelte';
   import PlaylistBuilder, {
     type PlaylistSelection,
     type SelectedEntry,

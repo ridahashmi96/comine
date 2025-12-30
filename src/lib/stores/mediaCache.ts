@@ -1,11 +1,11 @@
-import { writable, derived, get } from 'svelte/store';
+import { writable, derived } from 'svelte/store';
 
 export interface MediaPreview {
   title?: string;
   thumbnail?: string;
   author?: string;
   duration?: number;
-  entryCount?: number; // For playlists
+  entryCount?: number;
   isPlaylist?: boolean;
   isMusic?: boolean;
 }
@@ -87,29 +87,28 @@ export interface ChannelInfo {
   hasMore: boolean;
 }
 
+export type UIState = {
+  scrollTop: number;
+  selectedMode?: 'all' | 'some';
+  selectedIds: string[];
+  deselectedIds?: string[];
+  perItemSettings: Record<string, unknown>;
+  viewMode: 'list' | 'grid';
+  searchQuery: string;
+  selectedVideo: string;
+  selectedAudio: string;
+  channelTab?: 'videos' | 'shorts' | 'live';
+};
+
 export interface CacheEntry {
   url: string;
   type: 'video' | 'playlist' | 'channel' | 'unknown';
-
   preview: MediaPreview | null;
   videoInfo: VideoInfo | null;
   formats: VideoFormat[] | null;
   playlistInfo: PlaylistInfo | null;
   channelInfo: ChannelInfo | null;
-
-  uiState: {
-    scrollTop: number;
-    selectedMode?: 'all' | 'some';
-    selectedIds: string[];
-    deselectedIds?: string[];
-    perItemSettings: Record<string, any>;
-    viewMode: 'list' | 'grid';
-    searchQuery: string;
-    selectedVideo: string;
-    selectedAudio: string;
-    channelTab?: 'videos' | 'shorts' | 'live';
-  } | null;
-
+  uiState: UIState | null;
   createdAt: number;
   lastAccessedAt: number;
   previewUpdatedAt: number | null;
@@ -120,8 +119,9 @@ export interface CacheEntry {
 }
 
 const CONFIG = {
-  maxEntries: 100,
-  maxUiStateEntries: 30,
+  maxMetadataEntries: 50,
+  maxHeavyDataEntries: 5,
+  maxFormats: 15,
   ttl: {
     preview: 60 * 60 * 1000,
     videoInfo: 30 * 60 * 1000,
@@ -130,207 +130,226 @@ const CONFIG = {
     channelInfo: 30 * 60 * 1000,
     uiState: 60 * 60 * 1000,
   },
-
   debug: false,
 };
 
-class UnifiedMediaCache {
-  private cache: Map<string, CacheEntry> = new Map();
-  private accessOrder: string[] = [];
-  private store = writable<Map<string, CacheEntry>>(this.cache);
+const DEFAULT_UI_STATE: UIState = {
+  scrollTop: 0,
+  selectedMode: 'some',
+  selectedIds: [],
+  deselectedIds: [],
+  perItemSettings: {},
+  viewMode: 'list',
+  searchQuery: '',
+  selectedVideo: 'best',
+  selectedAudio: 'best',
+};
 
-  private uiStateCache: Map<string, { state: NonNullable<CacheEntry['uiState']>; updatedAt: number }> =
-    new Map();
-  private uiStateAccessOrder: string[] = [];
+interface MetadataEntry {
+  url: string;
+  type: 'video' | 'playlist' | 'channel' | 'unknown';
+  preview: MediaPreview | null;
+  videoInfo: VideoInfo | null;
+  formats: VideoFormat[] | null;
+  uiState: UIState | null;
+  createdAt: number;
+  lastAccessedAt: number;
+  previewUpdatedAt: number | null;
+  videoInfoUpdatedAt: number | null;
+  formatsUpdatedAt: number | null;
+}
 
-  private normalizeUrl(url: string): string {
-    if (!url) return '';
+interface HeavyDataEntry {
+  playlistInfo: PlaylistInfo | null;
+  channelInfo: ChannelInfo | null;
+  playlistInfoUpdatedAt: number | null;
+  channelInfoUpdatedAt: number | null;
+}
 
-    try {
-      const parsed = new URL(url);
-
-      if (parsed.hostname.includes('youtube.com') || parsed.hostname.includes('youtu.be')) {
-        if (parsed.hostname.includes('youtu.be')) {
-          const videoId = parsed.pathname.slice(1);
-          const playlistId = parsed.searchParams.get('list');
-          if (playlistId) {
-            return `youtube:playlist:${playlistId}`;
-          }
-          return `youtube:video:${videoId}`;
-        }
-
-        const videoId = parsed.searchParams.get('v');
+function normalizeUrl(url: string): string {
+  if (!url) return '';
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname.includes('youtube.com') || parsed.hostname.includes('youtu.be')) {
+      if (parsed.hostname.includes('youtu.be')) {
+        const videoId = parsed.pathname.slice(1);
         const playlistId = parsed.searchParams.get('list');
-
-        if (parsed.pathname.includes('/playlist') && playlistId) {
-          return `youtube:playlist:${playlistId}`;
-        }
-
-        if (videoId) {
-          return `youtube:video:${videoId}`;
-        }
-
-        if (parsed.pathname.includes('/@') || parsed.pathname.includes('/channel/')) {
-          const channelPart = parsed.pathname.split('/').filter(Boolean).slice(0, 2).join('/');
-          return `youtube:channel:${channelPart}`;
-        }
+        return playlistId ? `youtube:playlist:${playlistId}` : `youtube:video:${videoId}`;
       }
-
-      parsed.hash = '';
-      return parsed.toString();
-    } catch {
-      return url;
+      const videoId = parsed.searchParams.get('v');
+      const playlistId = parsed.searchParams.get('list');
+      if (parsed.pathname.includes('/playlist') && playlistId) {
+        return `youtube:playlist:${playlistId}`;
+      }
+      if (videoId) return `youtube:video:${videoId}`;
+      if (parsed.pathname.includes('/@') || parsed.pathname.includes('/channel/')) {
+        const channelPart = parsed.pathname.split('/').filter(Boolean).slice(0, 2).join('/');
+        return `youtube:channel:${channelPart}`;
+      }
     }
+    parsed.hash = '';
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+function detectType(url: string): 'video' | 'playlist' | 'channel' | 'unknown' {
+  const lower = url.toLowerCase();
+  if (lower.includes('/@') || lower.includes('/channel/') || lower.includes('/c/') || lower.includes('/user/')) {
+    return 'channel';
+  }
+  if (lower.includes('/playlist') || (lower.includes('list=') && !lower.includes('v=')) || lower.includes('/albums/') || lower.includes('/sets/')) {
+    return 'playlist';
+  }
+  if (lower.includes('youtube.com/watch') || lower.includes('youtu.be/') || lower.includes('youtube.com/shorts/') || lower.includes('music.youtube.com/watch')) {
+    return 'video';
+  }
+  return 'unknown';
+}
+
+function isExpired(timestamp: number | null, ttl: number): boolean {
+  return !timestamp || Date.now() - timestamp > ttl;
+}
+
+class LRUMap<K, V> {
+  private map = new Map<K, V>();
+  private order: K[] = [];
+
+  constructor(private maxSize: number) {}
+
+  get(key: K): V | undefined {
+    const value = this.map.get(key);
+    if (value !== undefined) {
+      this.touch(key);
+    }
+    return value;
+  }
+
+  set(key: K, value: V): void {
+    if (!this.map.has(key)) {
+      this.order.push(key);
+    }
+    this.map.set(key, value);
+    this.touch(key);
+    this.evict();
+  }
+
+  has(key: K): boolean {
+    return this.map.has(key);
+  }
+
+  delete(key: K): void {
+    this.map.delete(key);
+    this.order = this.order.filter((k) => k !== key);
+  }
+
+  clear(): void {
+    this.map.clear();
+    this.order = [];
+  }
+
+  get size(): number {
+    return this.map.size;
+  }
+
+  values(): IterableIterator<V> {
+    return this.map.values();
+  }
+
+  entries(): IterableIterator<[K, V]> {
+    return this.map.entries();
+  }
+
+  private touch(key: K): void {
+    const idx = this.order.indexOf(key);
+    if (idx !== -1) {
+      this.order.splice(idx, 1);
+    }
+    this.order.push(key);
+  }
+
+  private evict(): void {
+    while (this.map.size > this.maxSize && this.order.length > 0) {
+      const oldest = this.order.shift()!;
+      this.map.delete(oldest);
+    }
+  }
+}
+
+class UnifiedMediaCache {
+  private metadata = new LRUMap<string, MetadataEntry>(CONFIG.maxMetadataEntries);
+  private heavyData = new LRUMap<string, HeavyDataEntry>(CONFIG.maxHeavyDataEntries);
+  private store = writable(0);
+  private version = 0;
+
+  private getOrCreateMetadata(url: string): MetadataEntry {
+    const key = normalizeUrl(url);
+    let entry = this.metadata.get(key);
+    if (!entry) {
+      entry = {
+        url,
+        type: detectType(url),
+        preview: null,
+        videoInfo: null,
+        formats: null,
+        uiState: null,
+        createdAt: Date.now(),
+        lastAccessedAt: Date.now(),
+        previewUpdatedAt: null,
+        videoInfoUpdatedAt: null,
+        formatsUpdatedAt: null,
+      };
+      this.metadata.set(key, entry);
+    }
+    return entry;
   }
 
   get(url: string): CacheEntry | null {
-    const key = this.normalizeUrl(url);
-    const entry = this.cache.get(key);
-
-    if (!entry) {
+    const key = normalizeUrl(url);
+    const meta = this.metadata.get(key);
+    if (!meta) {
       this.log('MISS', url);
       return null;
     }
-
-    this.touchAccessOrder(key);
-
-    entry.lastAccessedAt = Date.now();
-
-    this.log('HIT', url, entry);
-    return entry;
+    meta.lastAccessedAt = Date.now();
+    const heavy = this.heavyData.get(key);
+    this.log('HIT', url);
+    return {
+      ...meta,
+      playlistInfo: heavy?.playlistInfo ?? null,
+      channelInfo: heavy?.channelInfo ?? null,
+      playlistInfoUpdatedAt: heavy?.playlistInfoUpdatedAt ?? null,
+      channelInfoUpdatedAt: heavy?.channelInfoUpdatedAt ?? null,
+    };
   }
 
   has(url: string): boolean {
-    const key = this.normalizeUrl(url);
-    return this.cache.has(key);
+    return this.metadata.has(normalizeUrl(url));
   }
 
-  private getOrCreate(url: string, opts?: { notify?: boolean }): CacheEntry {
-    const key = this.normalizeUrl(url);
-    let entry = this.cache.get(key);
-    const shouldNotify = opts?.notify ?? true;
-
-    if (!entry) {
-      entry = this.createEntry(url);
-      this.cache.set(key, entry);
-      this.touchAccessOrder(key);
-      this.evictIfNeeded();
-      if (shouldNotify) {
-        this.notifyChange();
-      }
-    }
-
-    return entry;
-  }
-
-  private createEntry(url: string): CacheEntry {
-    return {
-      url,
-      type: this.detectType(url),
-      preview: null,
-      videoInfo: null,
-      formats: null,
-      playlistInfo: null,
-      channelInfo: null,
-      uiState: null,
-      createdAt: Date.now(),
-      lastAccessedAt: Date.now(),
-      previewUpdatedAt: null,
-      videoInfoUpdatedAt: null,
-      formatsUpdatedAt: null,
-      playlistInfoUpdatedAt: null,
-      channelInfoUpdatedAt: null,
-    };
-  }
-
-  private touchUiStateAccessOrder(key: string): void {
-    const idx = this.uiStateAccessOrder.indexOf(key);
-    if (idx !== -1) {
-      this.uiStateAccessOrder.splice(idx, 1);
-    }
-    this.uiStateAccessOrder.push(key);
-  }
-
-  private evictUiStateIfNeeded(): void {
-    while (this.uiStateCache.size > CONFIG.maxUiStateEntries && this.uiStateAccessOrder.length > 0) {
-      const oldest = this.uiStateAccessOrder.shift()!;
-      this.uiStateCache.delete(oldest);
-      this.log('EVICT_UI_STATE', oldest);
-    }
-  }
-
-  private detectType(url: string): 'video' | 'playlist' | 'channel' | 'unknown' {
-    const lower = url.toLowerCase();
-
-    if (
-      lower.includes('/@') ||
-      lower.includes('/channel/') ||
-      lower.includes('/c/') ||
-      lower.includes('/user/')
-    ) {
-      return 'channel';
-    }
-
-    if (
-      lower.includes('/playlist') ||
-      (lower.includes('list=') && !lower.includes('v=')) ||
-      lower.includes('/albums/') ||
-      lower.includes('/sets/')
-    ) {
-      return 'playlist';
-    }
-
-    if (
-      lower.includes('youtube.com/watch') ||
-      lower.includes('youtu.be/') ||
-      lower.includes('youtube.com/shorts/') ||
-      lower.includes('music.youtube.com/watch')
-    ) {
-      return 'video';
-    }
-
-    return 'unknown';
-  }
-
-  private setPreviewInternal(
-    url: string,
-    preview: MediaPreview,
-    opts?: { notify?: boolean; log?: boolean }
-  ): void {
-    const shouldNotify = opts?.notify ?? true;
-    const entry = this.getOrCreate(url, { notify: shouldNotify });
-
-    entry.preview = {
-      ...entry.preview,
-      ...preview,
-    };
-    entry.previewUpdatedAt = Date.now();
-    entry.lastAccessedAt = Date.now();
-
-    if (preview.isPlaylist !== undefined) {
-      entry.type = preview.isPlaylist ? 'playlist' : 'video';
-    }
-
-    if (opts?.log !== false) {
-      this.log('SET_PREVIEW', url, preview);
-    }
-    if (shouldNotify) {
-      this.notifyChange();
-    }
+  hasHeavyData(url: string): boolean {
+    return this.heavyData.has(normalizeUrl(url));
   }
 
   setPreview(url: string, preview: MediaPreview): void {
-    this.setPreviewInternal(url, preview);
+    const entry = this.getOrCreateMetadata(url);
+    entry.preview = { ...entry.preview, ...preview };
+    entry.previewUpdatedAt = Date.now();
+    entry.lastAccessedAt = Date.now();
+    if (preview.isPlaylist !== undefined) {
+      entry.type = preview.isPlaylist ? 'playlist' : 'video';
+    }
+    this.log('SET_PREVIEW', url, preview);
+    this.notify();
   }
 
   setVideoInfo(url: string, info: VideoInfo): void {
-    const entry = this.getOrCreate(url);
-
+    const entry = this.getOrCreateMetadata(url);
     entry.videoInfo = info;
     entry.videoInfoUpdatedAt = Date.now();
     entry.lastAccessedAt = Date.now();
     entry.type = 'video';
-
     entry.preview = {
       ...entry.preview,
       title: info.title,
@@ -340,193 +359,141 @@ class UnifiedMediaCache {
       isPlaylist: false,
     };
     entry.previewUpdatedAt = Date.now();
-
-    this.log('SET_VIDEO_INFO', url, info);
-    this.notifyChange();
+    this.log('SET_VIDEO_INFO', url);
+    this.notify();
   }
 
   setFormats(url: string, formats: VideoFormat[]): void {
-    const entry = this.getOrCreate(url);
-
-    entry.formats = formats;
+    const entry = this.getOrCreateMetadata(url);
+    const sorted = [...formats].sort((a, b) => (b.tbr ?? 0) - (a.tbr ?? 0));
+    entry.formats = sorted.slice(0, CONFIG.maxFormats);
     entry.formatsUpdatedAt = Date.now();
     entry.lastAccessedAt = Date.now();
-
-    this.log('SET_FORMATS', url, `${formats.length} formats`);
-    this.notifyChange();
+    this.log('SET_FORMATS', url, `${formats.length} → ${entry.formats.length} formats`);
+    this.notify();
   }
 
   setPlaylistInfo(url: string, info: PlaylistInfo): void {
-    const entry = this.getOrCreate(url);
-
-    entry.playlistInfo = info;
-    entry.playlistInfoUpdatedAt = Date.now();
-    entry.lastAccessedAt = Date.now();
-    entry.type = 'playlist';
-
-    entry.preview = {
-      ...entry.preview,
+    const key = normalizeUrl(url);
+    const meta = this.getOrCreateMetadata(url);
+    meta.type = 'playlist';
+    meta.preview = {
+      ...meta.preview,
       title: info.title,
-      thumbnail: info.thumbnail ?? entry.preview?.thumbnail,
-      author: info.uploader ?? entry.preview?.author,
+      thumbnail: info.thumbnail ?? meta.preview?.thumbnail,
+      author: info.uploader ?? meta.preview?.author,
       entryCount: info.totalCount,
       isPlaylist: true,
     };
-    entry.previewUpdatedAt = Date.now();
+    meta.previewUpdatedAt = Date.now();
+    meta.lastAccessedAt = Date.now();
 
+    const existing = this.heavyData.get(key);
+    this.heavyData.set(key, {
+      playlistInfo: info,
+      channelInfo: existing?.channelInfo ?? null,
+      playlistInfoUpdatedAt: Date.now(),
+      channelInfoUpdatedAt: existing?.channelInfoUpdatedAt ?? null,
+    });
     this.log('SET_PLAYLIST_INFO', url, `${info.totalCount} entries`);
-    this.notifyChange();
+    this.notify();
   }
 
   setChannelInfo(url: string, info: ChannelInfo): void {
-    const entry = this.getOrCreate(url);
-
-    entry.channelInfo = info;
-    entry.channelInfoUpdatedAt = Date.now();
-    entry.lastAccessedAt = Date.now();
-    entry.type = 'channel';
-
-    entry.preview = {
-      ...entry.preview,
+    const key = normalizeUrl(url);
+    const meta = this.getOrCreateMetadata(url);
+    meta.type = 'channel';
+    meta.preview = {
+      ...meta.preview,
       title: info.name,
-      thumbnail: info.thumbnail ?? entry.preview?.thumbnail,
-      author: info.handle ?? entry.preview?.author,
+      thumbnail: info.thumbnail ?? meta.preview?.thumbnail,
+      author: info.handle ?? meta.preview?.author,
       entryCount: info.totalCount,
       isPlaylist: false,
     };
-    entry.previewUpdatedAt = Date.now();
+    meta.previewUpdatedAt = Date.now();
+    meta.lastAccessedAt = Date.now();
 
+    const existing = this.heavyData.get(key);
+    this.heavyData.set(key, {
+      playlistInfo: existing?.playlistInfo ?? null,
+      channelInfo: info,
+      playlistInfoUpdatedAt: existing?.playlistInfoUpdatedAt ?? null,
+      channelInfoUpdatedAt: Date.now(),
+    });
     this.log('SET_CHANNEL_INFO', url, `${info.totalCount} videos`);
-    this.notifyChange();
+    this.notify();
   }
 
-  setUIState(url: string, state: Partial<NonNullable<CacheEntry['uiState']>>): void {
-    const key = this.normalizeUrl(url);
-    const entry = this.getOrCreate(url);
-
-    const existing = this.getUIState(url);
-    const base: NonNullable<CacheEntry['uiState']> = {
-      scrollTop: 0,
-      selectedMode: 'some',
-      selectedIds: [],
-      deselectedIds: [],
-      perItemSettings: {},
-      viewMode: 'list',
-      searchQuery: '',
-      selectedVideo: 'best',
-      selectedAudio: 'best',
-    };
-
-    const nextState: NonNullable<CacheEntry['uiState']> = {
-      ...base,
-      ...(existing ?? {}),
-      ...state,
-    };
-
-    this.uiStateCache.set(key, { state: nextState, updatedAt: Date.now() });
-    this.touchUiStateAccessOrder(key);
-    this.evictUiStateIfNeeded();
+  setUIState(url: string, state: Partial<UIState>): void {
+    const entry = this.getOrCreateMetadata(url);
+    entry.uiState = { ...DEFAULT_UI_STATE, ...(entry.uiState ?? {}), ...state };
     entry.lastAccessedAt = Date.now();
-
-    this.log('SET_UI_STATE', url, state);
-    this.notifyChange();
+    this.log('SET_UI_STATE', url);
+    this.notify();
   }
 
   getPreview(url: string): MediaPreview | null {
-    const entry = this.get(url);
-    if (!entry?.preview) return null;
-
-    if (entry.previewUpdatedAt && Date.now() - entry.previewUpdatedAt > CONFIG.ttl.preview) {
+    const key = normalizeUrl(url);
+    const entry = this.metadata.get(key);
+    if (!entry?.preview || isExpired(entry.previewUpdatedAt, CONFIG.ttl.preview)) {
       return null;
     }
-
     return entry.preview;
   }
 
   getVideoInfo(url: string): VideoInfo | null {
-    const entry = this.get(url);
-    if (!entry?.videoInfo) return null;
-
-    if (entry.videoInfoUpdatedAt && Date.now() - entry.videoInfoUpdatedAt > CONFIG.ttl.videoInfo) {
+    const key = normalizeUrl(url);
+    const entry = this.metadata.get(key);
+    if (!entry?.videoInfo || isExpired(entry.videoInfoUpdatedAt, CONFIG.ttl.videoInfo)) {
       return null;
     }
-
     return entry.videoInfo;
   }
 
   getFormats(url: string): VideoFormat[] | null {
-    const entry = this.get(url);
-    if (!entry?.formats) return null;
-
-    if (entry.formatsUpdatedAt && Date.now() - entry.formatsUpdatedAt > CONFIG.ttl.formats) {
+    const key = normalizeUrl(url);
+    const entry = this.metadata.get(key);
+    if (!entry?.formats || isExpired(entry.formatsUpdatedAt, CONFIG.ttl.formats)) {
       return null;
     }
-
     return entry.formats;
   }
 
   getPlaylistInfo(url: string): PlaylistInfo | null {
-    const entry = this.get(url);
-    if (!entry?.playlistInfo) return null;
-
-    if (
-      entry.playlistInfoUpdatedAt &&
-      Date.now() - entry.playlistInfoUpdatedAt > CONFIG.ttl.playlistInfo
-    ) {
+    const key = normalizeUrl(url);
+    const heavy = this.heavyData.get(key);
+    if (!heavy?.playlistInfo || isExpired(heavy.playlistInfoUpdatedAt, CONFIG.ttl.playlistInfo)) {
       return null;
     }
-
-    return entry.playlistInfo;
+    return heavy.playlistInfo;
   }
 
   getChannelInfo(url: string): ChannelInfo | null {
-    const entry = this.get(url);
-    if (!entry?.channelInfo) return null;
-
-    if (
-      entry.channelInfoUpdatedAt &&
-      Date.now() - entry.channelInfoUpdatedAt > CONFIG.ttl.channelInfo
-    ) {
+    const key = normalizeUrl(url);
+    const heavy = this.heavyData.get(key);
+    if (!heavy?.channelInfo || isExpired(heavy.channelInfoUpdatedAt, CONFIG.ttl.channelInfo)) {
       return null;
     }
-
-    return entry.channelInfo;
+    return heavy.channelInfo;
   }
 
-  getUIState(url: string): CacheEntry['uiState'] | null {
-    const key = this.normalizeUrl(url);
-    const entry = this.uiStateCache.get(key);
-    if (!entry) return null;
-
-    if (Date.now() - entry.updatedAt > CONFIG.ttl.uiState) {
-      this.uiStateCache.delete(key);
-      this.uiStateAccessOrder = this.uiStateAccessOrder.filter((k) => k !== key);
-      return null;
-    }
-
-    this.touchUiStateAccessOrder(key);
-    return entry.state;
+  getUIState(url: string): UIState | null {
+    const key = normalizeUrl(url);
+    const entry = this.metadata.get(key);
+    return entry?.uiState ?? null;
   }
 
   hasAnyData(url: string): boolean {
     const entry = this.get(url);
     if (!entry) return false;
-
-    return !!(
-      entry.preview ||
-      entry.videoInfo ||
-      entry.formats ||
-      entry.playlistInfo ||
-      entry.channelInfo
-    );
+    return !!(entry.preview || entry.videoInfo || entry.formats || entry.playlistInfo || entry.channelInfo);
   }
 
   getBestPreview(url: string): MediaPreview | null {
     const entry = this.get(url);
     if (!entry) return null;
-
     const preview: MediaPreview = {};
-
     if (entry.videoInfo) {
       preview.title = entry.videoInfo.title;
       preview.thumbnail = entry.videoInfo.thumbnail ?? undefined;
@@ -534,7 +501,6 @@ class UnifiedMediaCache {
       preview.duration = entry.videoInfo.duration ?? undefined;
       preview.isPlaylist = false;
     }
-
     if (entry.channelInfo) {
       preview.title = entry.channelInfo.name;
       preview.thumbnail = entry.channelInfo.thumbnail ?? undefined;
@@ -542,7 +508,6 @@ class UnifiedMediaCache {
       preview.entryCount = entry.channelInfo.totalCount;
       preview.isPlaylist = false;
     }
-
     if (entry.playlistInfo) {
       preview.title = entry.playlistInfo.title;
       preview.thumbnail = entry.playlistInfo.thumbnail ?? undefined;
@@ -550,136 +515,74 @@ class UnifiedMediaCache {
       preview.entryCount = entry.playlistInfo.totalCount;
       preview.isPlaylist = true;
     }
-
     if (entry.preview) {
-      if (!preview.title && entry.preview.title) preview.title = entry.preview.title;
-      if (!preview.thumbnail && entry.preview.thumbnail)
-        preview.thumbnail = entry.preview.thumbnail;
-      if (!preview.author && entry.preview.author) preview.author = entry.preview.author;
-      if (!preview.duration && entry.preview.duration) preview.duration = entry.preview.duration;
+      preview.title ??= entry.preview.title;
+      preview.thumbnail ??= entry.preview.thumbnail;
+      preview.author ??= entry.preview.author;
+      preview.duration ??= entry.preview.duration;
       if (entry.preview.isMusic !== undefined) preview.isMusic = entry.preview.isMusic;
     }
-
     return Object.keys(preview).length > 0 ? preview : null;
   }
 
-  private touchAccessOrder(key: string): void {
-    const idx = this.accessOrder.indexOf(key);
-    if (idx !== -1) {
-      this.accessOrder.splice(idx, 1);
-    }
-    this.accessOrder.push(key);
-  }
-
-  private evictIfNeeded(): void {
-    while (this.cache.size > CONFIG.maxEntries && this.accessOrder.length > 0) {
-      const oldest = this.accessOrder.shift()!;
-      this.cache.delete(oldest);
-      this.log('EVICT', oldest);
-    }
-  }
-
   delete(url: string): void {
-    const key = this.normalizeUrl(url);
-    this.cache.delete(key);
-    this.accessOrder = this.accessOrder.filter((k) => k !== key);
-    this.uiStateCache.delete(key);
-    this.uiStateAccessOrder = this.uiStateAccessOrder.filter((k) => k !== key);
+    const key = normalizeUrl(url);
+    this.metadata.delete(key);
+    this.heavyData.delete(key);
     this.log('DELETE', url);
-    this.notifyChange();
+    this.notify();
   }
 
   clear(): void {
-    this.cache.clear();
-    this.accessOrder = [];
-    this.uiStateCache.clear();
-    this.uiStateAccessOrder = [];
+    this.metadata.clear();
+    this.heavyData.clear();
     this.log('CLEAR', 'all');
-    this.notifyChange();
+    this.notify();
   }
 
   clearStale(): void {
     const now = Date.now();
-    const keysToDelete: string[] = [];
-
-    const uiStateKeysToDelete: string[] = [];
-    for (const [key, entry] of this.uiStateCache) {
-      if (now - entry.updatedAt > CONFIG.ttl.uiState) {
-        uiStateKeysToDelete.push(key);
+    const toDelete: string[] = [];
+    for (const [key, entry] of this.metadata.entries()) {
+      const allStale =
+        isExpired(entry.previewUpdatedAt, CONFIG.ttl.preview) &&
+        isExpired(entry.videoInfoUpdatedAt, CONFIG.ttl.videoInfo) &&
+        isExpired(entry.formatsUpdatedAt, CONFIG.ttl.formats);
+      const heavy = this.heavyData.get(key);
+      const heavyStale =
+        !heavy ||
+        (isExpired(heavy.playlistInfoUpdatedAt, CONFIG.ttl.playlistInfo) &&
+          isExpired(heavy.channelInfoUpdatedAt, CONFIG.ttl.channelInfo));
+      if (allStale && heavyStale && !entry.uiState) {
+        toDelete.push(key);
       }
     }
-
-    for (const key of uiStateKeysToDelete) {
-      this.uiStateCache.delete(key);
-      this.uiStateAccessOrder = this.uiStateAccessOrder.filter((k) => k !== key);
+    for (const key of toDelete) {
+      this.metadata.delete(key);
+      this.heavyData.delete(key);
     }
-
-    for (const [key, entry] of this.cache) {
-      const previewStale =
-        !entry.previewUpdatedAt || now - entry.previewUpdatedAt > CONFIG.ttl.preview;
-      const videoInfoStale =
-        !entry.videoInfoUpdatedAt || now - entry.videoInfoUpdatedAt > CONFIG.ttl.videoInfo;
-      const formatsStale =
-        !entry.formatsUpdatedAt || now - entry.formatsUpdatedAt > CONFIG.ttl.formats;
-      const playlistInfoStale =
-        !entry.playlistInfoUpdatedAt || now - entry.playlistInfoUpdatedAt > CONFIG.ttl.playlistInfo;
-      const channelInfoStale =
-        !entry.channelInfoUpdatedAt || now - entry.channelInfoUpdatedAt > CONFIG.ttl.channelInfo;
-
-      if (previewStale && videoInfoStale && formatsStale && playlistInfoStale && channelInfoStale) {
-        if (!this.uiStateCache.has(key)) keysToDelete.push(key);
-      }
-    }
-
-    for (const key of keysToDelete) {
-      this.cache.delete(key);
-      this.accessOrder = this.accessOrder.filter((k) => k !== key);
-    }
-
-    if (keysToDelete.length > 0) {
-      this.log('CLEAR_STALE', `${keysToDelete.length} entries`);
-      this.notifyChange();
+    if (toDelete.length > 0) {
+      this.log('CLEAR_STALE', `${toDelete.length} entries`);
+      this.notify();
     }
   }
 
-  getStats(): {
-    size: number;
-    maxSize: number;
-    videos: number;
-    playlists: number;
-    channels: number;
-    withUIState: number;
-  } {
-    let videos = 0;
-    let playlists = 0;
-    let channels = 0;
-    let withUIState = 0;
-
-    for (const entry of this.cache.values()) {
-      if (entry.type === 'video') videos++;
-      if (entry.type === 'playlist') playlists++;
-      if (entry.type === 'channel') channels++;
-    }
-
-    withUIState = this.uiStateCache.size;
-
+  getStats(): { metadataSize: number; heavyDataSize: number; maxMetadata: number; maxHeavy: number } {
     return {
-      size: this.cache.size,
-      maxSize: CONFIG.maxEntries,
-      videos,
-      playlists,
-      channels,
-      withUIState,
+      metadataSize: this.metadata.size,
+      heavyDataSize: this.heavyData.size,
+      maxMetadata: CONFIG.maxMetadataEntries,
+      maxHeavy: CONFIG.maxHeavyDataEntries,
     };
   }
 
   subscribe = this.store.subscribe;
 
-  private notifyChange(): void {
-    this.store.set(this.cache);
+  private notify(): void {
+    this.store.set(++this.version);
   }
 
-  private log(action: string, url: string, data?: any): void {
+  private log(action: string, url: string, data?: unknown): void {
     if (CONFIG.debug) {
       console.log(`[MediaCache] ${action}: ${url}`, data ?? '');
     }
