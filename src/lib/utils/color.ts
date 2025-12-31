@@ -89,7 +89,7 @@ export async function extractDominantColor(imageUrl: string): Promise<RGB | null
         // Clear and draw
         ctx.clearRect(0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
         ctx.drawImage(img, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
-        
+
         // Clean up image reference to allow GC
         img.onload = null;
         img.onerror = null;

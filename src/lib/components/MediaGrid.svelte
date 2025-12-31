@@ -96,8 +96,12 @@
     }
     const topProgress = Math.min(st / MASK_SIZE, 1);
     const bottomProgress = Math.min((maxScroll - st) / MASK_SIZE, 1);
-    const topFade = topProgress > 0 ? `transparent, black ${MASK_SIZE * topProgress}px` : 'black, black 0px';
-    const bottomFade = bottomProgress > 0 ? `black calc(100% - ${MASK_SIZE * bottomProgress}px), transparent` : 'black 100%, black 100%';
+    const topFade =
+      topProgress > 0 ? `transparent, black ${MASK_SIZE * topProgress}px` : 'black, black 0px';
+    const bottomFade =
+      bottomProgress > 0
+        ? `black calc(100% - ${MASK_SIZE * bottomProgress}px), transparent`
+        : 'black 100%, black 100%';
     maskStyle = `mask-image: linear-gradient(to bottom, ${topFade}, ${bottomFade}); -webkit-mask-image: linear-gradient(to bottom, ${topFade}, ${bottomFade});`;
   }
   let lastViewMode = $state<ViewMode>('list');
@@ -695,7 +699,7 @@
     margin-right: 4px;
     margin-bottom: 4px;
   }
-  
+
   @media (max-width: 480px) {
     .grid-view {
       padding-right: 1px;

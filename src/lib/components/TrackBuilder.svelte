@@ -10,11 +10,7 @@
   import Checkbox from './Checkbox.svelte';
   import Chip from './Chip.svelte';
   import { formatSize, formatDuration } from '$lib/utils/format';
-  import {
-    isAndroid,
-    getVideoInfoOnAndroid,
-    waitForAndroidYtDlp,
-  } from '$lib/utils/android';
+  import { isAndroid, getVideoInfoOnAndroid, waitForAndroidYtDlp } from '$lib/utils/android';
   import {
     viewStateCache,
     androidDataCache,

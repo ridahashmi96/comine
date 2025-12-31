@@ -69,8 +69,12 @@
     }
     const topProgress = Math.min(st / MASK_SIZE, 1);
     const bottomProgress = Math.min((maxScroll - st) / MASK_SIZE, 1);
-    const topFade = topProgress > 0 ? `transparent, black ${MASK_SIZE * topProgress}px` : 'black, black 0px';
-    const bottomFade = bottomProgress > 0 ? `black calc(100% - ${MASK_SIZE * bottomProgress}px), transparent` : 'black 100%, black 100%';
+    const topFade =
+      topProgress > 0 ? `transparent, black ${MASK_SIZE * topProgress}px` : 'black, black 0px';
+    const bottomFade =
+      bottomProgress > 0
+        ? `black calc(100% - ${MASK_SIZE * bottomProgress}px), transparent`
+        : 'black 100%, black 100%';
     maskStyle = `mask-image: linear-gradient(to bottom, ${topFade}, ${bottomFade}); -webkit-mask-image: linear-gradient(to bottom, ${topFade}, ${bottomFade});`;
   }
 
@@ -185,9 +189,12 @@
 
   function getRowHeight(row: FlatRowType): number {
     switch (row.kind) {
-      case 'date': return DATE_HEADER_HEIGHT;
-      case 'playlist': return PLAYLIST_HEADER_HEIGHT;
-      default: return ITEM_HEIGHT;
+      case 'date':
+        return DATE_HEADER_HEIGHT;
+      case 'playlist':
+        return PLAYLIST_HEADER_HEIGHT;
+      default:
+        return ITEM_HEIGHT;
     }
   }
 
@@ -912,14 +919,24 @@
                         <div class="thumbnail-placeholder">
                           <Icon name={getTypeIcon(subItem.type)} size={20} />
                         </div>
-                        {(() => { checkFileExists(subItem.id, subItem.filePath); return ''; })()}
+                        {(() => {
+                          checkFileExists(subItem.id, subItem.filePath);
+                          return '';
+                        })()}
                       {/if}
                       {#if fileMissing}
-                        <div class="thumb-missing-indicator" use:tooltip={$t('downloads.fileMissing')}>
+                        <div
+                          class="thumb-missing-indicator"
+                          use:tooltip={$t('downloads.fileMissing')}
+                        >
                           <Icon name="trash" size={12} />
                         </div>
                       {:else if hoveredItemId === subItem.id}
-                        <button class="thumb-play-overlay" onclick={(e) => handlePlayFile(e, subItem.filePath)} use:tooltip={$t('downloads.play')}>
+                        <button
+                          class="thumb-play-overlay"
+                          onclick={(e) => handlePlayFile(e, subItem.filePath)}
+                          use:tooltip={$t('downloads.play')}
+                        >
                           <Icon name="play" size={16} />
                         </button>
                       {/if}
@@ -927,32 +944,58 @@
                     <div class="col-metadata">
                       <!-- svelte-ignore a11y_click_events_have_key_events -->
                       <!-- svelte-ignore a11y_no_static_element_interactions -->
-                      <span class="item-title clickable" onclick={(e) => handleOpenVideoView(e, subItem)} title={$t('downloads.openInApp')}>{subItem.title}</span>
+                      <span
+                        class="item-title clickable"
+                        onclick={(e) => handleOpenVideoView(e, subItem)}
+                        title={$t('downloads.openInApp')}>{subItem.title}</span
+                      >
                       <!-- svelte-ignore a11y_click_events_have_key_events -->
                       <!-- svelte-ignore a11y_no_static_element_interactions -->
-                      <span class="item-author clickable" onclick={(e) => handleOpenChannelView(e, subItem)} title={$t('downloads.openAuthor')}>{subItem.author}</span>
+                      <span
+                        class="item-author clickable"
+                        onclick={(e) => handleOpenChannelView(e, subItem)}
+                        title={$t('downloads.openAuthor')}>{subItem.author}</span
+                      >
                     </div>
                     <div class="col-actions">
                       {#if hoveredItemId === subItem.id}
                         <div class="action-buttons">
-                          <button class="action-btn" use:tooltip={$t('downloads.redownload')} onclick={(e) => handleRedownload(e, subItem.url)}>
+                          <button
+                            class="action-btn"
+                            use:tooltip={$t('downloads.redownload')}
+                            onclick={(e) => handleRedownload(e, subItem.url)}
+                          >
                             <Icon name="download" size={16} />
                           </button>
                         </div>
                         <div class="action-buttons secondary">
-                          <button class="action-btn" use:tooltip={$t('downloads.openLink')} onclick={(e) => handleOpenLink(e, subItem.url)}>
+                          <button
+                            class="action-btn"
+                            use:tooltip={$t('downloads.openLink')}
+                            onclick={(e) => handleOpenLink(e, subItem.url)}
+                          >
                             <Icon name="link" size={16} />
                           </button>
-                          <button class="action-btn delete" use:tooltip={$t('downloads.delete')} onclick={(e) => handleDelete(e, subItem.id)}>
+                          <button
+                            class="action-btn delete"
+                            use:tooltip={$t('downloads.delete')}
+                            onclick={(e) => handleDelete(e, subItem.id)}
+                          >
                             <Icon name="trash" size={16} />
                           </button>
                         </div>
                       {/if}
                     </div>
-                    <div class="col-ext"><span class="ext-badge">{subItem.extension.toUpperCase()}</span></div>
+                    <div class="col-ext">
+                      <span class="ext-badge">{subItem.extension.toUpperCase()}</span>
+                    </div>
                     <div class="col-size">{formatFileSize(subItem.size)}</div>
                     <div class="col-length">{formatDuration(subItem.duration)}</div>
-                    <button class="open-file-btn" use:tooltip={$t('downloads.openFolder')} onclick={(e) => handleOpenFile(e, subItem.filePath)}>
+                    <button
+                      class="open-file-btn"
+                      use:tooltip={$t('downloads.openFolder')}
+                      onclick={(e) => handleOpenFile(e, subItem.filePath)}
+                    >
                       <Icon name="folder" size={16} />
                     </button>
                   </div>
@@ -984,14 +1027,24 @@
                         <div class="thumbnail-placeholder">
                           <Icon name={getTypeIcon(singleItem.type)} size={20} />
                         </div>
-                        {(() => { checkFileExists(singleItem.id, singleItem.filePath); return ''; })()}
+                        {(() => {
+                          checkFileExists(singleItem.id, singleItem.filePath);
+                          return '';
+                        })()}
                       {/if}
                       {#if fileMissing}
-                        <div class="thumb-missing-indicator" use:tooltip={$t('downloads.fileMissing')}>
+                        <div
+                          class="thumb-missing-indicator"
+                          use:tooltip={$t('downloads.fileMissing')}
+                        >
                           <Icon name="trash" size={12} />
                         </div>
                       {:else if hoveredItemId === singleItem.id}
-                        <button class="thumb-play-overlay" onclick={(e) => handlePlayFile(e, singleItem.filePath)} use:tooltip={$t('downloads.play')}>
+                        <button
+                          class="thumb-play-overlay"
+                          onclick={(e) => handlePlayFile(e, singleItem.filePath)}
+                          use:tooltip={$t('downloads.play')}
+                        >
                           <Icon name="play" size={16} />
                         </button>
                       {/if}
@@ -999,35 +1052,64 @@
                     <div class="col-metadata">
                       <!-- svelte-ignore a11y_click_events_have_key_events -->
                       <!-- svelte-ignore a11y_no_static_element_interactions -->
-                      <span class="item-title clickable" onclick={(e) => handleOpenVideoView(e, singleItem)} title={$t('downloads.openInApp')}>{singleItem.title}</span>
+                      <span
+                        class="item-title clickable"
+                        onclick={(e) => handleOpenVideoView(e, singleItem)}
+                        title={$t('downloads.openInApp')}>{singleItem.title}</span
+                      >
                       <!-- svelte-ignore a11y_click_events_have_key_events -->
                       <!-- svelte-ignore a11y_no_static_element_interactions -->
-                      <span class="item-author clickable" onclick={(e) => handleOpenChannelView(e, singleItem)} title={$t('downloads.openAuthor')}>{singleItem.author}</span>
+                      <span
+                        class="item-author clickable"
+                        onclick={(e) => handleOpenChannelView(e, singleItem)}
+                        title={$t('downloads.openAuthor')}>{singleItem.author}</span
+                      >
                     </div>
                     <div class="col-actions">
                       {#if hoveredItemId === singleItem.id}
                         <div class="action-buttons">
-                          <button class="action-btn" use:tooltip={$t('downloads.redownload')} onclick={(e) => handleRedownload(e, singleItem.url)}>
+                          <button
+                            class="action-btn"
+                            use:tooltip={$t('downloads.redownload')}
+                            onclick={(e) => handleRedownload(e, singleItem.url)}
+                          >
                             <Icon name="download" size={16} />
                           </button>
-                          <button class="action-btn expand" use:tooltip={$t('downloads.moreOptions')}>
+                          <button
+                            class="action-btn expand"
+                            use:tooltip={$t('downloads.moreOptions')}
+                          >
                             <Icon name="chevron_down" size={16} />
                           </button>
                         </div>
                         <div class="action-buttons secondary">
-                          <button class="action-btn" use:tooltip={$t('downloads.openLink')} onclick={(e) => handleOpenLink(e, singleItem.url)}>
+                          <button
+                            class="action-btn"
+                            use:tooltip={$t('downloads.openLink')}
+                            onclick={(e) => handleOpenLink(e, singleItem.url)}
+                          >
                             <Icon name="link" size={16} />
                           </button>
-                          <button class="action-btn delete" use:tooltip={$t('downloads.delete')} onclick={(e) => handleDelete(e, singleItem.id)}>
+                          <button
+                            class="action-btn delete"
+                            use:tooltip={$t('downloads.delete')}
+                            onclick={(e) => handleDelete(e, singleItem.id)}
+                          >
                             <Icon name="trash" size={16} />
                           </button>
                         </div>
                       {/if}
                     </div>
-                    <div class="col-ext"><span class="ext-badge">{singleItem.extension.toUpperCase()}</span></div>
+                    <div class="col-ext">
+                      <span class="ext-badge">{singleItem.extension.toUpperCase()}</span>
+                    </div>
                     <div class="col-size">{formatFileSize(singleItem.size)}</div>
                     <div class="col-length">{formatDuration(singleItem.duration)}</div>
-                    <button class="open-file-btn" use:tooltip={$t('downloads.openFolder')} onclick={(e) => handleOpenFile(e, singleItem.filePath)}>
+                    <button
+                      class="open-file-btn"
+                      use:tooltip={$t('downloads.openFolder')}
+                      onclick={(e) => handleOpenFile(e, singleItem.filePath)}
+                    >
                       <Icon name="folder" size={16} />
                     </button>
                   </div>
@@ -1090,38 +1172,117 @@
                       >
                         <div class="card-thumbnail">
                           {#if subItem.thumbnail}
-                            <img src={subItem.thumbnail} alt="" loading="lazy" decoding="async" onload={() => { extractItemColor(subItem.id, subItem.thumbnail); checkFileExists(subItem.id, subItem.filePath); }} />
+                            <img
+                              src={subItem.thumbnail}
+                              alt=""
+                              loading="lazy"
+                              decoding="async"
+                              onload={() => {
+                                extractItemColor(subItem.id, subItem.thumbnail);
+                                checkFileExists(subItem.id, subItem.filePath);
+                              }}
+                            />
                           {:else}
-                            <div class="card-thumb-placeholder" use:tooltip={fileMissing ? $t('downloads.fileMissing') : ''}>
+                            <div
+                              class="card-thumb-placeholder"
+                              use:tooltip={fileMissing ? $t('downloads.fileMissing') : ''}
+                            >
                               <Icon name={getTypeIcon(subItem.type)} size={32} />
                             </div>
-                            {(() => { checkFileExists(subItem.id, subItem.filePath); return ''; })()}
+                            {(() => {
+                              checkFileExists(subItem.id, subItem.filePath);
+                              return '';
+                            })()}
                           {/if}
-                          {#if subItem.duration > 0}<span class="duration-badge">{formatDuration(subItem.duration)}</span>{/if}
+                          {#if subItem.duration > 0}<span class="duration-badge"
+                              >{formatDuration(subItem.duration)}</span
+                            >{/if}
                           <span class="type-badge">{subItem.extension.toUpperCase()}</span>
                           <div class="playlist-badge" use:tooltip={playlistGroup.playlistTitle}>
                             <Icon name="playlist" size={10} />
                             <span>{idx + 1}/{playlistGroup.items.length}</span>
                           </div>
                           {#if fileMissing}
-                            <div class="missing-file-overlay" use:tooltip={$t('downloads.fileMissing')}><Icon name="trash" size={24} /></div>
+                            <div
+                              class="missing-file-overlay"
+                              use:tooltip={$t('downloads.fileMissing')}
+                            >
+                              <Icon name="trash" size={24} />
+                            </div>
                           {/if}
                           {#if hoveredItemId === subItem.id && !fileMissing}
                             <div class="card-overlay">
-                              <button class="play-overlay" onclick={(e) => { e.stopPropagation(); handlePlayFile(e, subItem.filePath); }} use:tooltip={$t('downloads.play')}><Icon name="play" size={24} /></button>
+                              <button
+                                class="play-overlay"
+                                onclick={(e) => {
+                                  e.stopPropagation();
+                                  handlePlayFile(e, subItem.filePath);
+                                }}
+                                use:tooltip={$t('downloads.play')}
+                                ><Icon name="play" size={24} /></button
+                              >
                               <div class="card-actions-bar">
-                                <button class="card-action-btn" use:tooltip={$t('downloads.openFolder')} onclick={(e) => { e.stopPropagation(); handleOpenFile(e, subItem.filePath); }}><Icon name="folder" size={14} /></button>
-                                <button class="card-action-btn" use:tooltip={$t('downloads.redownload')} onclick={(e) => { e.stopPropagation(); handleRedownload(e, subItem.url); }}><Icon name="download" size={14} /></button>
-                                <button class="card-action-btn" use:tooltip={$t('downloads.openLink')} onclick={(e) => { e.stopPropagation(); handleOpenLink(e, subItem.url); }}><Icon name="link" size={14} /></button>
-                                <button class="card-action-btn delete" use:tooltip={$t('downloads.delete')} onclick={(e) => { e.stopPropagation(); handleDelete(e, subItem.id); }}><Icon name="trash" size={14} /></button>
+                                <button
+                                  class="card-action-btn"
+                                  use:tooltip={$t('downloads.openFolder')}
+                                  onclick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenFile(e, subItem.filePath);
+                                  }}><Icon name="folder" size={14} /></button
+                                >
+                                <button
+                                  class="card-action-btn"
+                                  use:tooltip={$t('downloads.redownload')}
+                                  onclick={(e) => {
+                                    e.stopPropagation();
+                                    handleRedownload(e, subItem.url);
+                                  }}><Icon name="download" size={14} /></button
+                                >
+                                <button
+                                  class="card-action-btn"
+                                  use:tooltip={$t('downloads.openLink')}
+                                  onclick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenLink(e, subItem.url);
+                                  }}><Icon name="link" size={14} /></button
+                                >
+                                <button
+                                  class="card-action-btn delete"
+                                  use:tooltip={$t('downloads.delete')}
+                                  onclick={(e) => {
+                                    e.stopPropagation();
+                                    handleDelete(e, subItem.id);
+                                  }}><Icon name="trash" size={14} /></button
+                                >
                               </div>
                             </div>
                           {:else if hoveredItemId === subItem.id && fileMissing}
                             <div class="card-overlay missing">
                               <div class="card-actions-bar">
-                                <button class="card-action-btn" use:tooltip={$t('downloads.redownload')} onclick={(e) => { e.stopPropagation(); handleRedownload(e, subItem.url); }}><Icon name="download" size={14} /></button>
-                                <button class="card-action-btn" use:tooltip={$t('downloads.openLink')} onclick={(e) => { e.stopPropagation(); handleOpenLink(e, subItem.url); }}><Icon name="link" size={14} /></button>
-                                <button class="card-action-btn delete" use:tooltip={$t('downloads.delete')} onclick={(e) => { e.stopPropagation(); handleDelete(e, subItem.id); }}><Icon name="trash" size={14} /></button>
+                                <button
+                                  class="card-action-btn"
+                                  use:tooltip={$t('downloads.redownload')}
+                                  onclick={(e) => {
+                                    e.stopPropagation();
+                                    handleRedownload(e, subItem.url);
+                                  }}><Icon name="download" size={14} /></button
+                                >
+                                <button
+                                  class="card-action-btn"
+                                  use:tooltip={$t('downloads.openLink')}
+                                  onclick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenLink(e, subItem.url);
+                                  }}><Icon name="link" size={14} /></button
+                                >
+                                <button
+                                  class="card-action-btn delete"
+                                  use:tooltip={$t('downloads.delete')}
+                                  onclick={(e) => {
+                                    e.stopPropagation();
+                                    handleDelete(e, subItem.id);
+                                  }}><Icon name="trash" size={14} /></button
+                                >
                               </div>
                             </div>
                           {/if}
@@ -1129,11 +1290,19 @@
                         <div class="card-info">
                           <!-- svelte-ignore a11y_click_events_have_key_events -->
                           <!-- svelte-ignore a11y_no_static_element_interactions -->
-                          <span class="card-title clickable" onclick={(e) => handleOpenVideoView(e, subItem)} title={$t('downloads.openInApp')}>{subItem.title}</span>
+                          <span
+                            class="card-title clickable"
+                            onclick={(e) => handleOpenVideoView(e, subItem)}
+                            title={$t('downloads.openInApp')}>{subItem.title}</span
+                          >
                           <div class="card-meta">
                             <!-- svelte-ignore a11y_click_events_have_key_events -->
                             <!-- svelte-ignore a11y_no_static_element_interactions -->
-                            <span class="card-author clickable" onclick={(e) => handleOpenChannelView(e, subItem)} title={$t('downloads.openAuthor')}>{subItem.author}</span>
+                            <span
+                              class="card-author clickable"
+                              onclick={(e) => handleOpenChannelView(e, subItem)}
+                              title={$t('downloads.openAuthor')}>{subItem.author}</span
+                            >
                             <span class="card-size">{formatFileSize(subItem.size)}</span>
                           </div>
                         </div>
@@ -1152,32 +1321,93 @@
                     >
                       <div class="card-thumbnail">
                         {#if singleItem.thumbnail}
-                          <img src={singleItem.thumbnail} alt="" loading="lazy" decoding="async" onload={() => { extractItemColor(singleItem.id, singleItem.thumbnail); checkFileExists(singleItem.id, singleItem.filePath); }} />
+                          <img
+                            src={singleItem.thumbnail}
+                            alt=""
+                            loading="lazy"
+                            decoding="async"
+                            onload={() => {
+                              extractItemColor(singleItem.id, singleItem.thumbnail);
+                              checkFileExists(singleItem.id, singleItem.filePath);
+                            }}
+                          />
                         {:else}
-                          <div class="card-thumb-placeholder"><Icon name={getTypeIcon(singleItem.type)} size={32} /></div>
-                          {(() => { checkFileExists(singleItem.id, singleItem.filePath); return ''; })()}
+                          <div class="card-thumb-placeholder">
+                            <Icon name={getTypeIcon(singleItem.type)} size={32} />
+                          </div>
+                          {(() => {
+                            checkFileExists(singleItem.id, singleItem.filePath);
+                            return '';
+                          })()}
                         {/if}
-                        {#if singleItem.duration > 0}<span class="duration-badge">{formatDuration(singleItem.duration)}</span>{/if}
+                        {#if singleItem.duration > 0}<span class="duration-badge"
+                            >{formatDuration(singleItem.duration)}</span
+                          >{/if}
                         <span class="type-badge">{singleItem.extension.toUpperCase()}</span>
                         {#if fileMissing}
-                          <div class="missing-file-overlay" use:tooltip={$t('downloads.fileMissing')}><Icon name="trash" size={24} /></div>
+                          <div
+                            class="missing-file-overlay"
+                            use:tooltip={$t('downloads.fileMissing')}
+                          >
+                            <Icon name="trash" size={24} />
+                          </div>
                         {/if}
                         {#if hoveredItemId === singleItem.id && !fileMissing}
                           <div class="card-overlay">
-                            <button class="play-overlay" onclick={(e) => handlePlayFile(e, singleItem.filePath)} use:tooltip={$t('downloads.play')}><Icon name="play" size={24} /></button>
+                            <button
+                              class="play-overlay"
+                              onclick={(e) => handlePlayFile(e, singleItem.filePath)}
+                              use:tooltip={$t('downloads.play')}
+                              ><Icon name="play" size={24} /></button
+                            >
                             <div class="card-actions-bar">
-                              <button class="card-action-btn" use:tooltip={$t('downloads.openFolder')} onclick={(e) => handleOpenFile(e, singleItem.filePath)}><Icon name="folder" size={14} /></button>
-                              <button class="card-action-btn" use:tooltip={$t('downloads.redownload')} onclick={(e) => handleRedownload(e, singleItem.url)}><Icon name="download" size={14} /></button>
-                              <button class="card-action-btn" use:tooltip={$t('downloads.openLink')} onclick={(e) => handleOpenLink(e, singleItem.url)}><Icon name="link" size={14} /></button>
-                              <button class="card-action-btn delete" use:tooltip={$t('downloads.delete')} onclick={(e) => handleDelete(e, singleItem.id)}><Icon name="trash" size={14} /></button>
+                              <button
+                                class="card-action-btn"
+                                use:tooltip={$t('downloads.openFolder')}
+                                onclick={(e) => handleOpenFile(e, singleItem.filePath)}
+                                ><Icon name="folder" size={14} /></button
+                              >
+                              <button
+                                class="card-action-btn"
+                                use:tooltip={$t('downloads.redownload')}
+                                onclick={(e) => handleRedownload(e, singleItem.url)}
+                                ><Icon name="download" size={14} /></button
+                              >
+                              <button
+                                class="card-action-btn"
+                                use:tooltip={$t('downloads.openLink')}
+                                onclick={(e) => handleOpenLink(e, singleItem.url)}
+                                ><Icon name="link" size={14} /></button
+                              >
+                              <button
+                                class="card-action-btn delete"
+                                use:tooltip={$t('downloads.delete')}
+                                onclick={(e) => handleDelete(e, singleItem.id)}
+                                ><Icon name="trash" size={14} /></button
+                              >
                             </div>
                           </div>
                         {:else if hoveredItemId === singleItem.id && fileMissing}
                           <div class="card-overlay missing">
                             <div class="card-actions-bar">
-                              <button class="card-action-btn" use:tooltip={$t('downloads.redownload')} onclick={(e) => handleRedownload(e, singleItem.url)}><Icon name="download" size={14} /></button>
-                              <button class="card-action-btn" use:tooltip={$t('downloads.openLink')} onclick={(e) => handleOpenLink(e, singleItem.url)}><Icon name="link" size={14} /></button>
-                              <button class="card-action-btn delete" use:tooltip={$t('downloads.delete')} onclick={(e) => handleDelete(e, singleItem.id)}><Icon name="trash" size={14} /></button>
+                              <button
+                                class="card-action-btn"
+                                use:tooltip={$t('downloads.redownload')}
+                                onclick={(e) => handleRedownload(e, singleItem.url)}
+                                ><Icon name="download" size={14} /></button
+                              >
+                              <button
+                                class="card-action-btn"
+                                use:tooltip={$t('downloads.openLink')}
+                                onclick={(e) => handleOpenLink(e, singleItem.url)}
+                                ><Icon name="link" size={14} /></button
+                              >
+                              <button
+                                class="card-action-btn delete"
+                                use:tooltip={$t('downloads.delete')}
+                                onclick={(e) => handleDelete(e, singleItem.id)}
+                                ><Icon name="trash" size={14} /></button
+                              >
                             </div>
                           </div>
                         {/if}
@@ -1185,11 +1415,19 @@
                       <div class="card-info">
                         <!-- svelte-ignore a11y_click_events_have_key_events -->
                         <!-- svelte-ignore a11y_no_static_element_interactions -->
-                        <span class="card-title clickable" onclick={(e) => handleOpenVideoView(e, singleItem)} title={$t('downloads.openInApp')}>{singleItem.title}</span>
+                        <span
+                          class="card-title clickable"
+                          onclick={(e) => handleOpenVideoView(e, singleItem)}
+                          title={$t('downloads.openInApp')}>{singleItem.title}</span
+                        >
                         <div class="card-meta">
                           <!-- svelte-ignore a11y_click_events_have_key_events -->
                           <!-- svelte-ignore a11y_no_static_element_interactions -->
-                          <span class="card-author clickable" onclick={(e) => handleOpenChannelView(e, singleItem)} title={$t('downloads.openAuthor')}>{singleItem.author}</span>
+                          <span
+                            class="card-author clickable"
+                            onclick={(e) => handleOpenChannelView(e, singleItem)}
+                            title={$t('downloads.openAuthor')}>{singleItem.author}</span
+                          >
                           <span class="card-size">{formatFileSize(singleItem.size)}</span>
                         </div>
                       </div>

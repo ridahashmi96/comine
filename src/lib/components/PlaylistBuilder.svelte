@@ -908,11 +908,7 @@
               mapItem={(e: PlaylistEntry) => ({
                 id: e.id,
                 title: e.title,
-                thumbnail: getDisplayThumbnailUrl(
-                  e.url,
-                  e.thumbnail,
-                  'default'
-                ),
+                thumbnail: getDisplayThumbnailUrl(e.url, e.thumbnail, 'default'),
                 duration: e.duration,
                 author: e.uploader,
                 isMusic: e.isMusic,

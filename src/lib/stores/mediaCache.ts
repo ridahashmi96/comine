@@ -196,13 +196,28 @@ function normalizeUrl(url: string): string {
 
 function detectType(url: string): 'video' | 'playlist' | 'channel' | 'unknown' {
   const lower = url.toLowerCase();
-  if (lower.includes('/@') || lower.includes('/channel/') || lower.includes('/c/') || lower.includes('/user/')) {
+  if (
+    lower.includes('/@') ||
+    lower.includes('/channel/') ||
+    lower.includes('/c/') ||
+    lower.includes('/user/')
+  ) {
     return 'channel';
   }
-  if (lower.includes('/playlist') || (lower.includes('list=') && !lower.includes('v=')) || lower.includes('/albums/') || lower.includes('/sets/')) {
+  if (
+    lower.includes('/playlist') ||
+    (lower.includes('list=') && !lower.includes('v=')) ||
+    lower.includes('/albums/') ||
+    lower.includes('/sets/')
+  ) {
     return 'playlist';
   }
-  if (lower.includes('youtube.com/watch') || lower.includes('youtu.be/') || lower.includes('youtube.com/shorts/') || lower.includes('music.youtube.com/watch')) {
+  if (
+    lower.includes('youtube.com/watch') ||
+    lower.includes('youtu.be/') ||
+    lower.includes('youtube.com/shorts/') ||
+    lower.includes('music.youtube.com/watch')
+  ) {
     return 'video';
   }
   return 'unknown';
@@ -487,7 +502,13 @@ class UnifiedMediaCache {
   hasAnyData(url: string): boolean {
     const entry = this.get(url);
     if (!entry) return false;
-    return !!(entry.preview || entry.videoInfo || entry.formats || entry.playlistInfo || entry.channelInfo);
+    return !!(
+      entry.preview ||
+      entry.videoInfo ||
+      entry.formats ||
+      entry.playlistInfo ||
+      entry.channelInfo
+    );
   }
 
   getBestPreview(url: string): MediaPreview | null {
@@ -567,7 +588,12 @@ class UnifiedMediaCache {
     }
   }
 
-  getStats(): { metadataSize: number; heavyDataSize: number; maxMetadata: number; maxHeavy: number } {
+  getStats(): {
+    metadataSize: number;
+    heavyDataSize: number;
+    maxMetadata: number;
+    maxHeavy: number;
+  } {
     return {
       metadataSize: this.metadata.size,
       heavyDataSize: this.heavyData.size,

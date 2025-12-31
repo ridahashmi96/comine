@@ -489,7 +489,10 @@ async fn download_video(
                 && has_thumb_url_for_embed
                 && !has_cropped_thumbnail;
 
-            if embed_thumbnail.unwrap_or(false) && !has_cropped_thumbnail && !should_manual_embed_ytm {
+            if embed_thumbnail.unwrap_or(false)
+                && !has_cropped_thumbnail
+                && !should_manual_embed_ytm
+            {
                 args.push("--embed-thumbnail".to_string());
                 info!("Embedding thumbnail as cover art (via yt-dlp)");
             } else if embed_thumbnail.unwrap_or(false) && has_cropped_thumbnail {
@@ -2433,8 +2436,8 @@ async fn embed_thumbnail_from_url(
         .await
         .map_err(|e| format!("Failed to read thumbnail bytes: {}", e))?;
 
-    let img = image::load_from_memory(&bytes)
-        .map_err(|e| format!("Failed to decode image: {}", e))?;
+    let img =
+        image::load_from_memory(&bytes).map_err(|e| format!("Failed to decode image: {}", e))?;
 
     let processed = if is_letterboxed_thumbnail(&img) {
         crop_to_center_square(img)
