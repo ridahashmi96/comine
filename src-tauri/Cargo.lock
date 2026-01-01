@@ -788,7 +788,6 @@ dependencies = [
 name = "comine"
 version = "1.0.7"
 dependencies = [
- "base64 0.22.1",
  "chrono",
  "dirs 5.0.1",
  "futures-util",

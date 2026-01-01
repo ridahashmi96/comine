@@ -1518,6 +1518,24 @@ function createQueueStore() {
       });
     },
 
+    cleanup() {
+      if (cleanupInterval) {
+        clearInterval(cleanupInterval);
+        cleanupInterval = null;
+      }
+      if (unlisten) {
+        unlisten();
+        unlisten = null;
+      }
+      if (unlistenFilePath) {
+        unlistenFilePath();
+        unlistenFilePath = null;
+      }
+      maxProgressMap.clear();
+      videoInfoPromises.clear();
+      cancelledIds.clear();
+    },
+
     cancelPlaylist(playlistId: string) {
       const state = get({ subscribe });
       const playlistItems = state.items.filter((i) => i.playlistId === playlistId);

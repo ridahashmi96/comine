@@ -327,14 +327,8 @@
     updateSetting('useSystemAccent', checked);
   }
 
-  async function filePathToUrl(filePath: string, mimeType: string): Promise<string> {
-    if (isAndroid()) {
-      const fileData = await readFile(filePath);
-      const base64 = btoa(String.fromCharCode(...fileData));
-      return `data:${mimeType};base64,${base64}`;
-    } else {
-      return convertFileSrc(filePath);
-    }
+  async function filePathToUrl(filePath: string, _mimeType: string): Promise<string> {
+    return convertFileSrc(filePath);
   }
 
   function formatFileSize(bytes: number): string {

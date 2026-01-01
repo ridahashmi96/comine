@@ -30,6 +30,10 @@
   import { queue, activeDownloadsCount } from '$lib/stores/queue';
   import { deps } from '$lib/stores/deps';
   import { logs, type LogLevel } from '$lib/stores/logs';
+  import { mediaCache } from '$lib/stores/mediaCache';
+  import { viewStateCache, androidDataCache } from '$lib/stores/viewState';
+  import { clearAllScrollPositions } from '$lib/stores/scroll';
+  import { clearColorCache } from '$lib/utils/color';
   import {
     cleanUrl,
     isLikelyPlaylist,
@@ -50,7 +54,6 @@
     clearDismissedVersionIfUpdated,
   } from '$lib/stores/updates';
   import { navigation } from '$lib/stores/navigation';
-  import { mediaCache } from '$lib/stores/mediaCache';
   import NotificationPopup from '$lib/components/NotificationPopup.svelte';
 
   let { children }: { children: Snippet } = $props();
@@ -194,6 +197,8 @@
     initSettings();
     initHistory();
     queue.init();
+
+    mediaCache.load();
 
     deps.checkAll();
 
@@ -530,6 +535,7 @@
     if (isAndroid()) {
       cleanupAndroidCallbacks();
     }
+    queue.cleanup();
   });
 
   function handleAndroidShareIntent(rawUrl: string) {
@@ -541,21 +547,34 @@
     }
   }
 
-  function releaseMemoryOnHide() {
-    logs.info('layout', 'Window hidden - releasing non-essential memory');
-    navigation.clearCachedData();
+  async function releaseMemoryOnHide() {
+    logs.info('layout', 'Window hidden - flushing caches and releasing memory');
+
+    await mediaCache.unload();
+
+    viewStateCache.clear();
+    androidDataCache.clear();
+    clearAllScrollPositions();
+    clearColorCache();
     logs.clearMemory();
-    if (typeof window !== 'undefined' && 'gc' in window) {
-      try {
-        // @ts-ignore
-        window.gc();
-      } catch {}
+
+    try {
+      await invoke('clear_memory_caches');
+    } catch (e) {
+      logs.warn('layout', `Failed to clear Rust caches: ${e}`);
     }
+
+    navigation.reset();
+
+    logs.info('layout', 'Memory release complete');
   }
 
-  function onWindowShown() {
-    logs.info('layout', 'Window restored from tray');
+  async function onWindowShown() {
+    logs.info('layout', 'Window restored - loading caches from disk');
     isWindowHidden = false;
+
+    await mediaCache.load();
+
     deps.checkAll();
   }
 
@@ -588,7 +607,7 @@
         }
 
         isWindowHidden = true;
-        releaseMemoryOnHide();
+        await releaseMemoryOnHide();
 
         await appWindow.hide();
         break;

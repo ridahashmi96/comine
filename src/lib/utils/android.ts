@@ -429,25 +429,30 @@ export function waitForAndroidYtDlp(): Promise<void> {
       return;
     }
 
-    const handler = () => {
+    let resolved = false;
+    let interval: ReturnType<typeof setInterval> | null = null;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+
+    const cleanup = () => {
+      if (resolved) return;
+      resolved = true;
+      if (interval) clearInterval(interval);
+      if (timeout) clearTimeout(timeout);
       window.removeEventListener('ytdlp-ready', handler);
       resolve();
     };
+
+    const handler = () => cleanup();
+
     window.addEventListener('ytdlp-ready', handler);
 
-    const interval = setInterval(() => {
+    interval = setInterval(() => {
       if (isAndroidYtDlpReady()) {
-        clearInterval(interval);
-        window.removeEventListener('ytdlp-ready', handler);
-        resolve();
+        cleanup();
       }
     }, 500);
 
-    setTimeout(() => {
-      clearInterval(interval);
-      window.removeEventListener('ytdlp-ready', handler);
-      resolve();
-    }, 30000);
+    timeout = setTimeout(cleanup, 30000);
   });
 }
 

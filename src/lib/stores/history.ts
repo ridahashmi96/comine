@@ -450,8 +450,7 @@ export const historyStats = derived(history, ($history) => {
 export function formatFileSize(bytes: number): string {
   if (bytes === 0) return '0 B';
 
-  let sizeUnit: 'binary' | 'decimal' = 'binary';
-  settings.subscribe((s) => (sizeUnit = s.sizeUnit))();
+  const sizeUnit = get(settings).sizeUnit || 'binary';
 
   const k = sizeUnit === 'binary' ? 1024 : 1000;
   const sizes = sizeUnit === 'binary' ? ['B', 'KiB', 'MiB', 'GiB'] : ['B', 'kB', 'MB', 'GB'];

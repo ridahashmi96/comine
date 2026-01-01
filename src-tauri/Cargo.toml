@@ -41,7 +41,6 @@ lazy_static = "1.5"
 chrono = "0.4"
 url = "2"
 image = "0.25"
-base64 = "0.22"
 lru = "0.12"
 
 [target.'cfg(unix)'.dependencies]

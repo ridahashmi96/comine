@@ -55,6 +55,12 @@ class MainActivity : TauriActivity() {
     handleIntent(intent)
   }
   
+  override fun onDestroy() {
+    super.onDestroy()
+    downloadExecutor.shutdownNow()
+    infoExecutor.shutdownNow()
+  }
+  
   override fun onResume() {
     super.onResume()
     tryInstallPendingUpdate()

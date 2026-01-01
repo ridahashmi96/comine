@@ -3,8 +3,6 @@ import { sveltekit } from '@sveltejs/kit/vite';
 import { execSync } from 'child_process';
 import { readFileSync } from 'fs';
 
-const host = process.env.TAURI_DEV_HOST;
-
 function getGitInfo() {
   try {
     return {
@@ -25,36 +23,35 @@ function getVersion() {
 }
 
 // https://vite.dev/config/
-export default defineConfig(async () => ({
-  plugins: [sveltekit()],
+export default defineConfig(async () => {
+  const host = process.env.TAURI_DEV_HOST;
 
-  define: {
-    __DEV__: JSON.stringify(process.env.NODE_ENV !== 'production'),
-    __COMMIT_HASH__: JSON.stringify(getGitInfo().hash),
-    __GIT_BRANCH__: JSON.stringify(getGitInfo().branch),
-    __APP_VERSION__: JSON.stringify(getVersion()),
-    __BUILD_DATE__: JSON.stringify(new Date().toISOString().split('T')[0]),
-  },
+  return {
+    plugins: [sveltekit()],
 
-  // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
-  //
-  // 1. prevent Vite from obscuring rust errors
-  clearScreen: false,
-  // 2. tauri expects a fixed port, fail if that port is not available
-  server: {
-    port: 1420,
-    strictPort: true,
-    host: host || false,
-    hmr: host
-      ? {
-          protocol: 'ws',
-          host,
-          port: 1421,
-        }
-      : undefined,
-    watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ['**/src-tauri/**'],
+    define: {
+      __DEV__: JSON.stringify(process.env.NODE_ENV !== 'production'),
+      __COMMIT_HASH__: JSON.stringify(getGitInfo().hash),
+      __GIT_BRANCH__: JSON.stringify(getGitInfo().branch),
+      __APP_VERSION__: JSON.stringify(getVersion()),
+      __BUILD_DATE__: JSON.stringify(new Date().toISOString().split('T')[0]),
     },
-  },
-}));
+
+    clearScreen: false,
+    server: {
+      port: 1420,
+      strictPort: true,
+      host: host || '0.0.0.0',
+      hmr: host
+        ? {
+            protocol: 'ws',
+            host: 'localhost',
+            port: 1421,
+          }
+        : true,
+      watch: {
+        ignored: ['**/src-tauri/**'],
+      },
+    },
+  };
+});

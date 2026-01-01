@@ -1,4 +1,20 @@
 import { writable, derived } from 'svelte/store';
+import { load, type Store } from '@tauri-apps/plugin-store';
+
+const PERSISTENCE_CONFIG = {
+  storeFile: 'media-cache.json',
+  flushDebounceMs: 2000,
+  maxDiskBytes: 10 * 1024 * 1024,
+};
+
+let sharedStore: Store | null = null;
+
+async function getStore(): Promise<Store> {
+  if (!sharedStore) {
+    sharedStore = await load(PERSISTENCE_CONFIG.storeFile, { autoSave: false, defaults: {} });
+  }
+  return sharedStore;
+}
 
 export interface MediaPreview {
   title?: string;
@@ -230,8 +246,13 @@ function isExpired(timestamp: number | null, ttl: number): boolean {
 class LRUMap<K, V> {
   private map = new Map<K, V>();
   private order: K[] = [];
+  private onMutate: (() => void) | null = null;
 
   constructor(private maxSize: number) {}
+
+  setMutationCallback(cb: () => void): void {
+    this.onMutate = cb;
+  }
 
   get(key: K): V | undefined {
     const value = this.map.get(key);
@@ -248,6 +269,7 @@ class LRUMap<K, V> {
     this.map.set(key, value);
     this.touch(key);
     this.evict();
+    this.onMutate?.();
   }
 
   has(key: K): boolean {
@@ -257,6 +279,7 @@ class LRUMap<K, V> {
   delete(key: K): void {
     this.map.delete(key);
     this.order = this.order.filter((k) => k !== key);
+    this.onMutate?.();
   }
 
   clear(): void {
@@ -276,6 +299,20 @@ class LRUMap<K, V> {
     return this.map.entries();
   }
 
+  toJSON(): Array<[K, V]> {
+    return Array.from(this.map.entries());
+  }
+
+  fromJSON(data: Array<[K, V]>): void {
+    this.map.clear();
+    this.order = [];
+    for (const [key, value] of data) {
+      this.map.set(key, value);
+      this.order.push(key);
+    }
+    this.evict();
+  }
+
   private touch(key: K): void {
     const idx = this.order.indexOf(key);
     if (idx !== -1) {
@@ -292,11 +329,83 @@ class LRUMap<K, V> {
   }
 }
 
+interface DiskCacheData {
+  metadata: Array<[string, MetadataEntry]>;
+  heavyData: Array<[string, HeavyDataEntry]>;
+  savedAt: number;
+}
+
 class UnifiedMediaCache {
   private metadata = new LRUMap<string, MetadataEntry>(CONFIG.maxMetadataEntries);
   private heavyData = new LRUMap<string, HeavyDataEntry>(CONFIG.maxHeavyDataEntries);
   private store = writable(0);
   private version = 0;
+  private dirty = false;
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private flushPromise: Promise<void> | null = null;
+
+  constructor() {
+    this.metadata.setMutationCallback(() => this.scheduleDiskFlush());
+    this.heavyData.setMutationCallback(() => this.scheduleDiskFlush());
+  }
+
+  private scheduleDiskFlush(): void {
+    this.dirty = true;
+    if (this.flushTimer) return;
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
+      this.flushToDisk();
+    }, PERSISTENCE_CONFIG.flushDebounceMs);
+  }
+
+  private async flushToDisk(): Promise<void> {
+    if (!this.dirty) return;
+    if (this.flushPromise) {
+      await this.flushPromise;
+      return;
+    }
+
+    this.flushPromise = this.doFlush();
+    await this.flushPromise;
+    this.flushPromise = null;
+  }
+
+  private async doFlush(): Promise<void> {
+    try {
+      const store = await getStore();
+      const data: DiskCacheData = {
+        metadata: this.metadata.toJSON(),
+        heavyData: this.heavyData.toJSON(),
+        savedAt: Date.now(),
+      };
+
+      const json = JSON.stringify(data);
+      if (json.length > PERSISTENCE_CONFIG.maxDiskBytes) {
+        const trimmed = this.trimForDiskLimit(data, json.length);
+        await store.set('cache', trimmed);
+      } else {
+        await store.set('cache', data);
+      }
+
+      await store.save();
+      this.dirty = false;
+      this.log('FLUSH_TO_DISK', `${data.metadata.length}m/${data.heavyData.length}h`);
+    } catch (e) {
+      console.error('[MediaCache] Disk flush failed:', e);
+    }
+  }
+
+  private trimForDiskLimit(data: DiskCacheData, currentSize: number): DiskCacheData {
+    const ratio = PERSISTENCE_CONFIG.maxDiskBytes / currentSize;
+    const metaKeep = Math.max(1, Math.floor(data.metadata.length * ratio * 0.9));
+    const heavyKeep = Math.max(1, Math.floor(data.heavyData.length * ratio * 0.9));
+
+    return {
+      metadata: data.metadata.slice(-metaKeep),
+      heavyData: data.heavyData.slice(-heavyKeep),
+      savedAt: data.savedAt,
+    };
+  }
 
   private getOrCreateMetadata(url: string): MetadataEntry {
     const key = normalizeUrl(url);
@@ -600,6 +709,63 @@ class UnifiedMediaCache {
       maxMetadata: CONFIG.maxMetadataEntries,
       maxHeavy: CONFIG.maxHeavyDataEntries,
     };
+  }
+
+  async flush(): Promise<void> {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    this.dirty = true;
+    await this.flushToDisk();
+  }
+
+  async unload(): Promise<void> {
+    await this.flush();
+    this.metadata.clear();
+    this.heavyData.clear();
+    this.log('UNLOAD', 'memory cleared, disk persisted');
+    this.notify();
+  }
+
+  async load(): Promise<void> {
+    try {
+      const store = await getStore();
+      const data = await store.get<DiskCacheData>('cache');
+
+      if (!data) {
+        this.log('LOAD', 'no disk data');
+        return;
+      }
+
+      const maxTTL = Math.max(
+        CONFIG.ttl.preview,
+        CONFIG.ttl.videoInfo,
+        CONFIG.ttl.formats,
+        CONFIG.ttl.playlistInfo,
+        CONFIG.ttl.channelInfo
+      );
+
+      if (Date.now() - data.savedAt > maxTTL) {
+        this.log('LOAD', 'disk data expired');
+        await store.delete('cache');
+        await store.save();
+        return;
+      }
+
+      if (data.metadata?.length) {
+        this.metadata.fromJSON(data.metadata);
+      }
+      if (data.heavyData?.length) {
+        this.heavyData.fromJSON(data.heavyData);
+      }
+
+      this.dirty = false;
+      this.log('LOAD', `${this.metadata.size}m/${this.heavyData.size}h from disk`);
+      this.notify();
+    } catch (e) {
+      console.error('[MediaCache] Load failed:', e);
+    }
   }
 
   subscribe = this.store.subscribe;

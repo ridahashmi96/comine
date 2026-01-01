@@ -37,10 +37,6 @@ static PLAYLIST_INFO_CACHE: std::sync::LazyLock<Mutex<LruCache<String, PlaylistI
 static VIDEO_FORMATS_CACHE: std::sync::LazyLock<Mutex<LruCache<String, VideoFormats>>> =
     std::sync::LazyLock::new(|| Mutex::new(LruCache::new(NonZeroUsize::new(10).unwrap())));
 
-#[cfg(not(target_os = "android"))]
-static YTM_THUMBNAIL_CACHE: std::sync::LazyLock<Mutex<LruCache<String, String>>> =
-    std::sync::LazyLock::new(|| Mutex::new(LruCache::new(NonZeroUsize::new(20).unwrap())));
-
 /// Extension trait to hide console window on Windows
 #[cfg(target_os = "windows")]
 pub trait CommandExt {
@@ -270,7 +266,6 @@ async fn download_video(
     custom_cookies: Option<String>,
     download_path: Option<String>,
     embed_thumbnail: Option<bool>,
-    cropped_thumbnail_data: Option<String>,
     thumbnail_url_for_embed: Option<String>,
     playlist_title: Option<String>,
     proxy_config: Option<proxy::ProxyConfig>,
@@ -472,33 +467,22 @@ async fn download_video(
                 "m4a".to_string(),
             ]);
 
-            let has_cropped_thumbnail = cropped_thumbnail_data
-                .as_ref()
-                .map(|d| d.starts_with("data:image/"))
-                .unwrap_or(false);
-
             let has_thumb_url_for_embed = thumbnail_url_for_embed
                 .as_ref()
                 .map(|s| !s.is_empty())
                 .unwrap_or(false);
 
-            // For YouTube Music, we want a square cover without sending base64 through JS.
-            // If we have a thumbnail URL, we'll embed it manually after download (cropping if letterboxed).
+            // For YouTube Music, we want a square cover (cropped if letterboxed).
+            // We embed manually from URL after download to ensure proper cropping.
             let should_manual_embed_ytm = embed_thumbnail.unwrap_or(false)
                 && url.to_lowercase().contains("music.youtube.com")
-                && has_thumb_url_for_embed
-                && !has_cropped_thumbnail;
+                && has_thumb_url_for_embed;
 
-            if embed_thumbnail.unwrap_or(false)
-                && !has_cropped_thumbnail
-                && !should_manual_embed_ytm
-            {
+            if embed_thumbnail.unwrap_or(false) && !should_manual_embed_ytm {
                 args.push("--embed-thumbnail".to_string());
                 info!("Embedding thumbnail as cover art (via yt-dlp)");
-            } else if embed_thumbnail.unwrap_or(false) && has_cropped_thumbnail {
-                info!("Will embed cropped YTM thumbnail manually after download");
             } else if should_manual_embed_ytm {
-                info!("Will embed YTM thumbnail manually after download (no base64)");
+                info!("Will embed YTM thumbnail manually after download");
             }
 
             info!("Audio-only download with extraction (ffprobe available)");
@@ -825,31 +809,15 @@ async fn download_video(
                 }
             }
 
+            // Embed thumbnail from URL for YTM audio downloads (with auto-cropping)
             if let Some(ref path) = final_file_path {
-                if let Some(ref thumb_data) = cropped_thumbnail_data {
-                    if thumb_data.starts_with("data:image/") && embed_thumbnail.unwrap_or(false) {
-                        info!("Embedding cropped YTM thumbnail into: {}", path);
-                        if let Err(e) = embed_cropped_thumbnail(&app, path, thumb_data).await {
-                            warn!("Failed to embed cropped thumbnail: {}", e);
-                        } else {
-                            info!("Successfully embedded cropped thumbnail");
-                        }
-                    }
-                }
-
-                // New path: embed from thumbnail URL directly (no base64 through the frontend)
-                let has_cropped_thumbnail = cropped_thumbnail_data
-                    .as_ref()
-                    .map(|d| d.starts_with("data:image/"))
-                    .unwrap_or(false);
-                let has_thumb_url_for_embed = thumbnail_url_for_embed
+                let has_thumb_url = thumbnail_url_for_embed
                     .as_ref()
                     .map(|s| !s.is_empty())
                     .unwrap_or(false);
 
                 if embed_thumbnail.unwrap_or(false)
-                    && !has_cropped_thumbnail
-                    && has_thumb_url_for_embed
+                    && has_thumb_url
                     && url.to_lowercase().contains("music.youtube.com")
                     && download_mode == "audio"
                 {
@@ -2281,134 +2249,6 @@ fn crop_to_center_square(img: DynamicImage) -> DynamicImage {
     img.crop_imm(x_offset, 0, square_size, square_size)
 }
 
-/// Process a YouTube Music thumbnail - download, detect letterboxing, crop if needed, return base64
-/// Returns a data URI (data:image/jpeg;base64,...) if cropped, or the original URL if not letterboxed
-#[tauri::command]
-#[allow(unused_variables)]
-async fn process_ytm_thumbnail(thumbnail_url: String) -> Result<String, String> {
-    #[cfg(target_os = "android")]
-    {
-        return Err("Use Android bridge for thumbnail processing".to_string());
-    }
-
-    #[cfg(not(target_os = "android"))]
-    {
-        Ok(thumbnail_url)
-    }
-}
-
-/// Embed a cropped thumbnail into an audio file using ffmpeg
-/// The thumbnail_data should be a base64 data URI (data:image/jpeg;base64,...)
-#[cfg(not(target_os = "android"))]
-async fn embed_cropped_thumbnail(
-    app: &AppHandle,
-    audio_path: &str,
-    thumbnail_data: &str,
-) -> Result<(), String> {
-    use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-    use std::process::Stdio;
-
-    let base64_part = thumbnail_data
-        .strip_prefix("data:image/jpeg;base64,")
-        .or_else(|| thumbnail_data.strip_prefix("data:image/png;base64,"))
-        .ok_or("Invalid thumbnail data URI format")?;
-
-    let image_bytes = BASE64
-        .decode(base64_part)
-        .map_err(|e| format!("Failed to decode base64 thumbnail: {}", e))?;
-
-    let cache_dir = app
-        .path()
-        .app_cache_dir()
-        .map_err(|e| format!("Failed to get cache dir: {}", e))?;
-    tokio::fs::create_dir_all(&cache_dir)
-        .await
-        .map_err(|e| format!("Failed to create cache dir: {}", e))?;
-
-    let thumb_path = cache_dir.join("cropped_cover.jpg");
-    tokio::fs::write(&thumb_path, &image_bytes)
-        .await
-        .map_err(|e| format!("Failed to write thumbnail file: {}", e))?;
-
-    debug!("Saved cropped thumbnail to: {:?}", thumb_path);
-
-    let ffmpeg_path = deps::get_ffmpeg_path(app)?;
-    if !ffmpeg_path.exists() {
-        return Err("FFmpeg not found".to_string());
-    }
-
-    let audio_path_buf = std::path::PathBuf::from(audio_path);
-    let audio_ext = audio_path_buf
-        .extension()
-        .map(|e| e.to_string_lossy().to_string())
-        .unwrap_or_else(|| "mp3".to_string());
-    let temp_output = audio_path_buf.with_extension(format!("temp.{}", audio_ext));
-
-    let mut cmd = tokio::process::Command::new(&ffmpeg_path);
-    cmd.args([
-        "-y",
-        "-i",
-        audio_path,
-        "-i",
-        thumb_path.to_str().unwrap(),
-        "-map",
-        "0:a",
-        "-map",
-        "1:v",
-        "-c:a",
-        "copy",
-        "-c:v",
-        "mjpeg",
-    ]);
-
-    if audio_ext == "mp3" {
-        cmd.args([
-            "-id3v2_version",
-            "3",
-            "-metadata:s:v",
-            "title=Album cover",
-            "-metadata:s:v",
-            "comment=Cover (front)",
-        ]);
-    } else {
-        cmd.args(["-disposition:v:0", "attached_pic"]);
-    }
-
-    cmd.arg(temp_output.to_str().unwrap());
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-
-    #[cfg(target_os = "windows")]
-    {
-        use crate::CommandExt;
-        cmd.hide_console();
-    }
-
-    debug!("Running ffmpeg to embed thumbnail...");
-    let output = cmd
-        .output()
-        .await
-        .map_err(|e| format!("Failed to run ffmpeg: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        warn!("FFmpeg stderr: {}", stderr);
-        let _ = tokio::fs::remove_file(&thumb_path).await;
-        return Err(format!("FFmpeg failed to embed thumbnail: {}", stderr));
-    }
-
-    tokio::fs::rename(&temp_output, audio_path)
-        .await
-        .map_err(|e| format!("Failed to replace original file: {}", e))?;
-
-    let _ = tokio::fs::remove_file(&thumb_path).await;
-
-    info!(
-        "Successfully embedded cropped thumbnail into: {}",
-        audio_path
-    );
-    Ok(())
-}
-
 /// Embed a thumbnail into an audio file by downloading it from a URL.
 ///
 /// - Downloads the image
@@ -3497,12 +3337,11 @@ async fn clear_cache(_app: AppHandle) -> Result<u32, String> {
 #[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn get_cache_stats() -> Result<CacheStats, String> {
-    let (video_info_count, playlist_count, formats_count, thumbnail_count) = {
+    let (video_info_count, playlist_count, formats_count) = {
         let vi = VIDEO_INFO_CACHE.lock().unwrap();
         let pi = PLAYLIST_INFO_CACHE.lock().unwrap();
         let vf = VIDEO_FORMATS_CACHE.lock().unwrap();
-        let yt = YTM_THUMBNAIL_CACHE.lock().unwrap();
-        (vi.len(), pi.len(), vf.len(), yt.len())
+        (vi.len(), pi.len(), vf.len())
     };
 
     // Estimate playlist cache size (rough estimate)
@@ -3511,19 +3350,11 @@ async fn get_cache_stats() -> Result<CacheStats, String> {
         pi.iter().map(|(_, v)| v.entries.len()).sum()
     };
 
-    // Estimate thumbnail cache size (base64 strings)
-    let thumbnail_bytes: usize = {
-        let yt = YTM_THUMBNAIL_CACHE.lock().unwrap();
-        yt.iter().map(|(_, v)| v.len()).sum()
-    };
-
     Ok(CacheStats {
         video_info_count,
         playlist_count,
         playlist_entries_total,
         formats_count,
-        thumbnail_count,
-        thumbnail_bytes_approx: thumbnail_bytes,
     })
 }
 
@@ -3535,8 +3366,6 @@ async fn get_cache_stats() -> Result<CacheStats, String> {
         playlist_count: 0,
         playlist_entries_total: 0,
         formats_count: 0,
-        thumbnail_count: 0,
-        thumbnail_bytes_approx: 0,
     })
 }
 
@@ -3547,8 +3376,6 @@ struct CacheStats {
     playlist_count: usize,
     playlist_entries_total: usize,
     formats_count: usize,
-    thumbnail_count: usize,
-    thumbnail_bytes_approx: usize,
 }
 
 #[cfg(not(target_os = "android"))]
@@ -3565,10 +3392,6 @@ async fn clear_memory_caches() -> Result<(), String> {
     {
         let mut vf = VIDEO_FORMATS_CACHE.lock().unwrap();
         vf.clear();
-    }
-    {
-        let mut yt = YTM_THUMBNAIL_CACHE.lock().unwrap();
-        yt.clear();
     }
     info!("Cleared all in-memory caches");
     Ok(())
@@ -3838,7 +3661,6 @@ pub fn run() {
             get_video_formats,
             get_playlist_info,
             get_media_duration,
-            process_ytm_thumbnail,
             set_acrylic,
             show_notification_window,
             reveal_notification_window,
