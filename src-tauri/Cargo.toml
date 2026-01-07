@@ -47,6 +47,7 @@ url = "2"
 image = "0.25"
 lru = "0.12"
 async-trait = "0.1"
+regex = "1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

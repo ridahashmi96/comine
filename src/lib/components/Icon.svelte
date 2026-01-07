@@ -142,7 +142,9 @@
     | 'platform_vimeo'
     | 'platform_facebook'
     | 'platform_weibo'
-    | 'platform_generic';
+    | 'platform_generic'
+    | 'arrow_outward'
+    | 'refresh';
 
   interface Props {
     name: IconName;

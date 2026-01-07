@@ -1732,4 +1732,9 @@ export const iconPaths: Record<string, string> = {
     <path opacity="0.5" d="M17.098 5.5C17.098 5.224 17.322 5 17.598 5C19.998 5.1 21.998 6.5 22.698 8.5C22.798 8.8 22.598 9.1 22.298 9.2C22.248 9.217 22.198 9.217 22.148 9.2C21.898 9.2 21.698 9 21.598 8.8C21.098 7.2 19.498 6.1 17.698 6C17.348 6 17.098 5.776 17.098 5.5ZM17.598 7.5C17.348 7.5 17.098 7.724 17.098 8C17.098 8.276 17.322 8.5 17.598 8.5C18.698 8.6 19.598 9.3 19.798 10.3C19.848 10.55 20.098 10.75 20.348 10.7C20.598 10.65 20.798 10.4 20.748 10.15C20.448 8.65 19.148 7.55 17.598 7.5Z" fill="currentColor"/>`,
   platform_generic: `<path d="M21.544 11.045C21.848 11.4713 22 11.6845 22 12C22 12.3155 21.848 12.5287 21.544 12.955C20.178 14.8706 16.689 19 12 19C7.31104 19 3.82198 14.8706 2.45604 12.955C2.15201 12.5287 2 12.3155 2 12C2 11.6845 2.15201 11.4713 2.45604 11.045C3.82198 9.12944 7.31104 5 12 5C16.689 5 20.178 9.12944 21.544 11.045Z" stroke="currentColor" stroke-width="1.5"/>
     <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.5"/>`,
+  arrow_outward: `<path d="M6 18L18 6M18 6H10M18 6V14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`,
+  refresh: `<path d="M12.079 3.00001V3.00001C16.9166 2.97417 20.9594 6.8128 21.1871 11.6449C21.4147 16.4769 17.7485 20.6759 12.921 21.101" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M11.921 21C7.08345 21.0258 3.04061 17.1872 2.81295 12.3551C2.58529 7.52307 6.25149 3.3241 11.079 2.899" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M15 2.5L12 5.5L9 2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M9 21.5L12 18.5L15 21.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`,
 };

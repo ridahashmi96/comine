@@ -1,6 +1,6 @@
 import { writable, derived, get } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { listen, emit, type UnlistenFn } from '@tauri-apps/api/event';
 import { stat } from '@tauri-apps/plugin-fs';
 import { load, Store } from '@tauri-apps/plugin-store';
 import {
@@ -361,7 +361,7 @@ function createQueueStore() {
           : translate('downloads.status.downloading');
       }
 
-      let match = message.match(/^\s+(\d+\.?\d*)%\s+(\S*)\s*(.*)/);
+      let match = message.match(/^\s*(\d+\.?\d*)%\s+(\S*)\s*(.*)/);
       let speed = '';
       let eta = '';
       let rawProgress = -1;
@@ -699,6 +699,13 @@ function createQueueStore() {
         type: fileType,
       });
 
+      emit('download-status-changed', {
+        url: url,
+        status: 'completed',
+        filePath: filePath,
+        title: pendingItem.title || 'Downloaded file',
+      });
+
       sendDownloadNotification(
         'completed',
         translate('notifications.downloadComplete'),
@@ -734,6 +741,12 @@ function createQueueStore() {
             : item
         ),
       }));
+
+      emit('download-status-changed', {
+        url: url,
+        status: 'failed',
+        error: String(error),
+      });
 
       sendDownloadNotification(
         'failed',
@@ -1118,6 +1131,13 @@ function createQueueStore() {
           playlistIndex: completedItem.playlistIndex,
         });
 
+        emit('download-status-changed', {
+          url: completedItem.url,
+          status: 'completed',
+          filePath: completedItem.filePath,
+          title: completedItem.title,
+        });
+
         sendDownloadNotification(
           'completed',
           translate('notifications.downloadComplete'),
@@ -1164,6 +1184,12 @@ function createQueueStore() {
             : item
         ),
       }));
+
+      emit('download-status-changed', {
+        url: url,
+        status: 'failed',
+        error: String(error),
+      });
 
       sendDownloadNotification(
         'failed',
@@ -1619,6 +1645,14 @@ function createQueueStore() {
         } catch (err) {
           console.warn('Failed to cancel download:', err);
         }
+      }
+
+      // Emit cancelled event so notification popup can close
+      if (item) {
+        emit('download-status-changed', {
+          url: item.url,
+          status: 'cancelled',
+        });
       }
 
       update((state) => {

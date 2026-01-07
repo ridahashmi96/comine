@@ -70,6 +70,8 @@ export interface AppSettings {
   notificationThumbnailTheming: boolean;
   notificationOffset: number;
   notificationCornerDismiss: boolean;
+  notificationDuration: number;
+  notificationShowProgress: boolean;
 
   toastPosition: ToastPosition;
 
@@ -197,6 +199,8 @@ export const defaultSettings: AppSettings = {
   notificationThumbnailTheming: true,
   notificationOffset: 48,
   notificationCornerDismiss: false,
+  notificationDuration: 12,
+  notificationShowProgress: true,
 
   toastPosition: 'bottom-right',
 

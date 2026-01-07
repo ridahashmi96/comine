@@ -34,6 +34,10 @@ use tauri::Manager;
 static ACTIVE_DOWNLOADS: std::sync::LazyLock<Mutex<HashMap<String, u32>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
+#[cfg(not(target_os = "android"))]
+static THUMBNAIL_COLOR_CACHE: std::sync::LazyLock<Mutex<HashMap<String, [u8; 3]>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
 #[cfg(target_os = "android")]
 use log::info;
 #[cfg(not(target_os = "android"))]
@@ -1261,8 +1265,35 @@ async fn extract_thumbnail_color(url: String) -> Result<[u8; 3], String> {
     #[cfg(not(target_os = "android"))]
     {
         use image::GenericImageView;
+        use regex::Regex;
 
-        // Fetch the image
+        let cache_key = {
+            let yt_regex = Regex::new(r"i\.ytimg\.com/vi(?:_webp)?/([^/]+)/").ok();
+            if let Some(re) = yt_regex {
+                if let Some(caps) = re.captures(&url) {
+                    if let Some(video_id) = caps.get(1) {
+                        format!("yt:{}", video_id.as_str())
+                    } else {
+                        url.clone()
+                    }
+                } else {
+                    url.clone()
+                }
+            } else {
+                url.clone()
+            }
+        };
+
+        {
+            let cache = lock_or_recover(&THUMBNAIL_COLOR_CACHE);
+            if let Some(&color) = cache.get(&cache_key) {
+                debug!("Thumbnail color cache hit for: {}", cache_key);
+                return Ok(color);
+            }
+        }
+
+        debug!("Thumbnail color cache miss for: {}, fetching...", cache_key);
+
         let response = reqwest::get(&url)
             .await
             .map_err(|e| format!("Failed to fetch image: {}", e))?;
@@ -1276,11 +1307,9 @@ async fn extract_thumbnail_color(url: String) -> Result<[u8; 3], String> {
             .await
             .map_err(|e| format!("Failed to read image bytes: {}", e))?;
 
-        // Decode the image
         let img = image::load_from_memory(&bytes)
             .map_err(|e| format!("Failed to decode image: {}", e))?;
 
-        // Resize for faster processing
         let small = img.resize(50, 50, image::imageops::FilterType::Triangle);
         let (width, height) = small.dimensions();
 
@@ -1366,7 +1395,52 @@ async fn extract_thumbnail_color(url: String) -> Result<[u8; 3], String> {
             ];
         }
 
+        {
+            let mut cache = lock_or_recover(&THUMBNAIL_COLOR_CACHE);
+            if cache.len() >= 500 {
+                let keys_to_remove: Vec<_> = cache.keys().take(250).cloned().collect();
+                for key in keys_to_remove {
+                    cache.remove(&key);
+                }
+            }
+            cache.insert(cache_key, best_color);
+        }
+
         Ok(best_color)
+    }
+}
+
+#[tauri::command]
+#[allow(unused_variables)]
+async fn get_cached_thumbnail_color(url: String) -> Result<Option<[u8; 3]>, String> {
+    #[cfg(target_os = "android")]
+    {
+        return Ok(None);
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        use regex::Regex;
+
+        let cache_key = {
+            let yt_regex = Regex::new(r"i\.ytimg\.com/vi(?:_webp)?/([^/]+)/").ok();
+            if let Some(re) = yt_regex {
+                if let Some(caps) = re.captures(&url) {
+                    if let Some(video_id) = caps.get(1) {
+                        format!("yt:{}", video_id.as_str())
+                    } else {
+                        url.clone()
+                    }
+                } else {
+                    url.clone()
+                }
+            } else {
+                url.clone()
+            }
+        };
+
+        let cache = lock_or_recover(&THUMBNAIL_COLOR_CACHE);
+        Ok(cache.get(&cache_key).copied())
     }
 }
 
@@ -2537,6 +2611,7 @@ pub fn run() {
             get_media_duration,
             extract_video_thumbnail,
             extract_thumbnail_color,
+            get_cached_thumbnail_color,
             lux_get_video_info,
             lux_get_video_formats,
             lux_get_playlist_info,

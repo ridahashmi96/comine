@@ -523,7 +523,11 @@
       "cornerDismiss": "Corner dismiss button only",
       "cornerDismissTooltip": "Hide the full dismiss button and use only the corner X to close notifications",
       "offset": "Screen edge offset",
-      "offsetDescription": "Distance from the screen edge (taskbar height)"
+      "offsetDescription": "Distance from the screen edge (taskbar height)",
+      "duration": "Auto-dismiss delay",
+      "durationDescription": "Time before the notification automatically closes",
+      "showProgress": "Show download progress",
+      "showProgressTooltip": "Keep notification open to show download progress and completion actions"
     },
     "network": {
       "title": "Network",

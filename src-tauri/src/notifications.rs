@@ -374,14 +374,16 @@ pub async fn notification_action(
     window_id: String,
     url: Option<String>,
     metadata: Option<serde_json::Value>,
+    keep_open: Option<bool>,
 ) -> Result<(), String> {
     #[cfg(not(target_os = "android"))]
     {
         info!(
-            "Notification action triggered: window_id={}, url={:?}, has_metadata={}",
+            "Notification action triggered: window_id={}, url={:?}, has_metadata={}, keep_open={:?}",
             window_id,
             url,
-            metadata.is_some()
+            metadata.is_some(),
+            keep_open
         );
 
         if let Some(video_url) = &url {
@@ -399,7 +401,9 @@ pub async fn notification_action(
             }
         }
 
-        close_notification_window(app, window_id).await?;
+        if !keep_open.unwrap_or(false) {
+            close_notification_window(app, window_id).await?;
+        }
     }
     Ok(())
 }

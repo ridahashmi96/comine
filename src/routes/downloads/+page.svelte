@@ -35,7 +35,7 @@
   import Divider from '$lib/components/Divider.svelte';
   import Select from '$lib/components/Select.svelte';
   import { tooltip } from '$lib/actions/tooltip';
-  import { extractDominantColor, generateColorVars, type RGB } from '$lib/utils/color';
+  import { extractDominantColor, generateColorVars, getCachedColor, getCachedColorAsync, type RGB } from '$lib/utils/color';
   import { saveScrollPosition, getScrollPosition } from '$lib/stores/scroll';
 
   const ROUTE_PATH = '/downloads';
@@ -211,7 +211,24 @@
   let colorAccessOrder = $state<string[]>([]);
 
   async function extractItemColor(id: string, thumbnailUrl: string | undefined) {
-    if (!$settings.thumbnailTheming || !thumbnailUrl || itemColors.has(id)) return;
+    if (!$settings.thumbnailTheming || !thumbnailUrl) return;
+    if (itemColors.has(thumbnailUrl)) return;
+    
+    const cachedColor = await getCachedColorAsync(thumbnailUrl);
+    if (cachedColor) {
+      if (itemColors.size >= MAX_COLOR_CACHE) {
+        const oldest = colorAccessOrder.shift();
+        if (oldest) {
+          const next = new Map(itemColors);
+          next.delete(oldest);
+          itemColors = next;
+        }
+      }
+      itemColors = new Map(itemColors).set(thumbnailUrl, cachedColor);
+      colorAccessOrder = [...colorAccessOrder, thumbnailUrl];
+      return;
+    }
+    
     const color = await extractDominantColor(thumbnailUrl);
     if (color) {
       if (itemColors.size >= MAX_COLOR_CACHE) {
@@ -222,8 +239,8 @@
           itemColors = next;
         }
       }
-      itemColors = new Map(itemColors).set(id, color);
-      colorAccessOrder = [...colorAccessOrder, id];
+      itemColors = new Map(itemColors).set(thumbnailUrl, color);
+      colorAccessOrder = [...colorAccessOrder, thumbnailUrl];
     }
   }
 
@@ -257,9 +274,9 @@
     return result;
   }
 
-  function getItemColorStyle(id: string): string {
-    if (!$settings.thumbnailTheming) return '';
-    const color = itemColors.get(id);
+  function getItemColorStyle(thumbnailUrl: string | undefined): string {
+    if (!$settings.thumbnailTheming || !thumbnailUrl) return '';
+    const color = itemColors.get(thumbnailUrl) || getCachedColor(thumbnailUrl);
     if (!color) return '';
     return generateColorVars(color);
   }
@@ -892,7 +909,7 @@
                   <div
                     class="active-item playlist-item"
                     class:paused={download.status === 'paused'}
-                    style="--progress: {displayProgress}%; {getItemColorStyle(download.id)}"
+                    style="--progress: {displayProgress}%; {getItemColorStyle(download.thumbnail)}"
                   >
                     <div class="progress-bg"></div>
                     <div class="active-content">
@@ -1000,7 +1017,7 @@
           <div
             class="active-item"
             class:paused={download.status === 'paused'}
-            style="--progress: {displayProgress}%; {getItemColorStyle(download.id)}"
+            style="--progress: {displayProgress}%; {getItemColorStyle(download.thumbnail)}"
           >
             <!-- Progress gradient background -->
             <div class="progress-bg"></div>
@@ -1202,7 +1219,7 @@
                   <div
                     class="history-item playlist-child"
                     class:last-child={isLastChild}
-                    style="height: {ITEM_HEIGHT}px; {getItemColorStyle(subItem.id)}"
+                    style="height: {ITEM_HEIGHT}px; {getItemColorStyle(subItem.thumbnail)}"
                     class:file-missing={fileMissing}
                     onmouseenter={() => (hoveredItemId = subItem.id)}
                     onmouseleave={() => (hoveredItemId = null)}
@@ -1308,7 +1325,7 @@
                   <!-- svelte-ignore a11y_no_static_element_interactions -->
                   <div
                     class="history-item"
-                    style="height: {ITEM_HEIGHT}px; {getItemColorStyle(singleItem.id)}"
+                    style="height: {ITEM_HEIGHT}px; {getItemColorStyle(singleItem.thumbnail)}"
                     class:file-missing={fileMissing}
                     onmouseenter={() => (hoveredItemId = singleItem.id)}
                     onmouseleave={() => (hoveredItemId = null)}
@@ -1438,7 +1455,7 @@
                 <div
                   class="grid-card"
                   class:file-missing={fileMissing}
-                  style={getItemColorStyle(item.id)}
+                  style={getItemColorStyle(item.thumbnail)}
                   onmouseenter={() => (hoveredItemId = item.id)}
                   onmouseleave={() => (hoveredItemId = null)}
                 >

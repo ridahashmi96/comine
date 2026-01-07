@@ -1,6 +1,8 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
+  import { fade, slide } from 'svelte/transition';
   import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { load } from '@tauri-apps/plugin-store';
   import type { BackgroundType } from '$lib/stores/settings';
   import { rgbToRgba, type RGB } from '$lib/utils/color';
@@ -94,6 +96,19 @@
   }
 
   let cornerDismiss = $state(false);
+  let notificationDuration = $state(12000);
+  let showProgress = $state(true);
+
+  // Progress tracking state
+  type DownloadState = 'idle' | 'downloading' | 'processing' | 'completed' | 'failed';
+  let downloadState = $state<DownloadState>('idle');
+  let downloadProgress = $state(0);
+  let downloadSpeed = $state('');
+  let downloadEta = $state('');
+  let downloadFilePath = $state('');
+  let downloadError = $state('');
+  let unlistenProgress: UnlistenFn | null = null;
+  let unlistenStatus: UnlistenFn | null = null;
 
   let accentAlpha = $derived(accentColor + '66'); // 40% opacity
   let accentHover = $derived(adjustBrightness(accentColor, -10));
@@ -133,6 +148,16 @@
 
   async function handleDownload(mode: 'auto' | 'audio' = 'auto') {
     isDownloading = true;
+    const keepOpen = showProgress && !isPlaylist && !isChannel;
+
+    if (keepOpen) {
+      downloadState = 'downloading';
+      if (autoCloseTimer) {
+        clearTimeout(autoCloseTimer);
+        autoCloseTimer = null;
+      }
+      await setupProgressListeners();
+    }
 
     try {
       await invoke('notification_action', {
@@ -148,10 +173,12 @@
           isFile: isFile,
           fileInfo: fileInfo,
         },
+        keepOpen: keepOpen,
       });
     } catch (e) {
       console.error('Action failed:', e);
       isDownloading = false;
+      downloadState = 'idle';
     }
   }
 
@@ -175,13 +202,108 @@
     }
   }
 
+  async function setupProgressListeners() {
+    unlistenProgress = await listen<{ url: string; message: string }>('download-progress', (event) => {
+      const { url, message } = event.payload;
+      if (url !== mediaUrl) return;
+
+      // Parse progress from message
+      if (message.includes('[Merger]') || message.includes('Merging')) {
+        downloadState = 'processing';
+      } else if (message.includes('[ffmpeg]') || message.includes('[ExtractAudio]')) {
+        downloadState = 'processing';
+      } else if (message.includes('%')) {
+        downloadState = 'downloading';
+        const match = message.match(/^\s*(\d+\.?\d*)%\s+(\S*)\s*(.*)/);
+        if (match) {
+          downloadProgress = parseFloat(match[1]);
+          downloadSpeed = match[2] || '';
+          downloadEta = match[3] || '';
+        } else {
+          // Try aria2 format
+          const aria2Match = message.match(/\[#\w+[^\]]*\](\d+\.?\d*)%\s+(\S+)\s*(.*)/);
+          if (aria2Match) {
+            downloadProgress = parseFloat(aria2Match[1]);
+            downloadSpeed = aria2Match[2] ? (aria2Match[2].replace(/^DL:/, '') + '/s') : '';
+            downloadEta = aria2Match[3] || '';
+          }
+        }
+      }
+    });
+
+    unlistenStatus = await listen<{ url: string; status: string; filePath?: string; error?: string }>('download-status-changed', (event) => {
+      const { url, status, filePath, error } = event.payload;
+      if (url !== mediaUrl) return;
+
+      if (status === 'completed') {
+        downloadState = 'completed';
+        downloadProgress = 100;
+        downloadFilePath = filePath || '';
+        downloadSpeed = '';
+        downloadEta = '';
+      } else if (status === 'failed') {
+        downloadState = 'failed';
+        downloadError = error || 'Download failed';
+      } else if (status === 'cancelled') {
+        // Item was removed from queue, close notification
+        closeNotification();
+      }
+    });
+  }
+
+  function cleanupListeners() {
+    if (unlistenProgress) {
+      unlistenProgress();
+      unlistenProgress = null;
+    }
+    if (unlistenStatus) {
+      unlistenStatus();
+      unlistenStatus = null;
+    }
+  }
+
+  async function handleOpenFile() {
+    if (downloadFilePath) {
+      try {
+        const { openPath } = await import('@tauri-apps/plugin-opener');
+        await openPath(downloadFilePath);
+      } catch (e) {
+        console.error('Failed to open file:', e);
+      }
+    }
+    closeNotification();
+  }
+
+  async function handleShowInFolder() {
+    if (downloadFilePath) {
+      try {
+        const { revealItemInDir } = await import('@tauri-apps/plugin-opener');
+        await revealItemInDir(downloadFilePath);
+      } catch (e) {
+        console.error('Failed to reveal in folder:', e);
+      }
+    }
+    closeNotification();
+  }
+
   function scheduleAutoClose() {
+    // Don't auto-close if download is in progress
+    if (downloadState !== 'idle') return;
+    
     if (autoCloseTimer) clearTimeout(autoCloseTimer);
     autoCloseTimer = setTimeout(() => {
+      if (downloadState !== 'idle') return; // Double check
       if (!isHovered) closeNotification();
       else scheduleAutoClose();
-    }, 8000);
+    }, notificationDuration);
   }
+
+  onDestroy(() => {
+    cleanupListeners();
+    if (rgbAnimationFrame) {
+      cancelAnimationFrame(rgbAnimationFrame);
+    }
+  });
 
   onMount(() => {
     (async () => {
@@ -201,6 +323,8 @@
         fancyBackground = (await store.get<boolean>('notificationFancyBackground')) ?? false;
         cornerDismiss = (await store.get<boolean>('notificationCornerDismiss')) ?? false;
         thumbnailTheming = (await store.get<boolean>('notificationThumbnailTheming')) ?? true;
+        notificationDuration = ((await store.get<number>('notificationDuration')) ?? 12) * 1000;
+        showProgress = (await store.get<boolean>('notificationShowProgress')) ?? true;
 
         if (fancyBackground) {
           backgroundType = (await store.get<BackgroundType>('backgroundType')) ?? 'solid';
@@ -208,17 +332,6 @@
           backgroundImage = (await store.get<string>('backgroundImage')) ?? '';
           backgroundVideo = (await store.get<string>('backgroundVideo')) ?? '';
           backgroundBlur = (await store.get<number>('backgroundBlur')) ?? 20;
-        }
-
-        if (thumbnailTheming && thumbnail) {
-          try {
-            const colorArr = await invoke<[number, number, number]>('extract_thumbnail_color', { url: thumbnail });
-            if (colorArr) {
-              thumbnailColor = { r: colorArr[0], g: colorArr[1], b: colorArr[2] };
-            }
-          } catch (e) {
-            console.error('Failed to extract thumbnail color:', e);
-          }
         }
       } catch (e) {
         console.error('Failed to load settings:', e);
@@ -236,6 +349,16 @@
       }
 
       scheduleAutoClose();
+
+      if (thumbnailTheming && thumbnail) {
+        invoke<[number, number, number]>('extract_thumbnail_color', { url: thumbnail })
+          .then((colorArr) => {
+            if (colorArr) {
+              thumbnailColor = { r: colorArr[0], g: colorArr[1], b: colorArr[2] };
+            }
+          })
+          .catch(() => {});
+      }
     })();
 
     return () => {
@@ -315,14 +438,51 @@
     {/if}
 
     <div class="text-compact">
-      <div class="title" class:marquee={needsMarquee} bind:this={titleEl}>
-        <span>{title}</span>
-        {#if needsMarquee}<span>{title}</span>{/if}
+      <div class="title-wrapper" class:masked={needsMarquee}>
+        <div class="title" class:marquee={needsMarquee} bind:this={titleEl}>
+          <span>{title}</span>
+          {#if needsMarquee}<span aria-hidden="true">{title}</span>{/if}
+        </div>
       </div>
     </div>
 
     <div class="actions-compact">
-      {#if isChannel}
+      {#if downloadState === 'downloading' || downloadState === 'processing'}
+        <!-- Compact Progress View -->
+        <div class="progress-compact" in:fade={{ duration: 200 }}>
+          <div class="progress-ring" style="--progress: {downloadProgress}">
+            <svg viewBox="0 0 36 36" width="28" height="28">
+              <circle cx="18" cy="18" r="15" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="3"/>
+              <circle cx="18" cy="18" r="15" fill="none" stroke="var(--accent, #6366f1)" stroke-width="3"
+                stroke-dasharray="{downloadProgress * 0.942} 100"
+                stroke-linecap="round"
+                transform="rotate(-90 18 18)"
+                class="progress-circle"
+              />
+            </svg>
+            <span class="progress-text">{downloadProgress.toFixed(0)}</span>
+          </div>
+        </div>
+      {:else if downloadState === 'completed'}
+        <!-- Compact Completion View -->
+        <div class="compact-completion" in:fade={{ duration: 200, delay: 100 }}>
+          <button class="icon-btn open" onclick={handleOpenFile} title="Open">
+            <Icon name="arrow_outward" size={16} />
+          </button>
+          <button class="icon-btn folder" onclick={handleShowInFolder} title="Show in folder">
+            <Icon name="folder" size={16} />
+          </button>
+        </div>
+      {:else if downloadState === 'failed'}
+        <!-- Compact Failed View -->
+        <div class="icon-btn error" title="Failed" in:fade={{ duration: 200 }}>
+          <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
+            <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </div>
+      {:else}
+        <div class="compact-default" out:fade={{ duration: 150 }}>
+        {#if isChannel}
         <!-- Channel: Single View Channel button -->
         <button
           class="icon-btn download channel"
@@ -521,6 +681,8 @@
             </svg>
           {/if}
         </button>
+        {/if}
+        </div>
       {/if}
     </div>
   </div>
@@ -566,21 +728,66 @@
       {/if}
 
       <div class="text">
-        <div class="title" class:marquee={needsMarquee} bind:this={titleEl}>
-          <span>{title}</span>
-          {#if needsMarquee}<span>{title}</span>{/if}
+        <div class="title-wrapper" class:masked={needsMarquee}>
+          <div class="title" class:marquee={needsMarquee} bind:this={titleEl}>
+            <span>{title}</span>
+            {#if needsMarquee}<span aria-hidden="true">{title}</span>{/if}
+          </div>
         </div>
         {#if body}
-          <div class="subtitle" class:marquee={needsSubtitleMarquee} bind:this={subtitleEl}>
-            <span>{body}</span>
-            {#if needsSubtitleMarquee}<span>{body}</span>{/if}
+          <div class="subtitle-wrapper" class:masked={needsSubtitleMarquee}>
+            <div class="subtitle" class:marquee={needsSubtitleMarquee} bind:this={subtitleEl}>
+              <span>{body}</span>
+              {#if needsSubtitleMarquee}<span aria-hidden="true">{body}</span>{/if}
+            </div>
           </div>
         {/if}
       </div>
     </div>
 
     <div class="actions">
-      {#if isChannel}
+      {#if downloadState === 'downloading' || downloadState === 'processing'}
+        <!-- Progress View -->
+        <div class="progress-view" in:fade={{ duration: 200 }} out:fade={{ duration: 150 }}>
+          <div class="progress-bar-container">
+            <div class="progress-bar" style="width: {downloadProgress}%"></div>
+          </div>
+          <div class="progress-info">
+            <span class="progress-percent">{downloadProgress.toFixed(0)}%</span>
+            {#if downloadState === 'processing'}
+              <span class="progress-status">Processing...</span>
+            {:else if downloadProgress === 0 && !downloadSpeed}
+              <span class="progress-status">Starting...</span>
+            {:else if downloadSpeed}
+              <span class="progress-speed">{downloadSpeed}</span>
+            {/if}
+          </div>
+        </div>
+      {:else if downloadState === 'completed'}
+        <!-- Completion View -->
+        <div class="completion-actions" in:fade={{ duration: 200, delay: 100 }}>
+          <button class="btn open" onclick={handleOpenFile}>
+            <Icon name="arrow_outward" size={14} />
+            Open
+          </button>
+          <button class="btn folder" onclick={handleShowInFolder}>
+            <Icon name="folder" size={14} />
+            Folder
+          </button>
+        </div>
+      {:else if downloadState === 'failed'}
+        <!-- Failed View -->
+        <div class="error-actions" in:fade={{ duration: 200 }}>
+          <div class="error-view">
+            <span class="error-icon">✕</span>
+            <span class="error-text">Failed</span>
+          </div>
+          <button class="btn dismiss" onclick={closeNotification}>Close</button>
+        </div>
+      {:else}
+        <!-- Default buttons -->
+        <div class="default-actions" out:fade={{ duration: 150 }}>
+        {#if isChannel}
         <!-- Channel: Single View Channel button -->
         <button
           class="btn download channel"
@@ -742,6 +949,8 @@
         {#if !cornerDismiss}
           <button class="btn dismiss" onclick={closeNotification}>{dismissLabel}</button>
         {/if}
+        {/if}
+        </div>
       {/if}
     </div>
   </div>
@@ -815,6 +1024,23 @@
     border-radius: 12px;
     height: calc(100vh - 4px);
     box-sizing: border-box;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+    transition: border-color 0.4s ease;
+    overflow: hidden;
+    isolation: isolate;
+  }
+
+  .notification::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, var(--thumb-color-alpha, transparent) 0%, transparent 60%);
+    pointer-events: none;
+    border-radius: inherit;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+    z-index: 0;
   }
 
   .notification.fancy {
@@ -824,19 +1050,12 @@
   }
 
   .notification.themed {
-    background: #1a1a1e;
-    position: relative;
-    overflow: hidden;
+    border-color: var(--thumb-color-alpha, rgba(255, 255, 255, 0.08));
   }
 
   .notification.themed::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(135deg, var(--thumb-color-alpha, transparent) 0%, transparent 60%);
+    opacity: 1;
     animation: gradient-breathe 3s ease-in-out infinite;
-    pointer-events: none;
-    border-radius: inherit;
   }
 
   @keyframes gradient-breathe {
@@ -863,7 +1082,7 @@
     cursor: pointer;
     padding: 2px 6px;
     border-radius: 4px;
-    z-index: 1;
+    z-index: 2;
   }
   .close-x:hover {
     color: white;
@@ -899,6 +1118,8 @@
     gap: 10px;
     align-items: center;
     padding-right: 24px;
+    position: relative;
+    z-index: 1;
   }
 
   .thumb {
@@ -924,6 +1145,18 @@
     min-width: 0;
     overflow: hidden;
   }
+
+  .title-wrapper,
+  .subtitle-wrapper {
+    overflow: hidden;
+    position: relative;
+  }
+  .title-wrapper.masked,
+  .subtitle-wrapper.masked {
+    mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
+    -webkit-mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
+  }
+
   .title {
     font-size: 13px;
     font-weight: 600;
@@ -934,7 +1167,8 @@
   .title.marquee {
     display: flex;
     gap: 3em;
-    animation: marquee 6s linear infinite;
+    animation: marquee 8s linear infinite;
+    animation-delay: 1s;
     text-overflow: clip;
     overflow: visible;
     width: max-content;
@@ -944,11 +1178,11 @@
   }
 
   @keyframes marquee {
-    0% {
+    0%, 5% {
       transform: translateX(0);
     }
-    100% {
-      transform: translateX(-50%);
+    95%, 100% {
+      transform: translateX(calc(-50% - 1.5em));
     }
   }
 
@@ -962,7 +1196,8 @@
   .subtitle.marquee {
     display: flex;
     gap: 3em;
-    animation: marquee 8s linear infinite;
+    animation: marquee 10s linear infinite;
+    animation-delay: 1s;
     text-overflow: clip;
     overflow: visible;
     width: max-content;
@@ -974,6 +1209,26 @@
   .actions {
     display: flex;
     gap: 8px;
+    position: relative;
+    min-height: 32px;
+    z-index: 1;
+  }
+
+  .default-actions,
+  .completion-actions,
+  .error-actions,
+  .progress-view {
+    display: flex;
+    gap: 8px;
+    flex: 1;
+    position: absolute;
+    inset: 0;
+  }
+
+  .default-actions,
+  .completion-actions,
+  .error-actions {
+    align-items: center;
   }
 
   .btn {
@@ -994,6 +1249,7 @@
   .btn.download {
     background: var(--accent, #6366f1);
     color: white;
+    transition: all 0.15s ease, background-color 0.4s ease;
   }
   .themed .btn.download {
     background: var(--thumb-color, var(--accent, #6366f1));
@@ -1049,6 +1305,115 @@
     }
   }
 
+  /* Progress view styles */
+  .progress-view {
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .progress-bar-container {
+    width: 100%;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .progress-bar {
+    height: 100%;
+    background: var(--accent, #6366f1);
+    border-radius: 3px;
+    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+  }
+  .progress-bar::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.2) 50%,
+      transparent 100%
+    );
+    animation: shimmer 1.5s infinite;
+  }
+  @keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+  .themed .progress-bar {
+    background: var(--thumb-color, var(--accent, #6366f1));
+  }
+
+  .progress-info {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+  }
+
+  .progress-percent {
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  .progress-speed,
+  .progress-status {
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  /* Completion buttons */
+  .btn.open {
+    flex: 1;
+    background: var(--accent, #6366f1);
+    color: white;
+  }
+  .themed .btn.open {
+    background: var(--thumb-color, var(--accent, #6366f1));
+  }
+  .btn.open:hover {
+    filter: brightness(0.9);
+  }
+
+  .btn.folder {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.9);
+  }
+  .btn.folder:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: white;
+  }
+
+  /* Error view styles */
+  .error-view {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: rgba(239, 68, 68, 0.15);
+    border-radius: 6px;
+    color: #ef4444;
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  .error-icon {
+    font-weight: bold;
+  }
+
+  .error-text {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   /* Compact mode styles */
   .notification.compact {
     flex-direction: row;
@@ -1082,6 +1447,14 @@
     min-width: 0;
     overflow: hidden;
   }
+  .text-compact .title-wrapper {
+    overflow: hidden;
+    position: relative;
+  }
+  .text-compact .title-wrapper.masked {
+    mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
+    -webkit-mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
+  }
   .text-compact .title {
     font-size: 12px;
     font-weight: 600;
@@ -1092,7 +1465,8 @@
   .text-compact .title.marquee {
     display: flex;
     gap: 3em;
-    animation: marquee 6s linear infinite;
+    animation: marquee 8s linear infinite;
+    animation-delay: 1s;
     text-overflow: clip;
     overflow: visible;
     width: max-content;
@@ -1105,6 +1479,20 @@
     display: flex;
     gap: 4px;
     flex-shrink: 0;
+    position: relative;
+    min-width: 64px;
+    min-height: 32px;
+  }
+
+  .compact-default,
+  .compact-completion,
+  .progress-compact {
+    display: flex;
+    gap: 4px;
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
   }
 
   .icon-btn {
@@ -1116,7 +1504,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.15s ease;
+    transition: all 0.15s ease, background-color 0.4s ease;
   }
   .icon-btn.download {
     background: var(--accent, #6366f1);
@@ -1183,5 +1571,60 @@
   }
   .btn.channel:hover:not(:disabled) {
     background: #dc2626;
+  }
+
+  /* Compact progress styles */
+  .progress-compact {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .progress-ring {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .progress-ring .progress-circle {
+    transition: stroke-dasharray 0.2s ease;
+  }
+  .themed .progress-ring .progress-circle {
+    stroke: var(--thumb-color, var(--accent, #6366f1));
+  }
+
+  .progress-ring .progress-text {
+    position: absolute;
+    font-size: 8px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  /* Compact completion buttons */
+  .icon-btn.open {
+    background: var(--accent, #6366f1);
+    color: white;
+  }
+  .themed .icon-btn.open {
+    background: var(--thumb-color, var(--accent, #6366f1));
+  }
+  .icon-btn.open:hover {
+    filter: brightness(0.9);
+  }
+
+  .icon-btn.folder {
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.9);
+  }
+  .icon-btn.folder:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: white;
+  }
+
+  .icon-btn.error {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+    cursor: default;
   }
 </style>

@@ -809,6 +809,7 @@ dependencies = [
  "libc",
  "log",
  "lru",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

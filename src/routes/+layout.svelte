@@ -599,7 +599,7 @@
         const queueId = queue.add(url, {
           ignoreMixes: currentSettings.ignoreMixes ?? true,
           videoQuality: currentSettings.defaultVideoQuality ?? 'max',
-          downloadMode: notificationDownloadMode ?? currentSettings.defaultDownloadMode ?? 'auto',
+          downloadMode: notificationDownloadMode === 'auto' ? undefined : (notificationDownloadMode ?? undefined),
           audioQuality: currentSettings.defaultAudioQuality ?? 'best',
           convertToMp4: currentSettings.convertToMp4 ?? false,
           remux: currentSettings.remux ?? true,

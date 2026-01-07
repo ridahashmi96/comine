@@ -938,6 +938,8 @@
             updateSetting('notificationThumbnailTheming', defaultSettings.notificationThumbnailTheming);
             updateSetting('notificationCornerDismiss', defaultSettings.notificationCornerDismiss);
             updateSetting('notificationOffset', defaultSettings.notificationOffset);
+            updateSetting('notificationDuration', defaultSettings.notificationDuration);
+            updateSetting('notificationShowProgress', defaultSettings.notificationShowProgress);
           } : undefined}
         >
           {#if matchesSearch('notificationsEnabled')}
@@ -1083,6 +1085,50 @@
                 />
                 <span class="slider-value">{$settings.notificationOffset}px</span>
               </div>
+            </SettingItem>
+          {/if}
+
+          {#if matchesSearch('notificationDuration')}
+            <SettingItem
+              title={$t('settings.notifications.duration')}
+              description={$t('settings.notifications.durationDescription')}
+              icon="clock"
+              value={$settings.notificationDuration}
+              defaultValue={defaultSettings.notificationDuration}
+              onReset={() => updateSetting('notificationDuration', defaultSettings.notificationDuration)}
+            >
+              <div class="slider-with-value">
+                <input
+                  type="range"
+                  class="blur-slider"
+                  min="3"
+                  max="30"
+                  step="1"
+                  value={$settings.notificationDuration}
+                  oninput={(e) =>
+                    updateSetting(
+                      'notificationDuration',
+                      parseInt((e.target as HTMLInputElement).value)
+                    )}
+                />
+                <span class="slider-value">{$settings.notificationDuration}s</span>
+              </div>
+            </SettingItem>
+          {/if}
+
+          {#if matchesSearch('notificationShowProgress')}
+            <SettingItem
+              title={$t('settings.notifications.showProgress')}
+              description={$t('settings.notifications.showProgressTooltip')}
+              icon="download"
+              value={$settings.notificationShowProgress}
+              defaultValue={defaultSettings.notificationShowProgress}
+              onReset={() => updateSetting('notificationShowProgress', defaultSettings.notificationShowProgress)}
+            >
+              <Toggle
+                checked={$settings.notificationShowProgress}
+                onchange={() => updateSetting('notificationShowProgress', !$settings.notificationShowProgress)}
+              />
             </SettingItem>
           {/if}
         </SettingsBlock>

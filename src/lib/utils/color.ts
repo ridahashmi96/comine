@@ -2,18 +2,38 @@
  * Color extraction utility for thumbnail-based theming
  */
 
+import { invoke } from '@tauri-apps/api/core';
+
 export interface RGB {
   r: number;
   g: number;
   b: number;
 }
 
-const COLOR_CACHE_MAX_SIZE = 100;
+const COLOR_CACHE_MAX_SIZE = 200;
 const colorCache = new Map<string, RGB>();
 
 let sharedCanvas: HTMLCanvasElement | null = null;
 let sharedCtx: CanvasRenderingContext2D | null = null;
 const SAMPLE_SIZE = 50;
+
+function normalizeThumbnailUrlForCache(url: string): string {
+  if (!url) return url;
+  
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    if (host.includes('ytimg.com')) {
+      const match = parsed.pathname.match(/\/vi(?:_webp)?\/([^/]+)\//);
+      if (match) {
+        return `yt:${match[1]}`;
+      }
+    }
+    return url;
+  } catch {
+    return url;
+  }
+}
 
 function getSharedCanvas(): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null {
   if (!sharedCanvas) {
@@ -26,46 +46,44 @@ function getSharedCanvas(): { canvas: HTMLCanvasElement; ctx: CanvasRenderingCon
   return { canvas: sharedCanvas, ctx: sharedCtx };
 }
 
-/**
- * Add to cache with LRU eviction
- */
 function setCacheEntry(key: string, value: RGB): void {
+  const normalizedKey = normalizeThumbnailUrlForCache(key);
   // If key exists, delete it first so it moves to the end (most recent)
-  if (colorCache.has(key)) {
-    colorCache.delete(key);
+  if (colorCache.has(normalizedKey)) {
+    colorCache.delete(normalizedKey);
   }
   // Evict oldest entries if at capacity
   while (colorCache.size >= COLOR_CACHE_MAX_SIZE) {
     const oldestKey = colorCache.keys().next().value;
     if (oldestKey) colorCache.delete(oldestKey);
   }
-  colorCache.set(key, value);
+  colorCache.set(normalizedKey, value);
 }
 
-/**
- * Get from cache with LRU refresh
- */
 function getCacheEntry(key: string): RGB | undefined {
-  const value = colorCache.get(key);
+  const normalizedKey = normalizeThumbnailUrlForCache(key);
+  const value = colorCache.get(normalizedKey);
   if (value !== undefined) {
     // Move to end (most recently used)
-    colorCache.delete(key);
-    colorCache.set(key, value);
+    colorCache.delete(normalizedKey);
+    colorCache.set(normalizedKey, value);
   }
   return value;
 }
 
-/**
- * Extract the dominant color from an image URL
- * Uses canvas to sample pixels and find the most vibrant/saturated color
- */
 export async function extractDominantColor(imageUrl: string): Promise<RGB | null> {
   const cached = getCacheEntry(imageUrl);
-  if (cached) {
-    return cached;
-  }
+  if (cached) return cached;
 
-  // Try fetching as blob first to bypass CORS issues
+  try {
+    const rustCached = await invoke<[number, number, number] | null>('get_cached_thumbnail_color', { url: imageUrl });
+    if (rustCached) {
+      const color: RGB = { r: rustCached[0], g: rustCached[1], b: rustCached[2] };
+      setCacheEntry(imageUrl, color);
+      return color;
+    }
+  } catch { /* continue with JS extraction */ }
+
   try {
     const response = await fetch(imageUrl, { mode: 'cors' });
     if (response.ok) {
@@ -78,11 +96,8 @@ export async function extractDominantColor(imageUrl: string): Promise<RGB | null
         return result;
       }
     }
-  } catch {
-    // CORS fetch failed, try direct image load
-  }
+  } catch { /* try direct image load */ }
 
-  // Fallback to direct image load
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
@@ -122,9 +137,6 @@ export async function extractDominantColor(imageUrl: string): Promise<RGB | null
   });
 }
 
-/**
- * Extract color from a blob URL (no CORS issues)
- */
 async function extractFromBlobUrl(blobUrl: string): Promise<RGB | null> {
   return new Promise((resolve) => {
     const img = new Image();
@@ -146,9 +158,6 @@ async function extractFromBlobUrl(blobUrl: string): Promise<RGB | null> {
   });
 }
 
-/**
- * Extract dominant color from an already loaded image element
- */
 function extractFromImage(img: HTMLImageElement): RGB | null {
   try {
     const shared = getSharedCanvas();
@@ -214,9 +223,6 @@ function extractFromImage(img: HTMLImageElement): RGB | null {
   }
 }
 
-/**
- * Boost the saturation of a color
- */
 function boostSaturation(color: RGB, factor: number): RGB {
   const r = color.r / 255;
   const g = color.g / 255;
@@ -271,30 +277,47 @@ function boostSaturation(color: RGB, factor: number): RGB {
   };
 }
 
-/**
- * Convert RGB to CSS rgba string with alpha
- */
 export function rgbToRgba(color: RGB, alpha: number): string {
   return `rgba(${color.r}, ${color.g}, ${color.b}, ${alpha})`;
 }
 
-/**
- * Generate CSS variables for an item's color theming
- */
 export function generateColorVars(color: RGB): string {
   return `--item-color: ${rgbToRgba(color, 1)}; --item-color-alpha: ${rgbToRgba(color, 0.25)}; --item-color-alpha-light: ${rgbToRgba(color, 0.15)}; --item-color-alpha-lighter: ${rgbToRgba(color, 0.08)}; --item-color-hover: ${rgbToRgba(color, 0.12)};`;
 }
 
-/**
- * Clear the color cache (useful when thumbnails change)
- */
 export function clearColorCache(): void {
   colorCache.clear();
 }
 
-/**
- * Remove a specific URL from the cache
- */
 export function removeFromColorCache(url: string): void {
-  colorCache.delete(url);
+  const normalizedKey = normalizeThumbnailUrlForCache(url);
+  colorCache.delete(normalizedKey);
+}
+
+export function setColorInCache(url: string, color: RGB): void {
+  setCacheEntry(url, color);
+}
+
+export function getCachedColor(url: string): RGB | undefined {
+  return getCacheEntry(url);
+}
+
+export async function getCachedColorAsync(url: string): Promise<RGB | null> {
+  const jsCached = getCacheEntry(url);
+  if (jsCached) return jsCached;
+
+  try {
+    const rustCached = await invoke<[number, number, number] | null>('get_cached_thumbnail_color', { url });
+    if (rustCached) {
+      const color: RGB = { r: rustCached[0], g: rustCached[1], b: rustCached[2] };
+      setCacheEntry(url, color);
+      return color;
+    }
+  } catch { /* not available */ }
+
+  return null;
+}
+
+export function getThumbnailCacheKey(url: string): string {
+  return normalizeThumbnailUrlForCache(url);
 }

@@ -27,7 +27,6 @@
     "format:rust": "cd src-tauri && cargo fmt",
     "format:all": "pnpm format && pnpm format:rust",
     "generate:i18n-keys": "node scripts/generate-i18n-keys.js",
-    "generate:icons": "node scripts/generate-icon-paths.cjs",
     "version:set": "node scripts/bump-version.js"
   },
   "license": "GPL-3.0-only",
