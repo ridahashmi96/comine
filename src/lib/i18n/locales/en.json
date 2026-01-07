@@ -103,7 +103,8 @@
       "useHLS": "Use HLS for YouTube if possible",
       "clearMetadata": "Clear metadata",
       "dontShowInHistory": "Don't show in history",
-      "useAria2": "Use aria2 (faster, non-YouTube only)",
+      "usePlaylistFolders": "Create playlist folders",
+      "useAria2": "Use aria2 (faster downloads)",
       "cookies": "Browser Cookies",
       "cookiesDescription": "Use cookies from your browser to bypass YouTube's 'Sign in to confirm you're not a bot' error. Close your browser before downloading.",
       "noCookies": "None",
@@ -153,6 +154,7 @@
       "video": "Video",
       "audio": "Audio",
       "quality": "Quality",
+      "best": "Best",
       "bestVideo": "Best quality",
       "bestAudio": "Best quality",
       "bestQuality": "Best quality",
@@ -183,7 +185,29 @@
       "embedChapters": "Chapters",
       "embedThumbnail": "Thumbnail",
       "embedMetadata": "Metadata",
-      "hint": "You can download now with best quality, or wait for formats to load"
+      "hint": "You can download now with best quality, or wait for formats to load",
+      "title": "Track Selection"
+    },
+    "blocks": {
+      "general": "General",
+      "generalDesc": "Presets, quality, and post-processing options",
+      "quality": "Quality",
+      "embedThumbnail": "Embed thumbnail",
+      "ytdlpDesc": "Universal video downloader for 1000+ sites",
+      "installFirst": "Install in Settings",
+      "authentication": "Authentication",
+      "youtubeOptions": "YouTube Options",
+      "sponsorBlock": "Skip sponsors (SponsorBlock)",
+      "chapters": "Embed chapters",
+      "embedSubtitles": "Embed subtitles",
+      "subtitleLanguages": "Subtitle languages",
+      "downloader": "Downloader",
+      "aria2NotInstalled": "Install aria2 in Settings to enable faster downloads",
+      "aria2Active": "aria2 will be used for faster downloads",
+      "luxDesc": "Optimized for Chinese video platforms",
+      "luxInfo": "Lux is mainly focused on Chinese video platforms, on big sites like BiliBIli yt-dlp still may perform better.",
+      "advanced": "Advanced",
+      "advancedDesc": "Speed limits, folders, and other options"
     }
   },
   "downloads": {
@@ -268,7 +292,10 @@
       "totalDownloads": "Downloads",
       "totalSize": "Total Size",
       "totalDuration": "Total Duration",
-      "mostCommon": "Most Common"
+      "mostCommon": "Most Common",
+      "toggle": "Toggle statistics",
+      "byType": "By type",
+      "topFormats": "Top formats"
     }
   },
   "history": {
@@ -297,6 +324,8 @@
     "title": "Settings",
     "subtitle": "Here you can configure the app",
     "noResults": "No settings found for",
+    "resetSection": "Reset",
+    "resetSectionTooltip": "Reset section to defaults",
     "search": {
       "placeholder": "Search settings..."
     },
@@ -304,6 +333,10 @@
       "title": "General",
       "language": "Language",
       "startOnBoot": "Start on boot",
+      "startOnBootDescription": "Launch Comine automatically when you log in",
+      "startMinimized": "Start minimized",
+      "startMinimizedDescription": "Start in the system tray instead of showing the window",
+      "autoStartError": "Failed to update autostart setting",
       "watchClipboard": "Watch copied links",
       "watchClipboardTooltip": "Monitor clipboard for supported URLs and auto-fill the download input",
       "statusPopup": "Status pop-up",
@@ -347,7 +380,9 @@
       "aria2SplitsDescription": "Number of parts to split files for parallel downloading (1-16)",
       "downloadSpeedLimit": "Download speed limit",
       "downloadSpeedLimitDescription": "Maximum download speed (0 = unlimited)",
-      "unlimited": "Unlimited"
+      "unlimited": "Unlimited",
+      "bypassProxyForDownloads": "Bypass proxy for file downloads",
+      "bypassProxyForDownloadsDescription": "Download files directly without using proxy (faster)"
     },
     "app": {
       "title": "App",
@@ -362,7 +397,8 @@
       "installing": "Installing...",
       "downloading": "Downloading",
       "whatsNew": "What's new:",
-      "autoUpdate": "Automatically update",
+      "autoUpdate": "Automatic updates",
+      "autoUpdateDescription": "Check for updates automatically when the app starts",
       "allowPreReleases": "Allow pre-release updates",
       "allowPreReleasesTooltip": "Receive beta and development versions before stable release. May contain bugs.",
       "sendStats": "Send anonymous statistic",
@@ -395,6 +431,12 @@
       "backgroundOpacityDescription": "Control the transparency of the background to see your desktop",
       "accentColor": "Accent color",
       "accentColorDescription": "Color for buttons, toggles, and highlights",
+      "accentStyle": "Accent style",
+      "accentStyleDescription": "Choose the visual style for buttons and highlights",
+      "accentStyleSolid": "Solid",
+      "accentStyleGradient": "Gradient",
+      "accentStyleGlow": "Glow",
+      "rgbColor": "RGB (Animated)",
       "useSystemAccent": "Use system accent",
       "useSystemAccentDescription": "Get accent color from your device's theme (Android 12+)",
       "largeFileWarningTitle": "Large Video File",
@@ -415,12 +457,17 @@
       "install": "Install",
       "reinstall": "Reinstall",
       "uninstall": "Uninstall",
-      "installing": "Installing...",
+      "installing": "Installing",
+      "components": "components",
+      "ready": "Components ready!",
+      "someError": "Some components failed to install",
+      "checkSettings": "Check Settings → Dependencies",
       "ytdlpDescription": "Downloads videos from YouTube and many other sites",
       "ffmpegDescription": "Required for merging video/audio and format conversion",
       "aria2Description": "Fast multi-connection downloader for improved speeds",
       "denoDescription": "JavaScript runtime required by yt-dlp for YouTube. Fixes 'Sign in to confirm you're not a bot' errors",
       "quickjsDescription": "Lightweight JavaScript runtime for yt-dlp PO tokens. Alternative to Deno for YouTube bot detection bypass",
+      "luxDescription": "Alternative downloader for Bilibili, Douyin, TikTok, and 40+ Chinese platforms",
       "missingRequired": "Missing required dependencies",
       "missingYtdlp": "yt-dlp is not installed. Please install it from Settings → Dependencies.",
       "missingFfmpeg": "ffmpeg is not installed. Please install it from Settings → Dependencies.",
@@ -471,6 +518,8 @@
       "compactTooltip": "Use smaller notifications with icon-only buttons",
       "fancyBackground": "Fancy background",
       "fancyBackgroundTooltip": "Use the app's background style in notification popups",
+      "thumbnailTheming": "Thumbnail color theming",
+      "thumbnailThemingTooltip": "Tint notification background with colors from the thumbnail",
       "cornerDismiss": "Corner dismiss button only",
       "cornerDismissTooltip": "Hide the full dismiss button and use only the corner X to close notifications",
       "offset": "Screen edge offset",
@@ -490,6 +539,8 @@
       "customProxyUrlDescription": "Enter your proxy server URL (http, https, or socks5)",
       "proxyFallback": "Fallback on failure",
       "proxyFallbackTooltip": "If the custom proxy fails, try system proxy, then direct connection",
+      "retryWithoutProxy": "Retry without proxy on failure",
+      "retryWithoutProxyTooltip": "If proxy fails or returns errors (invalid proxy, timeout, HTTP 412), automatically retry without proxy or with system proxy. Works for both yt-dlp and lux downloads.",
       "proxyInvalid": "Invalid proxy URL format",
       "proxyValidFormats": "Valid formats: http://host:port, https://host:port, socks5://host:port",
       "systemProxyDetected": "System proxy detected",
@@ -554,6 +605,7 @@
     "delete": "Delete",
     "confirm": "Confirm",
     "close": "Close",
+    "dismiss": "Dismiss",
     "loading": "Loading...",
     "error": "Error",
     "success": "Success",
@@ -571,7 +623,13 @@
     "download": "Download",
     "back": "Back",
     "showMore": "Show more",
-    "showLess": "Show less"
+    "showLess": "Show less",
+    "video": "Video",
+    "playlist": "Playlist",
+    "channel": "Channel",
+    "youtubeVideo": "YouTube Video",
+    "youtubePlaylist": "YouTube Playlist",
+    "youtubeChannel": "YouTube Channel"
   },
   "window": {
     "minimize": "Minimize",
@@ -614,31 +672,48 @@
     "back": "Back",
     "next": "Continue",
     "finish": "Get Started",
-    "skip": "Skip",
+    "skip": "Skip setup",
     "welcome": {
-      "title": "Welcome!",
-      "subtitle": "Let's set everything up",
+      "title": "Welcome to Comine",
+      "subtitle": "Download videos from anywhere",
       "description": "Quick setup to configure the basics. You can change these later in Settings."
     },
     "language": {
-      "title": "Choose Your Language",
+      "title": "Select Your Language",
       "description": "Select your preferred language for the app interface."
+    },
+    "setup": {
+      "title": "Quick Setup",
+      "description": "Configure the essentials to get started.",
+      "popupHint": "Show a popup when a URL is detected",
+      "compactHint": "Smaller notification with just title",
+      "positionHint": "Click on the screen to change popup position",
+      "androidNote": "Notification settings are available on desktop only"
     },
     "folders": {
       "title": "Download Location",
       "description": "Choose where your downloaded files will be saved.",
-      "downloadPath": "Download folder",
+      "downloadPath": "Save files to",
       "defaultPath": "Default (Downloads folder)",
       "useAudioPath": "Save audio files to a separate folder",
       "audioPath": "Audio folder",
       "selectFolder": "Click to select..."
+    },
+    "howItWorks": {
+      "title": "How It Works"
+    },
+    "flow": {
+      "copy": "Copy",
+      "detect": "Detect",
+      "notify": "Notify",
+      "download": "Download"
     },
     "preferences": {
       "title": "Preferences",
       "description": "Configure app behavior.",
       "startOnBoot": "Start on system boot",
       "startOnBootDesc": "Launch Comine automatically when you log in",
-      "watchClipboard": "Watch clipboard for links",
+      "watchClipboard": "Watch clipboard for URLs",
       "watchClipboardDesc": "Automatically detect media URLs when you copy them",
       "autoUpdate": "Automatic updates",
       "autoUpdateDesc": "Keep Comine up to date automatically"
@@ -650,16 +725,17 @@
       "downloading": "Downloading",
       "extracting": "Extracting",
       "verifying": "Verifying",
-      "complete": "All components installed!",
+      "complete": "Components ready",
       "failed": "Installation failed",
       "required": "Required",
       "optional": "Optional",
+      "waiting": "Preparing...",
       "installAria2": "Also install aria2 (faster downloads)"
     },
     "appearance": {
-      "title": "Appearance",
-      "description": "Customize the look.",
-      "backgroundType": "Background Style",
+      "title": "Make It Yours",
+      "description": "Customize the look and feel.",
+      "backgroundType": "Background",
       "bgAcrylic": "Acrylic",
       "bgAnimated": "Video",
       "bgSolid": "Solid",
@@ -682,10 +758,26 @@
       "testButton": "Test Notification"
     },
     "ready": {
-      "title": "All Set",
-      "description": "Setup complete. Paste a link to start downloading.",
-      "depsInstalled": "Components installed"
+      "title": "You're All Set!",
+      "description": "Everything is configured. Start downloading by pasting a link.",
+      "depsInstalled": "Components installed",
+      "clipboardEnabled": "Clipboard watching enabled",
+      "clipboardDisabled": "Clipboard watching disabled",
+      "notificationsDisabled": "Notifications disabled",
+      "settingsHint": "Customize more anytime in Settings"
     },
     "restart": "Restart Setup Wizard"
+  },
+  "deps": {
+    "installing": "Installing {component}...",
+    "installed": "{component} installed successfully",
+    "installFailed": "Failed to install {component}",
+    "installingBundle": "Installing components...",
+    "bundleComplete": "All components installed!",
+    "bundlePartial": "{success} installed, {failed} failed",
+    "bundleFailed": "Installation failed",
+    "setupRequired": "Setup required",
+    "componentsNeeded": "components needed",
+    "installAll": "Install All"
   }
 }

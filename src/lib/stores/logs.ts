@@ -29,7 +29,7 @@ interface LogsState {
 }
 
 const LIVE_BUFFER_SIZE = 100;
-const ANDROID_BUFFER_SIZE = 2000;
+const ANDROID_BUFFER_SIZE = 500;
 
 const initialState: LogsState = {
   liveBuffer: [],
@@ -53,8 +53,7 @@ let isInitializing = false;
 function parseLogLine(line: string, index: number): LogEntry | null {
   // Match: [timestamp] [LEVEL] source: message
   const match = line.match(/^\[([^\]]+)\]\s*\[(\w+)\]\s*([^:]+):\s*(.*)$/);
-  if (!match) {
-    // Fallback for malformed lines
+  if (!match || match.length < 5) {
     return {
       id: `disk-${index}`,
       timestamp: new Date(),
@@ -64,7 +63,10 @@ function parseLogLine(line: string, index: number): LogEntry | null {
     };
   }
 
-  const [, timestampStr, levelStr, source, message] = match;
+  const timestampStr = match[1];
+  const levelStr = match[2];
+  const source = match[3];
+  const message = match[4];
   const level = levelStr.toLowerCase() as LogLevel;
 
   return {

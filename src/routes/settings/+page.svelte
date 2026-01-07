@@ -13,12 +13,14 @@
     type ProxyMode,
   } from '$lib/stores/settings';
   import { history } from '$lib/stores/history';
-  import { deps } from '$lib/stores/deps';
+  import { deps, type DependencyName } from '$lib/stores/deps';
   import { onMount } from 'svelte';
   import { beforeNavigate } from '$app/navigation';
   import { save, open } from '@tauri-apps/plugin-dialog';
   import { convertFileSrc, invoke } from '@tauri-apps/api/core';
   import { writeTextFile, readTextFile, readFile, stat } from '@tauri-apps/plugin-fs';
+  import SettingsBlock from '$lib/components/SettingsBlock.svelte';
+  import SettingItem from '$lib/components/SettingItem.svelte';
   import Divider from '$lib/components/Divider.svelte';
   import Input from '$lib/components/Input.svelte';
   import Icon from '$lib/components/Icon.svelte';
@@ -28,7 +30,7 @@
   import Modal from '$lib/components/Modal.svelte';
   import Button from '$lib/components/Button.svelte';
   import ScrollArea from '$lib/components/ScrollArea.svelte';
-  import { toast } from '$lib/components/Toast.svelte';
+  import { toast, updateToast, dismissToast } from '$lib/components/Toast.svelte';
   import { tooltip } from '$lib/actions/tooltip';
   import { isAndroid, isDesktop } from '$lib/utils/android';
   import {
@@ -64,6 +66,47 @@
   let checkingIp = $state(false);
   let ipProxyUsed = $state(false);
 
+  // Track toast IDs for each dependency being installed
+  let depToastIds = $state<Map<DependencyName, number>>(new Map());
+
+  // Wrapper function for installing dependencies with toast progress
+  async function installDepWithToast(
+    depName: DependencyName, 
+    installFn: () => Promise<boolean>,
+    displayName: string
+  ) {
+    // Show initial progress toast
+    const toastId = toast.progress($t('deps.installing', { component: displayName }), 0);
+    depToastIds.set(depName, toastId);
+    
+    // Start installation
+    const success = await installFn();
+    
+    // Dismiss the progress toast
+    dismissToast(toastId);
+    depToastIds.delete(depName);
+    
+    // Show result toast
+    if (success) {
+      toast.success($t('deps.installed', { component: displayName }));
+    } else {
+      toast.error($t('deps.installFailed', { component: displayName }));
+    }
+  }
+
+  // Watch install progress and update toasts
+  $effect(() => {
+    for (const [depName, toastId] of depToastIds) {
+      const progress = $deps.installProgressMap.get(depName);
+      if (progress) {
+        updateToast(toastId, { 
+          progress: progress.progress,
+          subMessage: progress.message || progress.stage
+        });
+      }
+    }
+  });
+
   onMount(() => {
     onAndroid = isAndroid();
     onDesktop = isDesktop();
@@ -93,6 +136,10 @@
       section: 'general',
       keywords: ['start', 'boot', 'startup', 'autostart', 'запуск'],
     },
+    startMinimized: {
+      section: 'general',
+      keywords: ['start', 'minimized', 'tray', 'hidden', 'свёрнуто', 'скрыто'],
+    },
     watchClipboard: { section: 'general', keywords: ['clipboard', 'watch', 'paste', 'буфер'] },
     statusPopup: { section: 'general', keywords: ['status', 'popup', 'notification', 'статус'] },
     notificationsEnabled: {
@@ -114,6 +161,10 @@
     notificationFancyBackground: {
       section: 'notifications',
       keywords: ['fancy', 'background', 'blur', 'transparent', 'glass', 'фон', 'прозрачный'],
+    },
+    notificationThumbnailTheming: {
+      section: 'notifications',
+      keywords: ['thumbnail', 'theming', 'color', 'tint', 'миниатюра', 'цвет'],
     },
     defaultProcessor: {
       section: 'processing',
@@ -195,7 +246,11 @@
     },
     accentColor: {
       section: 'app',
-      keywords: ['accent', 'color', 'theme', 'buttons', 'highlight', 'акцент', 'цвет', 'тема'],
+      keywords: ['accent', 'color', 'theme', 'buttons', 'highlight', 'rgb', 'rainbow', 'акцент', 'цвет', 'тема'],
+    },
+    accentStyle: {
+      section: 'app',
+      keywords: ['accent', 'style', 'solid', 'gradient', 'glow', 'стиль', 'эффект'],
     },
     toastPosition: {
       section: 'app',
@@ -265,6 +320,16 @@
       .some(([key, _]) => matchesSearch(key));
   }
 
+  function isSectionModified(section: string): boolean {
+    return Object.entries(settingItems)
+      .filter(([_, item]) => item.section === section)
+      .some(([key, _]) => {
+        if (key === 'language') return $locale !== defaultSettings.language;
+        // @ts-ignore
+        return $settings[key] !== defaultSettings[key];
+      });
+  }
+
   const languageOptions = locales.map((l) => ({
     value: l.code,
     label: l.nativeName,
@@ -275,8 +340,22 @@
     updateSetting('language', value);
   }
 
-  function handleStartOnBootChange(checked: boolean) {
-    updateSetting('startOnBoot', checked);
+  async function handleStartOnBootChange(checked: boolean) {
+    try {
+      if (checked) {
+        await invoke('autostart_enable');
+      } else {
+        await invoke('autostart_disable');
+      }
+      updateSetting('startOnBoot', checked);
+    } catch (err) {
+      console.error('Failed to update autostart:', err);
+      toast.error($t('settings.general.autoStartError'));
+    }
+  }
+
+  function handleStartMinimizedChange(checked: boolean) {
+    updateSetting('startMinimized', checked);
   }
 
   function handleWatchClipboardChange(checked: boolean) {
@@ -527,17 +606,13 @@
     showResetModal = false;
   }
 
-  async function handleRestartOnboarding() {
-    await updateSetting('onboardingCompleted', false);
-  }
-
   async function handleClearHistory() {
     await history.clear();
     showClearHistoryModal = false;
   }
 
   async function handleExportHistory() {
-    const items = history.getItems();
+    const items = await history.getItems();
     if (items.length === 0) {
       importMessage = { type: 'error', text: $t('settings.data.noHistoryToExport') };
       setTimeout(() => (importMessage = null), 3000);
@@ -551,7 +626,7 @@
       });
 
       if (filePath) {
-        const data = history.exportData();
+        const data = await history.exportData();
         await writeTextFile(filePath, data);
         importMessage = { type: 'success', text: $t('settings.data.exportSuccess') };
         setTimeout(() => (importMessage = null), 3000);
@@ -639,10 +714,6 @@
     updateSetting('proxyMode', value as ProxyMode);
   }
 
-  function handleProxyFallbackChange(checked: boolean) {
-    updateSetting('proxyFallback', checked);
-  }
-
   function validateProxyUrl(url: string): boolean {
     if (!url.trim()) return true;
 
@@ -702,7 +773,7 @@
           proxyConfig: {
             mode: $settings.proxyMode,
             customUrl: $settings.customProxyUrl,
-            fallback: $settings.proxyFallback,
+            retryWithoutProxy: $settings.retryWithoutProxy,
           },
         }
       );
@@ -733,334 +804,270 @@
     <div class="settings-content">
       <!-- General Section -->
       {#if sectionHasMatches('general')}
-        <section class="settings-section">
-          <h2 class="section-title">{$t('settings.general.title')}</h2>
-
+        <SettingsBlock 
+          title={$t('settings.general.title')} 
+          icon="settings"
+          onResetSection={isSectionModified('general') ? async () => {
+             undoLanguage();
+             if (onDesktop) {
+                await handleStartOnBootChange(defaultSettings.startOnBoot);
+                updateSetting('startMinimized', defaultSettings.startMinimized);
+                updateSetting('watchClipboard', defaultSettings.watchClipboard);
+                updateSetting('statusPopup', defaultSettings.statusPopup);
+                updateSetting('closeBehavior', defaultSettings.closeBehavior);
+             }
+          } : undefined}
+        >
           <!-- Language Selector -->
           {#if matchesSearch('language')}
-            <div class="setting-item">
-              <div class="setting-row">
-                <span class="setting-label">{$t('settings.general.language')}</span>
-                <div class="setting-controls">
-                  {#if $locale !== defaultSettings.language}
-                    <button
-                      class="undo-btn"
-                      onclick={undoLanguage}
-                      use:tooltip={$t('settings.app.resetToDefault')}
-                    >
-                      <Icon name="undo" size={14} />
-                    </button>
-                  {/if}
-                  <div style="width: 200px;">
-                    <Select
-                      options={languageOptions}
-                      value={$locale}
-                      onchange={handleLanguageChange}
-                    />
-                  </div>
-                </div>
+            <SettingItem
+              title={$t('settings.general.language')}
+              icon="globe"
+              value={$locale}
+              defaultValue={defaultSettings.language}
+              onReset={undoLanguage}
+            >
+              <div style="width: 200px;">
+                <Select
+                  options={languageOptions}
+                  value={$locale}
+                  onchange={handleLanguageChange}
+                />
               </div>
-            </div>
+            </SettingItem>
           {/if}
 
           {#if matchesSearch('startOnBoot') && onDesktop}
-            <div class="setting-item">
-              <div class="setting-with-undo">
-                <Checkbox
-                  checked={$settings.startOnBoot}
-                  label={$t('settings.general.startOnBoot')}
-                  onchange={handleStartOnBootChange}
-                />
-                <button
-                  class="undo-btn"
-                  class:hidden={$settings.startOnBoot === defaultSettings.startOnBoot}
-                  onclick={() => updateSetting('startOnBoot', defaultSettings.startOnBoot)}
-                  use:tooltip={$t('settings.app.resetToDefault')}
-                >
-                  <Icon name="undo" size={18} />
-                </button>
-              </div>
-            </div>
+            <SettingItem
+              title={$t('settings.general.startOnBoot')}
+              description={$t('settings.general.startOnBootDescription')}
+              icon="run"
+              value={$settings.startOnBoot}
+              defaultValue={defaultSettings.startOnBoot}
+              onReset={async () => {
+                await handleStartOnBootChange(defaultSettings.startOnBoot);
+              }}
+            >
+              <Toggle
+                checked={$settings.startOnBoot}
+                onchange={handleStartOnBootChange}
+              />
+            </SettingItem>
+          {/if}
+
+          {#if matchesSearch('startMinimized') && onDesktop && $settings.startOnBoot}
+            <SettingItem
+              title={$t('settings.general.startMinimized')}
+              description={$t('settings.general.startMinimizedDescription')}
+              icon="minimize"
+              value={$settings.startMinimized}
+              defaultValue={defaultSettings.startMinimized}
+              onReset={() => updateSetting('startMinimized', defaultSettings.startMinimized)}
+            >
+              <Toggle
+                checked={$settings.startMinimized}
+                onchange={handleStartMinimizedChange}
+              />
+            </SettingItem>
           {/if}
 
           {#if matchesSearch('watchClipboard') && onDesktop}
-            <div class="setting-item">
-              <div class="setting-with-info">
-                <Checkbox
-                  checked={$settings.watchClipboard}
-                  label={$t('settings.general.watchClipboard')}
-                  onchange={handleWatchClipboardChange}
-                />
-                <button class="info-btn" use:tooltip={$t('settings.general.watchClipboardTooltip')}>
-                  <Icon name="info" size={18} />
-                </button>
-                <button
-                  class="undo-btn"
-                  class:hidden={$settings.watchClipboard === defaultSettings.watchClipboard}
-                  onclick={() => updateSetting('watchClipboard', defaultSettings.watchClipboard)}
-                  use:tooltip={$t('settings.app.resetToDefault')}
-                >
-                  <Icon name="undo" size={18} />
-                </button>
-              </div>
-            </div>
+            <SettingItem
+              title={$t('settings.general.watchClipboard')}
+              description={$t('settings.general.watchClipboardTooltip')}
+              icon="clipboard"
+              value={$settings.watchClipboard}
+              defaultValue={defaultSettings.watchClipboard}
+              onReset={() => updateSetting('watchClipboard', defaultSettings.watchClipboard)}
+            >
+              <Toggle
+                checked={$settings.watchClipboard}
+                onchange={handleWatchClipboardChange}
+              />
+            </SettingItem>
           {/if}
 
           {#if matchesSearch('statusPopup') && onDesktop}
-            <div class="setting-item">
-              <div class="setting-with-undo">
-                <Checkbox
-                  checked={$settings.statusPopup}
-                  label={$t('settings.general.statusPopup')}
-                  onchange={handleStatusPopupChange}
-                />
-                <button
-                  class="undo-btn"
-                  class:hidden={$settings.statusPopup === defaultSettings.statusPopup}
-                  onclick={() => updateSetting('statusPopup', defaultSettings.statusPopup)}
-                  use:tooltip={$t('settings.app.resetToDefault')}
-                >
-                  <Icon name="undo" size={18} />
-                </button>
-              </div>
-            </div>
+            <SettingItem
+              title={$t('settings.general.statusPopup')}
+              icon="bell"
+              value={$settings.statusPopup}
+              defaultValue={defaultSettings.statusPopup}
+              onReset={() => updateSetting('statusPopup', defaultSettings.statusPopup)}
+            >
+              <Toggle
+                checked={$settings.statusPopup}
+                onchange={handleStatusPopupChange}
+              />
+            </SettingItem>
           {/if}
 
           <!-- Close behavior (desktop only) -->
           {#if onDesktop}
-            <div class="setting-item">
-              <div class="setting-row">
-                <div class="setting-label-group">
-                  <span class="setting-label">{$t('settings.general.closeBehavior')}</span>
-                  <span class="setting-description"
-                    >{$t('settings.general.closeBehaviorDescription')}</span
-                  >
-                </div>
-                <div class="setting-controls">
-                  {#if $settings.closeBehavior !== defaultSettings.closeBehavior}
-                    <button
-                      class="undo-btn"
-                      onclick={() => updateSetting('closeBehavior', defaultSettings.closeBehavior)}
-                      use:tooltip={$t('settings.app.resetToDefault')}
-                    >
-                      <Icon name="undo" size={14} />
-                    </button>
-                  {/if}
-                  <div style="width: 220px;">
-                    <Select
-                      options={closeBehaviorOptions}
-                      value={$settings.closeBehavior}
-                      onchange={handleCloseBehaviorChange}
-                    />
-                  </div>
-                </div>
+             <SettingItem
+              title={$t('settings.general.closeBehavior')}
+              description={$t('settings.general.closeBehaviorDescription')}
+              icon="close"
+              value={$settings.closeBehavior}
+              defaultValue={defaultSettings.closeBehavior}
+              onReset={() => updateSetting('closeBehavior', defaultSettings.closeBehavior)}
+            >
+              <div style="width: 220px;">
+                <Select
+                  options={closeBehaviorOptions}
+                  value={$settings.closeBehavior}
+                  onchange={handleCloseBehaviorChange}
+                />
               </div>
-            </div>
+            </SettingItem>
           {/if}
-        </section>
+        </SettingsBlock>
       {/if}
 
       <!-- Notifications Section (desktop only - Android uses system notifications) -->
       {#if sectionHasMatches('notifications') && onDesktop}
-        <section class="settings-section">
-          <h2 class="section-title">{$t('settings.notifications.title')}</h2>
-
+        <SettingsBlock 
+          title={$t('settings.notifications.title')} 
+          icon="bell"
+          onResetSection={isSectionModified('notifications') ? () => {
+            updateSetting('notificationsEnabled', defaultSettings.notificationsEnabled);
+            updateSetting('notificationPosition', defaultSettings.notificationPosition);
+            updateSetting('notificationMonitor', defaultSettings.notificationMonitor);
+            updateSetting('compactNotifications', defaultSettings.compactNotifications);
+            updateSetting('notificationFancyBackground', defaultSettings.notificationFancyBackground);
+            updateSetting('notificationThumbnailTheming', defaultSettings.notificationThumbnailTheming);
+            updateSetting('notificationCornerDismiss', defaultSettings.notificationCornerDismiss);
+            updateSetting('notificationOffset', defaultSettings.notificationOffset);
+          } : undefined}
+        >
           {#if matchesSearch('notificationsEnabled')}
-            <div class="setting-item">
-              <div class="setting-with-info">
-                <Checkbox
-                  checked={$settings.notificationsEnabled}
-                  label={$t('settings.notifications.enabled')}
-                  onchange={handleNotificationsEnabledChange}
-                />
-                <button class="info-btn" use:tooltip={$t('settings.notifications.enabledTooltip')}>
-                  <Icon name="info" size={18} />
-                </button>
-                <button
-                  class="undo-btn"
-                  class:hidden={$settings.notificationsEnabled ===
-                    defaultSettings.notificationsEnabled}
-                  onclick={() =>
-                    updateSetting('notificationsEnabled', defaultSettings.notificationsEnabled)}
-                  use:tooltip={$t('settings.app.resetToDefault')}
-                >
-                  <Icon name="undo" size={18} />
-                </button>
-              </div>
-            </div>
+            <SettingItem
+              title={$t('settings.notifications.enabled')}
+              description={$t('settings.notifications.enabledTooltip')}
+              icon="bell"
+              value={$settings.notificationsEnabled}
+              defaultValue={defaultSettings.notificationsEnabled}
+              onReset={() => updateSetting('notificationsEnabled', defaultSettings.notificationsEnabled)}
+            >
+              <Toggle
+                checked={$settings.notificationsEnabled}
+                onchange={handleNotificationsEnabledChange}
+              />
+            </SettingItem>
           {/if}
 
           {#if matchesSearch('notificationPosition')}
-            <div class="setting-item">
-              <div class="setting-row">
-                <div class="setting-label-group">
-                  <span class="setting-label">{$t('settings.notifications.position')}</span>
-                  <span class="setting-description"
-                    >{$t('settings.notifications.positionDescription')}</span
-                  >
-                </div>
-                <div class="setting-controls">
-                  {#if $settings.notificationPosition !== defaultSettings.notificationPosition}
-                    <button
-                      class="undo-btn"
-                      onclick={() =>
-                        updateSetting('notificationPosition', defaultSettings.notificationPosition)}
-                      use:tooltip={$t('settings.app.resetToDefault')}
-                    >
-                      <Icon name="undo" size={14} />
-                    </button>
-                  {/if}
-                  <div style="width: 180px;">
-                    <Select
-                      options={notificationPositionOptions}
-                      value={$settings.notificationPosition}
-                      onchange={handleNotificationPositionChange}
-                    />
-                  </div>
-                </div>
+            <SettingItem
+              title={$t('settings.notifications.position')}
+              description={$t('settings.notifications.positionDescription')}
+              icon="widgets"
+              value={$settings.notificationPosition}
+              defaultValue={defaultSettings.notificationPosition}
+              onReset={() => updateSetting('notificationPosition', defaultSettings.notificationPosition)}
+            >
+              <div style="width: 180px;">
+                <Select
+                  options={notificationPositionOptions}
+                  value={$settings.notificationPosition}
+                  onchange={handleNotificationPositionChange}
+                />
               </div>
-            </div>
+            </SettingItem>
           {/if}
 
           {#if matchesSearch('notificationMonitor')}
-            <div class="setting-item">
-              <div class="setting-row">
-                <div class="setting-label-group">
-                  <span class="setting-label">{$t('settings.notifications.monitor')}</span>
-                  <span class="setting-description"
-                    >{$t('settings.notifications.monitorDescription')}</span
-                  >
-                </div>
-                <div class="setting-controls">
-                  {#if $settings.notificationMonitor !== defaultSettings.notificationMonitor}
-                    <button
-                      class="undo-btn"
-                      onclick={() =>
-                        updateSetting('notificationMonitor', defaultSettings.notificationMonitor)}
-                      use:tooltip={$t('settings.app.resetToDefault')}
-                    >
-                      <Icon name="undo" size={14} />
-                    </button>
-                  {/if}
-                  <div style="width: 180px;">
-                    <Select
-                      options={notificationMonitorOptions}
-                      value={$settings.notificationMonitor}
-                      onchange={handleNotificationMonitorChange}
-                    />
-                  </div>
-                </div>
+            <SettingItem
+              title={$t('settings.notifications.monitor')}
+              description={$t('settings.notifications.monitorDescription')}
+              icon="cursor"
+              value={$settings.notificationMonitor}
+              defaultValue={defaultSettings.notificationMonitor}
+              onReset={() => updateSetting('notificationMonitor', defaultSettings.notificationMonitor)}
+            >
+              <div style="width: 180px;">
+                <Select
+                  options={notificationMonitorOptions}
+                  value={$settings.notificationMonitor}
+                  onchange={handleNotificationMonitorChange}
+                />
               </div>
-            </div>
+            </SettingItem>
           {/if}
 
           {#if matchesSearch('compactNotifications')}
-            <div class="setting-item">
-              <div class="setting-with-info">
-                <Checkbox
-                  checked={$settings.compactNotifications}
-                  label={$t('settings.notifications.compact')}
-                  onchange={(checked: boolean) => updateSetting('compactNotifications', checked)}
-                />
-                <button class="info-btn" use:tooltip={$t('settings.notifications.compactTooltip')}>
-                  <Icon name="info" size={18} />
-                </button>
-                <button
-                  class="undo-btn"
-                  class:hidden={$settings.compactNotifications ===
-                    defaultSettings.compactNotifications}
-                  onclick={() =>
-                    updateSetting('compactNotifications', defaultSettings.compactNotifications)}
-                  use:tooltip={$t('settings.app.resetToDefault')}
-                >
-                  <Icon name="undo" size={18} />
-                </button>
-              </div>
-            </div>
+            <SettingItem
+              title={$t('settings.notifications.compact')}
+              description={$t('settings.notifications.compactTooltip')}
+              icon="minimize"
+              value={$settings.compactNotifications}
+              defaultValue={defaultSettings.compactNotifications}
+              onReset={() => updateSetting('compactNotifications', defaultSettings.compactNotifications)}
+            >
+              <Toggle
+                checked={$settings.compactNotifications}
+                onchange={(checked) => updateSetting('compactNotifications', checked)}
+              />
+            </SettingItem>
           {/if}
 
           {#if matchesSearch('notificationFancyBackground')}
-            <div class="setting-item">
-              <div class="setting-with-info">
-                <Checkbox
-                  checked={$settings.notificationFancyBackground}
-                  label={$t('settings.notifications.fancyBackground')}
-                  onchange={(checked: boolean) =>
-                    updateSetting('notificationFancyBackground', checked)}
-                />
-                <button
-                  class="info-btn"
-                  use:tooltip={$t('settings.notifications.fancyBackgroundTooltip')}
-                >
-                  <Icon name="info" size={18} />
-                </button>
-                <button
-                  class="undo-btn"
-                  class:hidden={$settings.notificationFancyBackground ===
-                    defaultSettings.notificationFancyBackground}
-                  onclick={() =>
-                    updateSetting(
-                      'notificationFancyBackground',
-                      defaultSettings.notificationFancyBackground
-                    )}
-                  use:tooltip={$t('settings.app.resetToDefault')}
-                >
-                  <Icon name="undo" size={18} />
-                </button>
-              </div>
-            </div>
+            <SettingItem
+              title={$t('settings.notifications.fancyBackground')}
+              description={$t('settings.notifications.fancyBackgroundTooltip')}
+              icon="image"
+              value={$settings.notificationFancyBackground}
+              defaultValue={defaultSettings.notificationFancyBackground}
+              onReset={() => updateSetting('notificationFancyBackground', defaultSettings.notificationFancyBackground)}
+            >
+              <Toggle
+                checked={$settings.notificationFancyBackground}
+                onchange={(checked) => updateSetting('notificationFancyBackground', checked)}
+              />
+            </SettingItem>
           {/if}
 
-          <!-- Corner dismiss toggle -->
-          <div class="setting-item">
-            <div class="setting-with-info">
-              <Checkbox
-                checked={$settings.notificationCornerDismiss}
-                label={$t('settings.notifications.cornerDismiss')}
-                onchange={(checked: boolean) => updateSetting('notificationCornerDismiss', checked)}
+          {#if matchesSearch('notificationThumbnailTheming')}
+            <SettingItem
+              title={$t('settings.notifications.thumbnailTheming')}
+              description={$t('settings.notifications.thumbnailThemingTooltip')}
+              icon="image"
+              value={$settings.notificationThumbnailTheming}
+              defaultValue={defaultSettings.notificationThumbnailTheming}
+              onReset={() => updateSetting('notificationThumbnailTheming', defaultSettings.notificationThumbnailTheming)}
+            >
+              <Toggle
+                checked={$settings.notificationThumbnailTheming}
+                onchange={(checked) => updateSetting('notificationThumbnailTheming', checked)}
               />
-              <button
-                class="info-btn"
-                use:tooltip={$t('settings.notifications.cornerDismissTooltip')}
-              >
-                <Icon name="info" size={18} />
-              </button>
-              <button
-                class="undo-btn"
-                class:hidden={$settings.notificationCornerDismiss ===
-                  defaultSettings.notificationCornerDismiss}
-                onclick={() =>
-                  updateSetting(
-                    'notificationCornerDismiss',
-                    defaultSettings.notificationCornerDismiss
-                  )}
-                use:tooltip={$t('settings.app.resetToDefault')}
-              >
-                <Icon name="undo" size={18} />
-              </button>
-            </div>
-          </div>
+            </SettingItem>
+          {/if}
 
-          <!-- Notification offset slider -->
-          <div class="setting-item">
-            <div class="setting-row">
-              <div class="setting-label-group">
-                <span class="setting-label">{$t('settings.notifications.offset')}</span>
-                <span class="setting-description"
-                  >{$t('settings.notifications.offsetDescription')}</span
-                >
-              </div>
+          {#if matchesSearch('notificationCornerDismiss')}
+            <SettingItem
+              title={$t('settings.notifications.cornerDismiss')}
+              description={$t('settings.notifications.cornerDismissTooltip')}
+              icon="cross_circle"
+              value={$settings.notificationCornerDismiss}
+              defaultValue={defaultSettings.notificationCornerDismiss}
+              onReset={() => updateSetting('notificationCornerDismiss', defaultSettings.notificationCornerDismiss)}
+            >
+              <Toggle
+                checked={$settings.notificationCornerDismiss}
+                onchange={(checked) => updateSetting('notificationCornerDismiss', checked)}
+              />
+            </SettingItem>
+          {/if}
+
+          {#if matchesSearch('notificationOffset')}
+            <SettingItem
+              title={$t('settings.notifications.offset')}
+              description={$t('settings.notifications.offsetDescription')}
+              icon="sort_vertical"
+              value={$settings.notificationOffset}
+              defaultValue={defaultSettings.notificationOffset}
+              onReset={() => updateSetting('notificationOffset', defaultSettings.notificationOffset)}
+            >
               <div class="slider-with-value">
-                {#if $settings.notificationOffset !== defaultSettings.notificationOffset}
-                  <button
-                    class="undo-btn"
-                    onclick={() =>
-                      updateSetting('notificationOffset', defaultSettings.notificationOffset)}
-                    use:tooltip={$t('settings.app.resetToDefault')}
-                  >
-                    <Icon name="undo" size={14} />
-                  </button>
-                {/if}
                 <input
                   type="range"
                   class="blur-slider"
@@ -1076,1148 +1083,1010 @@
                 />
                 <span class="slider-value">{$settings.notificationOffset}px</span>
               </div>
-            </div>
-          </div>
-        </section>
+            </SettingItem>
+          {/if}
+        </SettingsBlock>
       {/if}
 
       <!-- Processing Section -->
       {#if sectionHasMatches('processing')}
-        <section class="settings-section">
-          <h3 class="section-title">{$t('settings.processing.title')}</h3>
-
+        <SettingsBlock 
+          title={$t('settings.processing.title')} 
+          icon="server"
+          onResetSection={isSectionModified('processing') ? () => {
+            updateSetting('defaultProcessor', defaultSettings.defaultProcessor);
+          } : undefined}
+        >
           {#if matchesSearch('defaultProcessor')}
-            <div class="setting-item">
-              <div class="setting-row">
-                <div class="setting-label-group">
-                  <span class="setting-label">{$t('settings.processing.defaultProcessor')}</span>
-                  <span class="setting-description"
-                    >{$t('settings.processing.defaultProcessorDescription')}</span
-                  >
-                </div>
-                <div class="setting-controls">
-                  {#if $settings.defaultProcessor !== defaultSettings.defaultProcessor}
-                    <button
-                      class="undo-btn"
-                      onclick={() =>
-                        updateSetting('defaultProcessor', defaultSettings.defaultProcessor)}
-                      use:tooltip={$t('settings.app.resetToDefault')}
-                    >
-                      <Icon name="undo" size={14} />
-                    </button>
-                  {/if}
-                  <div style="width: 180px;">
-                    <Select
-                      value={$settings.defaultProcessor}
-                      onchange={(val) => updateSetting('defaultProcessor', val as any)}
-                      options={[
+            {#snippet processorHint()}
+              {#if $settings.defaultProcessor === 'auto'}
+                {#if onAndroid}
+                  <div class="setting-hint">Uses yt-dlp for all downloads.</div>
+                {:else}
+                  <div class="setting-hint">Detects Chinese platforms (Bilibili, Douyin) for Lux, others use yt-dlp.</div>
+                {/if}
+              {:else if $settings.defaultProcessor === 'lux' && !onAndroid}
+                <div class="setting-hint">Optimized for Chinese platforms only. Western sites may not work.</div>
+              {:else}
+                <div class="setting-hint">Supports 1000+ sites. Some Chinese platforms work better with Lux.</div>
+              {/if}
+            {/snippet}
+
+            <SettingItem
+              title={$t('settings.processing.defaultProcessor')}
+              description={$t('settings.processing.defaultProcessorDescription')}
+              icon="server"
+              value={$settings.defaultProcessor}
+              defaultValue={defaultSettings.defaultProcessor}
+              onReset={() => updateSetting('defaultProcessor', defaultSettings.defaultProcessor)}
+              descriptionSnippet={processorHint}
+            >
+              <div style="width: 180px;">
+                <Select
+                  value={$settings.defaultProcessor}
+                  onchange={(val) => updateSetting('defaultProcessor', val as any)}
+                  options={onAndroid
+                    ? [
                         { value: 'auto', label: $t('settings.processing.auto') },
                         { value: 'yt-dlp', label: 'yt-dlp' },
-                        // { value: 'cobalt', label: 'cobalt' },
-                        // { value: 'lux', label: 'lux' },
+                      ]
+                    : [
+                        { value: 'auto', label: $t('settings.processing.auto') },
+                        { value: 'yt-dlp', label: 'yt-dlp' },
+                        { value: 'lux', label: 'Lux' },
                       ]}
-                    />
-                  </div>
-                </div>
+                />
               </div>
-            </div>
+            </SettingItem>
           {/if}
-        </section>
+        </SettingsBlock>
       {/if}
 
       <!-- Downloads Section -->
       {#if sectionHasMatches('downloads')}
-        <section class="settings-section">
-          <h3 class="section-title">{$t('settings.downloads.title')}</h3>
-
+        <SettingsBlock 
+          title={$t('settings.downloads.title')} 
+          icon="download"
+          onResetSection={isSectionModified('downloads') ? () => {
+            updateSetting('downloadPath', defaultSettings.downloadPath);
+            updateSetting('useAudioPath', defaultSettings.useAudioPath);
+            updateSetting('audioPath', defaultSettings.audioPath);
+            updateSetting('usePlaylistFolders', defaultSettings.usePlaylistFolders);
+            updateSetting('youtubeMusicAudioOnly', defaultSettings.youtubeMusicAudioOnly);
+            updateSetting('embedThumbnail', defaultSettings.embedThumbnail);
+            updateSetting('concurrentDownloads', defaultSettings.concurrentDownloads);
+            updateSetting('watchClipboardForFiles', defaultSettings.watchClipboardForFiles);
+            updateSetting('fileDownloadNotifications', defaultSettings.fileDownloadNotifications);
+            updateSetting('aria2Connections', defaultSettings.aria2Connections);
+            updateSetting('aria2Splits', defaultSettings.aria2Splits);
+            updateSetting('downloadSpeedLimit', defaultSettings.downloadSpeedLimit);
+          } : undefined}
+        >
           {#if matchesSearch('downloadPath')}
-            <div class="setting-item">
-              <div class="setting-row">
+            <SettingItem
+              title={$t('settings.downloads.downloadPath')}
+              description={$t('settings.downloads.downloadPathDescription')}
+              icon="folder"
+              value={$settings.downloadPath}
+              defaultValue={defaultSettings.downloadPath}
+              onReset={() => updateSetting('downloadPath', defaultSettings.downloadPath)}
+            >
+              <button class="path-btn" onclick={pickDownloadPath}>
+                <Icon name="folder" size={16} />
+                <span class="path-text"
+                  >{$settings.downloadPath || $t('settings.downloads.defaultPath')}</span
+                >
+              </button>
+            </SettingItem>
+          {/if}
+
+          {#if matchesSearch('useAudioPath')}
+            <SettingItem
+              title={$t('settings.downloads.useAudioPath')}
+              description={$t('settings.downloads.useAudioPathTooltip')}
+              icon="music"
+              value={$settings.useAudioPath}
+              defaultValue={defaultSettings.useAudioPath}
+              onReset={() => updateSetting('useAudioPath', defaultSettings.useAudioPath)}
+            >
+              <Toggle
+                checked={$settings.useAudioPath}
+                onchange={(checked) => updateSetting('useAudioPath', checked)}
+              />
+            </SettingItem>
+            
+            {#if $settings.useAudioPath}
+              <div class="setting-sub-row">
                 <div class="setting-label-group">
-                  <span class="setting-label">{$t('settings.downloads.downloadPath')}</span>
-                  <span class="setting-description"
-                    >{$t('settings.downloads.downloadPathDescription')}</span
-                  >
+                  <span class="setting-label" style="font-size: 13px;">{$t('settings.downloads.audioPath')}</span>
                 </div>
                 <div class="setting-controls">
-                  {#if $settings.downloadPath !== defaultSettings.downloadPath}
-                    <button
-                      class="undo-btn"
-                      onclick={() => updateSetting('downloadPath', defaultSettings.downloadPath)}
-                      use:tooltip={$t('settings.app.resetToDefault')}
-                    >
-                      <Icon name="undo" size={14} />
-                    </button>
-                  {/if}
-                  <button class="path-btn" onclick={pickDownloadPath}>
+                  <button class="path-btn" onclick={pickAudioPath}>
                     <Icon name="folder" size={16} />
                     <span class="path-text"
-                      >{$settings.downloadPath || $t('settings.downloads.defaultPath')}</span
+                      >{$settings.audioPath || $t('settings.downloads.defaultPath')}</span
                     >
                   </button>
                 </div>
               </div>
-            </div>
-          {/if}
-
-          {#if matchesSearch('useAudioPath')}
-            <div class="setting-item">
-              <div class="setting-with-info">
-                <Checkbox
-                  checked={$settings.useAudioPath}
-                  label={$t('settings.downloads.useAudioPath')}
-                  onchange={(checked: boolean) => updateSetting('useAudioPath', checked)}
-                />
-                <button class="info-btn" use:tooltip={$t('settings.downloads.useAudioPathTooltip')}>
-                  <Icon name="info" size={18} />
-                </button>
-                <button
-                  class="undo-btn"
-                  class:hidden={$settings.useAudioPath === defaultSettings.useAudioPath}
-                  onclick={() => updateSetting('useAudioPath', defaultSettings.useAudioPath)}
-                  use:tooltip={$t('settings.app.resetToDefault')}
-                >
-                  <Icon name="undo" size={18} />
-                </button>
-              </div>
-
-              {#if $settings.useAudioPath}
-                <div class="setting-sub-row">
-                  <div class="setting-label-group">
-                    <span class="setting-label">{$t('settings.downloads.audioPath')}</span>
-                  </div>
-                  <div class="setting-controls">
-                    <button class="path-btn" onclick={pickAudioPath}>
-                      <Icon name="folder" size={16} />
-                      <span class="path-text"
-                        >{$settings.audioPath || $t('settings.downloads.defaultPath')}</span
-                      >
-                    </button>
-                  </div>
-                </div>
-              {/if}
-            </div>
+            {/if}
           {/if}
 
           {#if matchesSearch('usePlaylistFolders')}
-            <div class="setting-item">
-              <div class="setting-with-info">
-                <Checkbox
-                  checked={$settings.usePlaylistFolders}
-                  label={$t('settings.downloads.usePlaylistFolders')}
-                  onchange={(checked: boolean) => updateSetting('usePlaylistFolders', checked)}
-                />
-                <button
-                  class="info-btn"
-                  use:tooltip={$t('settings.downloads.usePlaylistFoldersTooltip')}
-                >
-                  <Icon name="info" size={18} />
-                </button>
-                <button
-                  class="undo-btn"
-                  class:hidden={$settings.usePlaylistFolders === defaultSettings.usePlaylistFolders}
-                  onclick={() =>
-                    updateSetting('usePlaylistFolders', defaultSettings.usePlaylistFolders)}
-                  use:tooltip={$t('settings.app.resetToDefault')}
-                >
-                  <Icon name="undo" size={18} />
-                </button>
-              </div>
-            </div>
+            <SettingItem
+              title={$t('settings.downloads.usePlaylistFolders')}
+              description={$t('settings.downloads.usePlaylistFoldersTooltip')}
+              icon="playlist"
+              value={$settings.usePlaylistFolders}
+              defaultValue={defaultSettings.usePlaylistFolders}
+              onReset={() => updateSetting('usePlaylistFolders', defaultSettings.usePlaylistFolders)}
+            >
+              <Toggle
+                checked={$settings.usePlaylistFolders}
+                onchange={(checked) => updateSetting('usePlaylistFolders', checked)}
+              />
+            </SettingItem>
           {/if}
 
           {#if matchesSearch('youtubeMusicAudioOnly')}
-            <div class="setting-item">
-              <div class="setting-with-info">
-                <Checkbox
-                  checked={$settings.youtubeMusicAudioOnly}
-                  label={$t('settings.downloads.youtubeMusicAudioOnly')}
-                  onchange={(checked: boolean) => updateSetting('youtubeMusicAudioOnly', checked)}
-                />
-                <button
-                  class="info-btn"
-                  use:tooltip={$t('settings.downloads.youtubeMusicAudioOnlyTooltip')}
-                >
-                  <Icon name="info" size={18} />
-                </button>
-                <button
-                  class="undo-btn"
-                  class:hidden={$settings.youtubeMusicAudioOnly ===
-                    defaultSettings.youtubeMusicAudioOnly}
-                  onclick={() =>
-                    updateSetting('youtubeMusicAudioOnly', defaultSettings.youtubeMusicAudioOnly)}
-                  use:tooltip={$t('settings.app.resetToDefault')}
-                >
-                  <Icon name="undo" size={18} />
-                </button>
-              </div>
-            </div>
+            <SettingItem
+              title={$t('settings.downloads.youtubeMusicAudioOnly')}
+              description={$t('settings.downloads.youtubeMusicAudioOnlyTooltip')}
+              icon="headphones"
+              value={$settings.youtubeMusicAudioOnly}
+              defaultValue={defaultSettings.youtubeMusicAudioOnly}
+              onReset={() => updateSetting('youtubeMusicAudioOnly', defaultSettings.youtubeMusicAudioOnly)}
+            >
+              <Toggle
+                checked={$settings.youtubeMusicAudioOnly}
+                onchange={(checked) => updateSetting('youtubeMusicAudioOnly', checked)}
+              />
+            </SettingItem>
           {/if}
 
           {#if matchesSearch('embedThumbnail')}
-            <div class="setting-item">
-              <div class="setting-with-info">
-                <Checkbox
-                  checked={$settings.embedThumbnail}
-                  label={$t('settings.downloads.embedThumbnail')}
-                  onchange={(checked: boolean) => updateSetting('embedThumbnail', checked)}
-                />
-                <button
-                  class="info-btn"
-                  use:tooltip={$t('settings.downloads.embedThumbnailTooltip')}
-                >
-                  <Icon name="info" size={18} />
-                </button>
-                <button
-                  class="undo-btn"
-                  class:hidden={$settings.embedThumbnail === defaultSettings.embedThumbnail}
-                  onclick={() => updateSetting('embedThumbnail', defaultSettings.embedThumbnail)}
-                  use:tooltip={$t('settings.app.resetToDefault')}
-                >
-                  <Icon name="undo" size={18} />
-                </button>
-              </div>
-            </div>
+            <SettingItem
+              title={$t('settings.downloads.embedThumbnail')}
+              description={$t('settings.downloads.embedThumbnailTooltip')}
+              icon="image"
+              value={$settings.embedThumbnail}
+              defaultValue={defaultSettings.embedThumbnail}
+              onReset={() => updateSetting('embedThumbnail', defaultSettings.embedThumbnail)}
+            >
+              <Toggle
+                checked={$settings.embedThumbnail}
+                onchange={(checked) => updateSetting('embedThumbnail', checked)}
+              />
+            </SettingItem>
           {/if}
 
           {#if matchesSearch('concurrentDownloads')}
-            <div class="setting-item">
-              <div class="setting-row">
-                <div class="setting-label-group">
-                  <span class="setting-label">{$t('settings.downloads.concurrentDownloads')}</span>
-                  <span class="setting-description"
-                    >{$t('settings.downloads.concurrentDownloadsDescription')}</span
-                  >
-                </div>
-                <div class="slider-with-value">
-                  {#if $settings.concurrentDownloads !== defaultSettings.concurrentDownloads}
-                    <button
-                      class="undo-btn"
-                      onclick={() =>
-                        updateSetting('concurrentDownloads', defaultSettings.concurrentDownloads)}
-                      use:tooltip={$t('settings.app.resetToDefault')}
-                    >
-                      <Icon name="undo" size={14} />
-                    </button>
-                  {/if}
-                  <input
-                    type="range"
-                    class="blur-slider"
-                    min="1"
-                    max="5"
-                    step="1"
-                    value={$settings.concurrentDownloads}
-                    oninput={(e) =>
-                      updateSetting(
-                        'concurrentDownloads',
-                        parseInt((e.target as HTMLInputElement).value)
-                      )}
-                  />
-                  <span class="slider-value">{$settings.concurrentDownloads}</span>
-                </div>
+            <SettingItem
+              title={$t('settings.downloads.concurrentDownloads')}
+              description={$t('settings.downloads.concurrentDownloadsDescription')}
+              icon="queue"
+              value={$settings.concurrentDownloads}
+              defaultValue={defaultSettings.concurrentDownloads}
+              onReset={() => updateSetting('concurrentDownloads', defaultSettings.concurrentDownloads)}
+            >
+              <div class="slider-with-value">
+                <input
+                  type="range"
+                  class="blur-slider"
+                  min="1"
+                  max="5"
+                  step="1"
+                  value={$settings.concurrentDownloads}
+                  oninput={(e) =>
+                    updateSetting(
+                      'concurrentDownloads',
+                      parseInt((e.target as HTMLInputElement).value)
+                    )}
+                />
+                <span class="slider-value">{$settings.concurrentDownloads}</span>
               </div>
-            </div>
+            </SettingItem>
           {/if}
 
-          <!-- Watch Clipboard for File URLs -->
-          {#if matchesSearch('watchClipboardForFiles')}
-            <div class="setting-item">
-              <div class="setting-row">
-                <div class="setting-label-group">
-                  <span class="setting-label"
-                    >{$t('settings.downloads.watchClipboardForFiles')}</span
-                  >
-                  <span class="setting-description"
-                    >{$t('settings.downloads.watchClipboardForFilesTooltip')}</span
-                  >
-                </div>
-                <div class="setting-controls">
-                  {#if $settings.watchClipboardForFiles !== defaultSettings.watchClipboardForFiles}
-                    <button
-                      class="undo-btn"
-                      onclick={() =>
-                        updateSetting(
-                          'watchClipboardForFiles',
-                          defaultSettings.watchClipboardForFiles
-                        )}
-                      use:tooltip={$t('settings.app.resetToDefault')}
-                    >
-                      <Icon name="undo" size={14} />
-                    </button>
-                  {/if}
-                  <Toggle
-                    checked={$settings.watchClipboardForFiles}
-                    onchange={(checked) => updateSetting('watchClipboardForFiles', checked)}
-                  />
-                </div>
-              </div>
-            </div>
+          <!-- Watch Clipboard for File URLs (desktop only) -->
+          {#if matchesSearch('watchClipboardForFiles') && onDesktop}
+            <SettingItem
+              title={$t('settings.downloads.watchClipboardForFiles')}
+              description={$t('settings.downloads.watchClipboardForFilesTooltip')}
+              icon="clipboard"
+              value={$settings.watchClipboardForFiles}
+              defaultValue={defaultSettings.watchClipboardForFiles}
+              onReset={() => updateSetting('watchClipboardForFiles', defaultSettings.watchClipboardForFiles)}
+            >
+              <Toggle
+                checked={$settings.watchClipboardForFiles}
+                onchange={(checked) => updateSetting('watchClipboardForFiles', checked)}
+              />
+            </SettingItem>
           {/if}
 
-          <!-- File Download Notifications -->
-          {#if matchesSearch('fileDownloadNotifications')}
-            <div class="setting-item">
-              <div class="setting-row">
-                <div class="setting-label-group">
-                  <span class="setting-label"
-                    >{$t('settings.downloads.fileDownloadNotifications')}</span
-                  >
-                  <span class="setting-description"
-                    >{$t('settings.downloads.fileDownloadNotificationsTooltip')}</span
-                  >
-                </div>
-                <div class="setting-controls">
-                  {#if $settings.fileDownloadNotifications !== defaultSettings.fileDownloadNotifications}
-                    <button
-                      class="undo-btn"
-                      onclick={() =>
-                        updateSetting(
-                          'fileDownloadNotifications',
-                          defaultSettings.fileDownloadNotifications
-                        )}
-                      use:tooltip={$t('settings.app.resetToDefault')}
-                    >
-                      <Icon name="undo" size={14} />
-                    </button>
-                  {/if}
-                  <Toggle
-                    checked={$settings.fileDownloadNotifications}
-                    onchange={(checked) => updateSetting('fileDownloadNotifications', checked)}
-                  />
-                </div>
-              </div>
-            </div>
+          <!-- File Download Notifications (desktop only) -->
+          {#if matchesSearch('fileDownloadNotifications') && onDesktop}
+            <SettingItem
+              title={$t('settings.downloads.fileDownloadNotifications')}
+              description={$t('settings.downloads.fileDownloadNotificationsTooltip')}
+              icon="bell"
+              value={$settings.fileDownloadNotifications}
+              defaultValue={defaultSettings.fileDownloadNotifications}
+              onReset={() => updateSetting('fileDownloadNotifications', defaultSettings.fileDownloadNotifications)}
+            >
+              <Toggle
+                checked={$settings.fileDownloadNotifications}
+                onchange={(checked) => updateSetting('fileDownloadNotifications', checked)}
+              />
+            </SettingItem>
           {/if}
 
           <!-- Aria2 Connections -->
           {#if matchesSearch('aria2Connections')}
-            <div class="setting-item">
-              <div class="setting-row">
-                <div class="setting-label-group">
-                  <span class="setting-label">{$t('settings.downloads.aria2Connections')}</span>
-                  <span class="setting-description"
-                    >{$t('settings.downloads.aria2ConnectionsDescription')}</span
-                  >
-                </div>
-                <div class="slider-with-value">
-                  {#if $settings.aria2Connections !== defaultSettings.aria2Connections}
-                    <button
-                      class="undo-btn"
-                      onclick={() =>
-                        updateSetting('aria2Connections', defaultSettings.aria2Connections)}
-                      use:tooltip={$t('settings.app.resetToDefault')}
-                    >
-                      <Icon name="undo" size={14} />
-                    </button>
-                  {/if}
-                  <input
-                    type="range"
-                    class="blur-slider"
-                    min="1"
-                    max="16"
-                    step="1"
-                    value={$settings.aria2Connections}
-                    oninput={(e) =>
-                      updateSetting(
-                        'aria2Connections',
-                        parseInt((e.target as HTMLInputElement).value)
-                      )}
-                  />
-                  <span class="slider-value">{$settings.aria2Connections}</span>
-                </div>
+            <SettingItem
+              title={$t('settings.downloads.aria2Connections')}
+              description={$t('settings.downloads.aria2ConnectionsDescription')}
+              icon="link"
+              value={$settings.aria2Connections}
+              defaultValue={defaultSettings.aria2Connections}
+              onReset={() => updateSetting('aria2Connections', defaultSettings.aria2Connections)}
+            >
+              <div class="slider-with-value">
+                <input
+                  type="range"
+                  class="blur-slider"
+                  min="1"
+                  max="16"
+                  step="1"
+                  value={$settings.aria2Connections}
+                  oninput={(e) =>
+                    updateSetting(
+                      'aria2Connections',
+                      parseInt((e.target as HTMLInputElement).value)
+                    )}
+                />
+                <span class="slider-value">{$settings.aria2Connections}</span>
               </div>
-            </div>
+            </SettingItem>
           {/if}
 
           <!-- Aria2 Splits -->
           {#if matchesSearch('aria2Splits')}
-            <div class="setting-item">
-              <div class="setting-row">
-                <div class="setting-label-group">
-                  <span class="setting-label">{$t('settings.downloads.aria2Splits')}</span>
-                  <span class="setting-description"
-                    >{$t('settings.downloads.aria2SplitsDescription')}</span
-                  >
-                </div>
-                <div class="slider-with-value">
-                  {#if $settings.aria2Splits !== defaultSettings.aria2Splits}
-                    <button
-                      class="undo-btn"
-                      onclick={() => updateSetting('aria2Splits', defaultSettings.aria2Splits)}
-                      use:tooltip={$t('settings.app.resetToDefault')}
-                    >
-                      <Icon name="undo" size={14} />
-                    </button>
-                  {/if}
-                  <input
-                    type="range"
-                    class="blur-slider"
-                    min="1"
-                    max="16"
-                    step="1"
-                    value={$settings.aria2Splits}
-                    oninput={(e) =>
-                      updateSetting('aria2Splits', parseInt((e.target as HTMLInputElement).value))}
-                  />
-                  <span class="slider-value">{$settings.aria2Splits}</span>
-                </div>
+            <SettingItem
+              title={$t('settings.downloads.aria2Splits')}
+              description={$t('settings.downloads.aria2SplitsDescription')}
+              icon="pie"
+              value={$settings.aria2Splits}
+              defaultValue={defaultSettings.aria2Splits}
+              onReset={() => updateSetting('aria2Splits', defaultSettings.aria2Splits)}
+            >
+              <div class="slider-with-value">
+                <input
+                  type="range"
+                  class="blur-slider"
+                  min="1"
+                  max="16"
+                  step="1"
+                  value={$settings.aria2Splits}
+                  oninput={(e) =>
+                    updateSetting('aria2Splits', parseInt((e.target as HTMLInputElement).value))}
+                />
+                <span class="slider-value">{$settings.aria2Splits}</span>
               </div>
-            </div>
+            </SettingItem>
           {/if}
 
           <!-- Download Speed Limit -->
           {#if matchesSearch('downloadSpeedLimit')}
-            <div class="setting-item">
-              <div class="setting-row">
-                <div class="setting-label-group">
-                  <span class="setting-label">{$t('settings.downloads.downloadSpeedLimit')}</span>
-                  <span class="setting-description"
-                    >{$t('settings.downloads.downloadSpeedLimitDescription')}</span
-                  >
-                </div>
-                <div class="setting-controls">
-                  {#if $settings.downloadSpeedLimit !== defaultSettings.downloadSpeedLimit}
-                    <button
-                      class="undo-btn"
-                      onclick={() =>
-                        updateSetting('downloadSpeedLimit', defaultSettings.downloadSpeedLimit)}
-                      use:tooltip={$t('settings.app.resetToDefault')}
-                    >
-                      <Icon name="undo" size={14} />
-                    </button>
-                  {/if}
-                  <div class="slider-with-value">
-                    <input
-                      type="range"
-                      class="blur-slider"
-                      min="0"
-                      max="100"
-                      step="1"
-                      value={$settings.downloadSpeedLimit}
-                      oninput={(e) =>
-                        updateSetting(
-                          'downloadSpeedLimit',
-                          parseInt((e.target as HTMLInputElement).value)
-                        )}
-                    />
-                    <span class="slider-value speed-limit-value"
-                      >{$settings.downloadSpeedLimit === 0
-                        ? $t('settings.downloads.unlimited')
-                        : `${$settings.downloadSpeedLimit} ${$settings.sizeUnit === 'binary' ? 'MiB/s' : 'MB/s'}`}</span
-                    >
-                  </div>
-                </div>
+            <SettingItem
+              title={$t('settings.downloads.downloadSpeedLimit')}
+              description={$t('settings.downloads.downloadSpeedLimitDescription')}
+              icon="tuning"
+              value={$settings.downloadSpeedLimit}
+              defaultValue={defaultSettings.downloadSpeedLimit}
+              onReset={() => updateSetting('downloadSpeedLimit', defaultSettings.downloadSpeedLimit)}
+            >
+              <div class="slider-with-value">
+                <input
+                  type="range"
+                  class="blur-slider"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={$settings.downloadSpeedLimit}
+                  oninput={(e) =>
+                    updateSetting(
+                      'downloadSpeedLimit',
+                      parseInt((e.target as HTMLInputElement).value)
+                    )}
+                />
+                <span class="slider-value speed-limit-value"
+                  >{$settings.downloadSpeedLimit === 0
+                    ? $t('settings.downloads.unlimited')
+                    : `${$settings.downloadSpeedLimit} ${$settings.sizeUnit === 'binary' ? 'MiB/s' : 'MB/s'}`}</span
+                >
               </div>
-            </div>
+            </SettingItem>
           {/if}
-        </section>
+
+          <!-- Bypass Proxy for File Downloads -->
+          {#if matchesSearch('bypassProxyForDownloads') && $settings.proxyMode !== 'none'}
+            <SettingItem
+              title={$t('settings.downloads.bypassProxyForDownloads')}
+              description={$t('settings.downloads.bypassProxyForDownloadsDescription')}
+              icon="download"
+              value={$settings.bypassProxyForDownloads}
+              defaultValue={defaultSettings.bypassProxyForDownloads}
+              onReset={() => updateSetting('bypassProxyForDownloads', defaultSettings.bypassProxyForDownloads)}
+            >
+              <Toggle
+                checked={$settings.bypassProxyForDownloads}
+                onchange={(checked) => updateSetting('bypassProxyForDownloads', checked)}
+              />
+            </SettingItem>
+          {/if}
+        </SettingsBlock>
       {/if}
 
-      <!-- Network Section (proxy settings) -->
-      {#if sectionHasMatches('network')}
-        <section class="settings-section">
-          <h3 class="section-title">{$t('settings.network.title')}</h3>
-
+      <!-- Network Section (proxy settings) - Desktop only -->
+      {#if sectionHasMatches('network') && onDesktop}
+        <SettingsBlock 
+          title={$t('settings.network.title')} 
+          icon="globe"
+          onResetSection={isSectionModified('network') ? () => {
+            updateSetting('proxyMode', defaultSettings.proxyMode);
+            updateSetting('customProxyUrl', defaultSettings.customProxyUrl);
+            updateSetting('retryWithoutProxy', defaultSettings.retryWithoutProxy);
+          } : undefined}
+        >
           {#if matchesSearch('proxy')}
             <!-- Proxy Mode -->
-            <div class="setting-item">
-              <div class="setting-row">
-                <div class="setting-label-group">
-                  <span class="setting-label">{$t('settings.network.proxyMode')}</span>
-                  <span class="setting-description"
-                    >{$t('settings.network.proxyModeDescription')}</span
-                  >
-                </div>
-                <div class="setting-controls">
-                  {#if $settings.proxyMode !== defaultSettings.proxyMode}
-                    <button
-                      class="undo-btn"
-                      onclick={() => updateSetting('proxyMode', defaultSettings.proxyMode)}
-                      use:tooltip={$t('settings.app.resetToDefault')}
-                    >
-                      <Icon name="undo" size={14} />
-                    </button>
-                  {/if}
-                  <div style="width: 180px;">
-                    <Select
-                      options={proxyModeOptions}
-                      value={$settings.proxyMode}
-                      onchange={handleProxyModeChange}
-                    />
-                  </div>
-                </div>
+            <SettingItem
+              title={$t('settings.network.proxyMode')}
+              description={$t('settings.network.proxyModeDescription')}
+              icon="globe"
+              value={$settings.proxyMode}
+              defaultValue={defaultSettings.proxyMode}
+              onReset={() => updateSetting('proxyMode', defaultSettings.proxyMode)}
+            >
+              <div style="width: 180px;">
+                <Select
+                  options={proxyModeOptions}
+                  value={$settings.proxyMode}
+                  onchange={handleProxyModeChange}
+                />
               </div>
+            </SettingItem>
 
-              <!-- System proxy status (shown when mode is 'system') -->
-              {#if $settings.proxyMode === 'system' && onDesktop}
-                <div class="setting-sub-row proxy-status">
-                  <div class="proxy-status-content">
-                    {#if detectingSystemProxy}
-                      <span class="proxy-detecting">
-                        <span class="btn-spinner"></span>
-                        {$t('settings.network.detectingProxy')}
-                      </span>
-                    {:else if systemProxyStatus}
-                      <span class="proxy-detected">
-                        <Icon name="check" size={14} />
-                        {systemProxyStatus}
-                      </span>
-                    {:else}
-                      <span class="proxy-none">
-                        <Icon name="warning" size={14} />
-                        {$t('settings.network.noSystemProxy')}
-                      </span>
-                    {/if}
-                  </div>
-                  <button
-                    class="dep-btn"
-                    onclick={detectSystemProxy}
-                    use:tooltip={$t('settings.network.recheckProxy')}
-                  >
-                    <Icon name="undo" size={14} />
-                  </button>
-                </div>
-              {/if}
-
-              <!-- Custom proxy URL (shown when mode is 'custom') -->
-              {#if $settings.proxyMode === 'custom'}
-                <div class="setting-sub-row">
-                  <div class="setting-label-group">
-                    <span class="setting-label">{$t('settings.network.customProxyUrl')}</span>
-                    <span class="setting-description"
-                      >{$t('settings.network.customProxyUrlDescription')}</span
-                    >
-                  </div>
-                  <div class="proxy-input-group">
-                    {#if $settings.customProxyUrl !== defaultSettings.customProxyUrl}
-                      <button
-                        class="undo-btn"
-                        onclick={() => {
-                          customProxyInput = defaultSettings.customProxyUrl;
-                          handleCustomProxyInput(defaultSettings.customProxyUrl);
-                        }}
-                        use:tooltip={$t('settings.app.resetToDefault')}
-                      >
-                        <Icon name="undo" size={14} />
-                      </button>
-                    {/if}
-                    <div class="proxy-input-wrapper" class:error={proxyValidationError}>
-                      <Input
-                        value={customProxyInput}
-                        oninput={(e) =>
-                          handleCustomProxyInput((e.target as HTMLInputElement).value)}
-                        placeholder={$t('settings.network.customProxyUrlPlaceholder')}
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {#if proxyValidationError}
-                  <div class="setting-sub-row proxy-error">
-                    <span class="error-text">
-                      <Icon name="warning" size={14} />
-                      {proxyValidationError}
+            <!-- System proxy status (shown when mode is 'system') -->
+            {#if $settings.proxyMode === 'system' && onDesktop}
+              <div class="setting-sub-row proxy-status">
+                <div class="proxy-status-content">
+                  {#if detectingSystemProxy}
+                    <span class="proxy-detecting">
+                      <span class="btn-spinner"></span>
+                      {$t('settings.network.detectingProxy')}
                     </span>
-                    <span class="error-hint">{$t('settings.network.proxyValidFormats')}</span>
-                  </div>
-                {/if}
+                  {:else if systemProxyStatus}
+                    <span class="proxy-detected">
+                      <Icon name="check" size={14} />
+                      {systemProxyStatus}
+                    </span>
+                  {:else}
+                    <span class="proxy-none">
+                      <Icon name="warning" size={14} />
+                      {$t('settings.network.noSystemProxy')}
+                    </span>
+                  {/if}
+                </div>
+                <button
+                  class="dep-btn"
+                  onclick={detectSystemProxy}
+                  use:tooltip={$t('settings.network.recheckProxy')}
+                >
+                  <Icon name="undo" size={14} />
+                </button>
+              </div>
+            {/if}
 
-                <!-- Fallback option -->
-                <div class="setting-sub-row">
-                  <div class="setting-with-info">
-                    <Checkbox
-                      checked={$settings.proxyFallback}
-                      label={$t('settings.network.proxyFallback')}
-                      onchange={handleProxyFallbackChange}
+            <!-- Custom proxy URL (shown when mode is 'custom') -->
+            {#if $settings.proxyMode === 'custom'}
+              <SettingItem
+                title={$t('settings.network.customProxyUrl')}
+                description={$t('settings.network.customProxyUrlDescription')}
+                icon="link"
+                value={$settings.customProxyUrl}
+                defaultValue={defaultSettings.customProxyUrl}
+                onReset={() => {
+                  customProxyInput = defaultSettings.customProxyUrl;
+                  handleCustomProxyInput(defaultSettings.customProxyUrl);
+                }}
+              >
+                <div class="proxy-input-group" style="width: 250px;">
+                  <div class="proxy-input-wrapper" class:error={proxyValidationError}>
+                    <Input
+                      value={customProxyInput}
+                      oninput={(e) =>
+                        handleCustomProxyInput((e.target as HTMLInputElement).value)}
+                      placeholder={$t('settings.network.customProxyUrlPlaceholder')}
                     />
-                    <button
-                      class="info-btn"
-                      use:tooltip={$t('settings.network.proxyFallbackTooltip')}
-                    >
-                      <Icon name="info" size={18} />
-                    </button>
-                    <button
-                      class="undo-btn"
-                      class:hidden={$settings.proxyFallback === defaultSettings.proxyFallback}
-                      onclick={() => updateSetting('proxyFallback', defaultSettings.proxyFallback)}
-                      use:tooltip={$t('settings.app.resetToDefault')}
-                    >
-                      <Icon name="undo" size={18} />
-                    </button>
                   </div>
                 </div>
+              </SettingItem>
+
+              {#if proxyValidationError}
+                <div class="setting-sub-row proxy-error">
+                  <span class="error-text">
+                    <Icon name="warning" size={14} />
+                    {proxyValidationError}
+                  </span>
+                  <span class="error-hint">{$t('settings.network.proxyValidFormats')}</span>
+                </div>
               {/if}
-            </div>
+            {/if}
+
+            <!-- Retry Without Proxy option (shown when proxy is not 'none') -->
+            {#if $settings.proxyMode !== 'none'}
+              <SettingItem
+                title={$t('settings.network.retryWithoutProxy')}
+                description={$t('settings.network.retryWithoutProxyTooltip')}
+                icon="restart"
+                value={$settings.retryWithoutProxy}
+                defaultValue={defaultSettings.retryWithoutProxy}
+                onReset={() => updateSetting('retryWithoutProxy', defaultSettings.retryWithoutProxy)}
+              >
+                <Toggle
+                  checked={$settings.retryWithoutProxy}
+                  onchange={(checked) => updateSetting('retryWithoutProxy', checked)}
+                />
+              </SettingItem>
+            {/if}
 
             <!-- IP Check (shown when proxy is not 'none') -->
             {#if $settings.proxyMode !== 'none' && onDesktop}
-              <div class="setting-item">
-                <div class="setting-row">
-                  <div class="setting-label-group">
-                    <span class="setting-label">{$t('settings.network.checkIp')}</span>
-                    <span class="setting-description"
-                      >{$t('settings.network.checkIpDescription')}</span
-                    >
-                  </div>
-                  <div class="setting-controls">
-                    <button class="dep-btn" onclick={checkIp} disabled={checkingIp}>
-                      {#if checkingIp}
-                        <span class="btn-spinner"></span>
-                      {:else}
-                        <Icon name="globe" size={14} />
-                      {/if}
-                      {$t('settings.network.checkIpBtn')}
-                    </button>
+              <SettingItem
+                title={$t('settings.network.checkIp')}
+                description={$t('settings.network.checkIpDescription')}
+                icon="globe"
+              >
+                <button class="dep-btn" onclick={checkIp} disabled={checkingIp}>
+                  {#if checkingIp}
+                    <span class="btn-spinner"></span>
+                  {:else}
+                    <Icon name="globe" size={14} />
+                  {/if}
+                  {$t('settings.network.checkIpBtn')}
+                </button>
+              </SettingItem>
+
+              {#if currentIp}
+                <div class="setting-sub-row ip-result">
+                  <div class="ip-result-content">
+                    <span class="ip-address">{currentIp}</span>
+                    {#if ipProxyUsed}
+                      <span class="ip-badge proxy">
+                        <Icon name="check" size={12} />
+                        {$t('settings.network.proxyActive')}
+                      </span>
+                    {:else}
+                      <span class="ip-badge direct">
+                        <Icon name="warning" size={12} />
+                        {$t('settings.network.directConnection')}
+                      </span>
+                    {/if}
                   </div>
                 </div>
-
-                {#if currentIp}
-                  <div class="setting-sub-row ip-result">
-                    <div class="ip-result-content">
-                      <span class="ip-address">{currentIp}</span>
-                      {#if ipProxyUsed}
-                        <span class="ip-badge proxy">
-                          <Icon name="check" size={12} />
-                          {$t('settings.network.proxyActive')}
-                        </span>
-                      {:else}
-                        <span class="ip-badge direct">
-                          <Icon name="warning" size={12} />
-                          {$t('settings.network.directConnection')}
-                        </span>
-                      {/if}
-                    </div>
-                  </div>
-                {/if}
-              </div>
+              {/if}
             {/if}
           {/if}
-        </section>
+        </SettingsBlock>
       {/if}
 
       <!-- App Section -->
       {#if sectionHasMatches('app')}
-        <section class="settings-section">
-          <h3 class="section-title">{$t('settings.app.title')}</h3>
-
+        <SettingsBlock 
+          title={$t('settings.app.title')} 
+          icon="widgets"
+          onResetSection={isSectionModified('app') ? () => {
+            updateSetting('autoUpdate', defaultSettings.autoUpdate);
+            updateSetting('allowPreReleases', defaultSettings.allowPreReleases);
+            updateSetting('sendStats', defaultSettings.sendStats);
+            updateSetting('backgroundType', defaultSettings.backgroundType);
+            updateSetting('backgroundColor', defaultSettings.backgroundColor);
+            updateSetting('backgroundVideo', defaultSettings.backgroundVideo);
+            updateSetting('backgroundImage', defaultSettings.backgroundImage);
+            updateSetting('backgroundBlur', defaultSettings.backgroundBlur);
+            updateSetting('backgroundOpacity', defaultSettings.backgroundOpacity);
+            updateSetting('accentColor', defaultSettings.accentColor);
+            updateSetting('useSystemAccent', defaultSettings.useSystemAccent);
+            updateSetting('disableAnimations', defaultSettings.disableAnimations);
+            updateSetting('toastPosition', defaultSettings.toastPosition);
+            updateSetting('sizeUnit', defaultSettings.sizeUnit);
+            updateSetting('showHistoryStats', defaultSettings.showHistoryStats);
+            updateSetting('thumbnailTheming', defaultSettings.thumbnailTheming);
+          } : undefined}
+        >
           {#if matchesSearch('autoUpdate')}
-            <div class="setting-item">
-              <div class="setting-row">
-                <div class="setting-label-group">
-                  <span class="setting-label">{$t('settings.app.updates')}</span>
-                  <span class="setting-description"
-                    >{$t('settings.app.currentVersion', { version: getCurrentVersion() })}</span
+            <SettingItem
+              title={$t('settings.app.updates')}
+              description={$t('settings.app.currentVersion', { version: getCurrentVersion() })}
+              icon="download"
+            >
+              <button class="dep-btn" onclick={handleCheckForUpdates} disabled={checkingUpdate}>
+                {#if checkingUpdate}
+                  <span class="btn-spinner"></span>
+                {:else}
+                  <Icon name="download" size={14} />
+                {/if}
+                {$t('settings.app.checkForUpdates')}
+              </button>
+            </SettingItem>
+
+            <SettingItem
+              title={$t('settings.app.autoUpdate')}
+              description={$t('settings.app.autoUpdateDescription')}
+              icon="restart"
+              value={$settings.autoUpdate}
+              defaultValue={defaultSettings.autoUpdate}
+              onReset={() => updateSetting('autoUpdate', defaultSettings.autoUpdate)}
+            >
+              <Toggle
+                checked={$settings.autoUpdate}
+                onchange={handleAutoUpdateChange}
+              />
+            </SettingItem>
+
+            {#if $updateState.available && $updateState.info}
+              <div class="setting-sub-row update-available">
+                <div class="update-info">
+                  <Icon name="download" size={16} />
+                  <span
+                    >{$t('settings.app.updateAvailable', {
+                      version: $updateState.info.version,
+                    })}</span
                   >
+                  {#if $updateState.info.isPreRelease}
+                    <span class="update-badge pre">Pre-release</span>
+                  {/if}
                 </div>
-                <div class="setting-controls">
-                  <button class="dep-btn" onclick={handleCheckForUpdates} disabled={checkingUpdate}>
-                    {#if checkingUpdate}
-                      <span class="btn-spinner"></span>
-                    {:else}
-                      <Icon name="download" size={14} />
-                    {/if}
-                    {$t('settings.app.checkForUpdates')}
-                  </button>
-                </div>
+                <button
+                  class="dep-btn primary"
+                  onclick={downloadAndInstall}
+                  disabled={$updateState.downloading || $updateState.installTriggered}
+                >
+                  {#if $updateState.downloading}
+                    <span class="btn-spinner"></span>
+                    {$t('settings.app.downloading')}
+                    {$updateState.progress}%
+                  {:else if $updateState.installTriggered}
+                    <Icon name="check" size={14} />
+                    {$t('settings.app.installTriggered')}
+                  {:else}
+                    {$t('settings.app.installUpdate')}
+                  {/if}
+                </button>
               </div>
 
-              {#if $updateState.available && $updateState.info}
-                <div class="setting-sub-row update-available">
-                  <div class="update-info">
-                    <Icon name="download" size={16} />
-                    <span
-                      >{$t('settings.app.updateAvailable', {
-                        version: $updateState.info.version,
-                      })}</span
-                    >
-                    {#if $updateState.info.isPreRelease}
-                      <span class="update-badge pre">Pre-release</span>
-                    {/if}
+              {#if $updateState.downloading}
+                <div class="setting-sub-row update-progress">
+                  <div class="update-progress-bar">
+                    <div
+                      class="update-progress-fill"
+                      style="width: {$updateState.progress}%"
+                    ></div>
                   </div>
-                  <button
-                    class="dep-btn primary"
-                    onclick={downloadAndInstall}
-                    disabled={$updateState.downloading || $updateState.installTriggered}
-                  >
-                    {#if $updateState.downloading}
-                      <span class="btn-spinner"></span>
-                      {$t('settings.app.downloading')}
-                      {$updateState.progress}%
-                    {:else if $updateState.installTriggered}
-                      <Icon name="check" size={14} />
-                      {$t('settings.app.installTriggered')}
-                    {:else}
-                      {$t('settings.app.installUpdate')}
-                    {/if}
-                  </button>
                 </div>
-
-                {#if $updateState.downloading}
-                  <div class="setting-sub-row update-progress">
-                    <div class="update-progress-bar">
-                      <div
-                        class="update-progress-fill"
-                        style="width: {$updateState.progress}%"
-                      ></div>
-                    </div>
-                  </div>
-                {/if}
-
-                {#if $updateState.info.notes}
-                  <div class="setting-sub-row update-notes">
-                    <div class="update-notes-content">
-                      <span class="update-notes-label">{$t('settings.app.whatsNew')}</span>
-                      <div class="update-notes-text">
-                        {@html $updateState.info.notes.replace(/\n/g, '<br>')}
-                      </div>
-                    </div>
-                  </div>
-                {/if}
               {/if}
 
-              <div class="setting-sub-row">
-                <div class="setting-with-undo">
-                  <Checkbox
-                    checked={$settings.autoUpdate}
-                    label={$t('settings.app.autoUpdate')}
-                    onchange={handleAutoUpdateChange}
-                  />
-                  <button
-                    class="undo-btn"
-                    class:hidden={$settings.autoUpdate === defaultSettings.autoUpdate}
-                    onclick={() => updateSetting('autoUpdate', defaultSettings.autoUpdate)}
-                    use:tooltip={$t('settings.app.resetToDefault')}
-                  >
-                    <Icon name="undo" size={18} />
-                  </button>
+              {#if $updateState.info.notes}
+                <div class="setting-sub-row update-notes">
+                  <div class="update-notes-content">
+                    <span class="update-notes-label">{$t('settings.app.whatsNew')}</span>
+                    <div class="update-notes-text">
+                      {@html $updateState.info.notes.replace(/\n/g, '<br>')}
+                    </div>
+                  </div>
                 </div>
-              </div>
+              {/if}
+            {/if}
 
-              <div class="setting-sub-row">
-                <div class="setting-with-info">
-                  <Checkbox
-                    checked={$settings.allowPreReleases}
-                    label={$t('settings.app.allowPreReleases')}
-                    onchange={(checked: boolean) => updateSetting('allowPreReleases', checked)}
-                  />
-                  <button class="info-btn" use:tooltip={$t('settings.app.allowPreReleasesTooltip')}>
-                    <Icon name="info" size={18} />
-                  </button>
-                  <button
-                    class="undo-btn"
-                    class:hidden={$settings.allowPreReleases === defaultSettings.allowPreReleases}
-                    onclick={() =>
-                      updateSetting('allowPreReleases', defaultSettings.allowPreReleases)}
-                    use:tooltip={$t('settings.app.resetToDefault')}
-                  >
-                    <Icon name="undo" size={18} />
-                  </button>
-                </div>
-              </div>
-            </div>
+            <SettingItem
+              title={$t('settings.app.allowPreReleases')}
+              description={$t('settings.app.allowPreReleasesTooltip')}
+              icon="star"
+              value={$settings.allowPreReleases}
+              defaultValue={defaultSettings.allowPreReleases}
+              onReset={() => updateSetting('allowPreReleases', defaultSettings.allowPreReleases)}
+            >
+              <Toggle
+                checked={$settings.allowPreReleases}
+                onchange={(checked) => updateSetting('allowPreReleases', checked)}
+              />
+            </SettingItem>
           {/if}
 
           {#if matchesSearch('sendStats')}
-            <div class="setting-item">
-              <div class="setting-with-info">
-                <Checkbox
-                  checked={$settings.sendStats}
-                  label={$t('settings.app.sendStats')}
-                  onchange={handleSendStatsChange}
-                />
-                <button class="info-btn" use:tooltip={$t('settings.app.sendStatsTooltip')}>
-                  <Icon name="info" size={18} />
-                </button>
-                <button
-                  class="undo-btn"
-                  class:hidden={$settings.sendStats === defaultSettings.sendStats}
-                  onclick={() => updateSetting('sendStats', defaultSettings.sendStats)}
-                  use:tooltip={$t('settings.app.resetToDefault')}
-                >
-                  <Icon name="undo" size={18} />
-                </button>
-              </div>
-            </div>
+            <SettingItem
+              title={$t('settings.app.sendStats')}
+              description={$t('settings.app.sendStatsTooltip')}
+              icon="stats"
+              value={$settings.sendStats}
+              defaultValue={defaultSettings.sendStats}
+              onReset={() => updateSetting('sendStats', defaultSettings.sendStats)}
+            >
+              <Toggle
+                checked={$settings.sendStats}
+                onchange={handleSendStatsChange}
+              />
+            </SettingItem>
           {/if}
 
           {#if matchesSearch('background')}
-            <div class="setting-item">
-              <div class="setting-row">
+            <SettingItem
+              title={$t('settings.app.background')}
+              description={$t('settings.app.backgroundDescription')}
+              icon="image"
+              value={$settings.backgroundType}
+              defaultValue={defaultSettings.backgroundType}
+              onReset={() => updateSetting('backgroundType', defaultSettings.backgroundType)}
+            >
+              <Select
+                options={backgroundTypeOptions}
+                value={$settings.backgroundType}
+                onchange={handleBackgroundTypeChange}
+              />
+            </SettingItem>
+
+            {#if $settings.backgroundType === 'solid'}
+              <div class="setting-sub-row">
                 <div class="setting-label-group">
-                  <span class="setting-label">{$t('settings.app.background')}</span>
-                  <span class="setting-description">{$t('settings.app.backgroundDescription')}</span
-                  >
+                  <span class="setting-label">{$t('settings.app.backgroundColor')}</span>
                 </div>
                 <div class="setting-control-group">
-                  <button
-                    class="undo-btn"
-                    class:hidden={$settings.backgroundType === defaultSettings.backgroundType}
-                    onclick={() => updateSetting('backgroundType', defaultSettings.backgroundType)}
-                    use:tooltip={$t('settings.app.resetToDefault')}
-                  >
-                    <Icon name="undo" size={18} />
-                  </button>
-                  <Select
-                    options={backgroundTypeOptions}
-                    value={$settings.backgroundType}
-                    onchange={handleBackgroundTypeChange}
+                  <input
+                    type="color"
+                    class="color-picker"
+                    value={$settings.backgroundColor}
+                    oninput={(e) => handleBackgroundColorChange(e.currentTarget.value)}
+                  />
+                  <input
+                    type="text"
+                    class="color-text-input"
+                    value={$settings.backgroundColor}
+                    oninput={(e) => handleBackgroundColorChange(e.currentTarget.value)}
+                    placeholder="#1a1a2e"
                   />
                 </div>
               </div>
+            {/if}
 
-              {#if $settings.backgroundType === 'solid'}
-                <div class="setting-sub-row">
-                  <div class="setting-label-group">
-                    <span class="setting-label">{$t('settings.app.backgroundColor')}</span>
-                  </div>
-                  <div class="setting-control-group">
-                    <input
-                      type="color"
-                      class="color-picker"
-                      value={$settings.backgroundColor}
-                      oninput={(e) => handleBackgroundColorChange(e.currentTarget.value)}
-                    />
-                    <input
-                      type="text"
-                      class="color-text-input"
-                      value={$settings.backgroundColor}
-                      oninput={(e) => handleBackgroundColorChange(e.currentTarget.value)}
-                      placeholder="#1a1a2e"
-                    />
-                  </div>
+            {#if $settings.backgroundType === 'animated'}
+              <div class="setting-sub-row">
+                <div class="setting-label-group">
+                  <span class="setting-label">{$t('settings.app.backgroundVideoUrl')}</span>
+                  <span class="setting-description"
+                    >{$t('settings.app.backgroundVideoUrlDescription')}</span
+                  >
                 </div>
-              {/if}
-
-              {#if $settings.backgroundType === 'animated'}
-                <div class="setting-sub-row">
-                  <div class="setting-label-group">
-                    <span class="setting-label">{$t('settings.app.backgroundVideoUrl')}</span>
-                    <span class="setting-description"
-                      >{$t('settings.app.backgroundVideoUrlDescription')}</span
-                    >
-                  </div>
-                  <div class="input-with-actions">
-                    {#if $settings.backgroundVideo !== defaultSettings.backgroundVideo}
-                      <button
-                        class="undo-btn"
-                        onclick={() => {
-                          backgroundVideoInput = defaultSettings.backgroundVideo;
-                          handleBackgroundVideoChange(defaultSettings.backgroundVideo);
-                        }}
-                        use:tooltip={$t('settings.app.resetToDefault')}
-                      >
-                        <Icon name="undo" size={16} />
-                      </button>
-                    {/if}
-                    <Input
-                      bind:value={backgroundVideoInput}
-                      oninput={() => handleBackgroundVideoChange(backgroundVideoInput)}
-                      placeholder="https://... or C:\path\to\video.mp4"
-                    />
+                <div class="input-with-actions">
+                  {#if $settings.backgroundVideo !== defaultSettings.backgroundVideo}
                     <button
-                      class="picker-btn"
-                      onclick={pickBackgroundVideo}
-                      use:tooltip={$t('settings.general.browse')}
+                      class="undo-btn"
+                      onclick={() => {
+                        backgroundVideoInput = defaultSettings.backgroundVideo;
+                        handleBackgroundVideoChange(defaultSettings.backgroundVideo);
+                      }}
+                      use:tooltip={$t('settings.app.resetToDefault')}
                     >
-                      <Icon name="folder" size={16} />
+                      <Icon name="undo" size={16} />
                     </button>
-                  </div>
+                  {/if}
+                  <Input
+                    bind:value={backgroundVideoInput}
+                    oninput={() => handleBackgroundVideoChange(backgroundVideoInput)}
+                    placeholder="https://... or C:\path\to\video.mp4"
+                  />
+                  <button
+                    class="picker-btn"
+                    onclick={pickBackgroundVideo}
+                    use:tooltip={$t('settings.general.browse')}
+                  >
+                    <Icon name="folder" size={16} />
+                  </button>
                 </div>
-              {/if}
+              </div>
+            {/if}
 
-              {#if $settings.backgroundType === 'image'}
-                <div class="setting-sub-row">
-                  <div class="setting-label-group">
-                    <span class="setting-label">{$t('settings.app.backgroundImageUrl')}</span>
-                    <span class="setting-description"
-                      >{$t('settings.app.backgroundImageUrlDescription')}</span
-                    >
-                  </div>
-                  <div class="input-with-actions">
-                    {#if $settings.backgroundImage !== defaultSettings.backgroundImage}
-                      <button
-                        class="undo-btn"
-                        onclick={() => {
-                          backgroundImageInput = defaultSettings.backgroundImage;
-                          handleBackgroundImageChange(defaultSettings.backgroundImage);
-                        }}
-                        use:tooltip={$t('settings.app.resetToDefault')}
-                      >
-                        <Icon name="undo" size={16} />
-                      </button>
-                    {/if}
-                    <Input
-                      bind:value={backgroundImageInput}
-                      oninput={() => handleBackgroundImageChange(backgroundImageInput)}
-                      placeholder="https://... or C:\path\to\image.jpg"
-                    />
+            {#if $settings.backgroundType === 'image'}
+              <div class="setting-sub-row">
+                <div class="setting-label-group">
+                  <span class="setting-label">{$t('settings.app.backgroundImageUrl')}</span>
+                  <span class="setting-description"
+                    >{$t('settings.app.backgroundImageUrlDescription')}</span
+                  >
+                </div>
+                <div class="input-with-actions">
+                  {#if $settings.backgroundImage !== defaultSettings.backgroundImage}
                     <button
-                      class="picker-btn"
-                      onclick={pickBackgroundImage}
-                      use:tooltip={$t('settings.general.browse')}
+                      class="undo-btn"
+                      onclick={() => {
+                        backgroundImageInput = defaultSettings.backgroundImage;
+                        handleBackgroundImageChange(defaultSettings.backgroundImage);
+                      }}
+                      use:tooltip={$t('settings.app.resetToDefault')}
                     >
-                      <Icon name="folder" size={16} />
+                      <Icon name="undo" size={16} />
                     </button>
-                  </div>
+                  {/if}
+                  <Input
+                    bind:value={backgroundImageInput}
+                    oninput={() => handleBackgroundImageChange(backgroundImageInput)}
+                    placeholder="https://... or C:\path\to\image.jpg"
+                  />
+                  <button
+                    class="picker-btn"
+                    onclick={pickBackgroundImage}
+                    use:tooltip={$t('settings.general.browse')}
+                  >
+                    <Icon name="folder" size={16} />
+                  </button>
                 </div>
-              {/if}
+              </div>
+            {/if}
 
-              {#if $settings.backgroundType === 'animated' || $settings.backgroundType === 'image'}
-                <div class="setting-sub-row">
-                  <div class="setting-label-group">
-                    <span class="setting-label">{$t('settings.app.backgroundBlur')}</span>
-                    <span class="setting-description"
-                      >{$t('settings.app.backgroundBlurDescription')}</span
-                    >
-                  </div>
-                  <div class="slider-with-value">
-                    <input
-                      type="range"
-                      class="blur-slider"
-                      min="0"
-                      max="50"
-                      step="1"
-                      value={$settings.backgroundBlur}
-                      oninput={(e) =>
-                        handleBackgroundBlurChange(parseInt((e.target as HTMLInputElement).value))}
-                    />
-                    <span class="slider-value">{$settings.backgroundBlur}px</span>
-                  </div>
+            {#if $settings.backgroundType === 'animated' || $settings.backgroundType === 'image'}
+              <div class="setting-sub-row">
+                <div class="setting-label-group">
+                  <span class="setting-label">{$t('settings.app.backgroundBlur')}</span>
+                  <span class="setting-description"
+                    >{$t('settings.app.backgroundBlurDescription')}</span
+                  >
                 </div>
-              {/if}
+                <div class="slider-with-value">
+                  <input
+                    type="range"
+                    class="blur-slider"
+                    min="0"
+                    max="50"
+                    step="1"
+                    value={$settings.backgroundBlur}
+                    oninput={(e) =>
+                      handleBackgroundBlurChange(parseInt((e.target as HTMLInputElement).value))}
+                  />
+                  <span class="slider-value">{$settings.backgroundBlur}px</span>
+                </div>
+              </div>
+            {/if}
 
-              {#if !isAndroid()}
-                <div class="setting-sub-row">
-                  <div class="setting-label-group">
-                    <span class="setting-label">{$t('settings.app.backgroundOpacity')}</span>
-                    <span class="setting-description"
-                      >{$t('settings.app.backgroundOpacityDescription')}</span
-                    >
-                  </div>
-                  <div class="slider-with-value">
-                    <input
-                      type="range"
-                      class="blur-slider"
-                      min="0"
-                      max="100"
-                      step="1"
-                      value={$settings.backgroundOpacity}
-                      oninput={(e) =>
-                        handleBackgroundOpacityChange(
-                          parseInt((e.target as HTMLInputElement).value)
-                        )}
-                    />
-                    <span class="slider-value">{$settings.backgroundOpacity}%</span>
-                  </div>
+            {#if !isAndroid()}
+              <div class="setting-sub-row">
+                <div class="setting-label-group">
+                  <span class="setting-label">{$t('settings.app.backgroundOpacity')}</span>
+                  <span class="setting-description"
+                    >{$t('settings.app.backgroundOpacityDescription')}</span
+                  >
                 </div>
-              {/if}
-            </div>
+                <div class="slider-with-value">
+                  <input
+                    type="range"
+                    class="blur-slider"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={$settings.backgroundOpacity}
+                    oninput={(e) =>
+                      handleBackgroundOpacityChange(
+                        parseInt((e.target as HTMLInputElement).value)
+                      )}
+                  />
+                  <span class="slider-value">{$settings.backgroundOpacity}%</span>
+                </div>
+              </div>
+            {/if}
           {/if}
 
           {#if matchesSearch('accentColor')}
-            <div class="setting-item">
-              <div class="setting-row">
-                <div class="setting-label-group">
-                  <span class="setting-label">{$t('settings.app.accentColor')}</span>
-                  <span class="setting-description"
-                    >{$t('settings.app.accentColorDescription')}</span
-                  >
-                </div>
-                <div class="setting-control-group">
-                  {#if $settings.accentColor !== defaultSettings.accentColor}
+            <SettingItem
+              title={$t('settings.app.accentColor')}
+              description={$t('settings.app.accentColorDescription')}
+              icon="pen_new"
+              value={$settings.accentColor}
+              defaultValue={defaultSettings.accentColor}
+              onReset={() => updateSetting('accentColor', defaultSettings.accentColor)}
+            >
+              <div class="color-picker-group">
+                <!-- Preset color swatches -->
+                <div class="color-presets">
+                  {#each ['#6366F1', '#8B5CF6', '#EC4899', '#EF4444', '#F97316', '#EAB308', '#22C55E', '#14B8A6', '#0EA5E9', '#3B82F6'] as color}
                     <button
-                      class="undo-btn"
-                      onclick={() => updateSetting('accentColor', defaultSettings.accentColor)}
-                      use:tooltip={$t('settings.app.resetToDefault')}
-                    >
-                      <Icon name="undo" size={18} />
-                    </button>
-                  {/if}
-                  <div class="color-picker-group">
-                    <!-- Preset color swatches -->
-                    <div class="color-presets">
-                      {#each ['#6366F1', '#8B5CF6', '#EC4899', '#EF4444', '#F97316', '#EAB308', '#22C55E', '#14B8A6', '#0EA5E9', '#3B82F6'] as color}
-                        <button
-                          type="button"
-                          class="color-swatch"
-                          class:active={$settings.accentColor.toUpperCase() === color.toUpperCase()}
-                          style="background: {color}"
-                          disabled={$settings.useSystemAccent}
-                          onclick={() => handleAccentColorChange(color)}
-                          use:tooltip={color}
-                        />
-                      {/each}
-                    </div>
-                    <input
-                      type="color"
-                      class="color-picker"
-                      value={$settings.accentColor}
+                      type="button"
+                      class="color-swatch"
+                      class:active={$settings.accentColor.toUpperCase() === color.toUpperCase()}
+                      style="background: {color}"
                       disabled={$settings.useSystemAccent}
-                      oninput={(e) => handleAccentColorChange((e.target as HTMLInputElement).value)}
-                    />
-                    <input
-                      type="text"
-                      class="color-text-input"
-                      value={$settings.accentColor}
-                      disabled={$settings.useSystemAccent}
-                      oninput={(e) =>
-                        handleAccentColorChange((e.currentTarget as HTMLInputElement).value)}
-                      placeholder="#6366F1"
-                    />
-                  </div>
+                      onclick={() => handleAccentColorChange(color)}
+                      title={color}
+                    ></button>
+                  {/each}
+                  <!-- RGB animated color option -->
+                  <button
+                    type="button"
+                    class="color-swatch rgb-swatch"
+                    class:active={$settings.accentColor === 'rgb'}
+                    disabled={$settings.useSystemAccent}
+                    onclick={() => handleAccentColorChange('rgb')}
+                    title={$t('settings.app.rgbColor')}
+                  ></button>
                 </div>
-              </div>
-
-              <div class="setting-sub-row">
-                <Checkbox
-                  checked={$settings.useSystemAccent}
-                  label={$t('settings.app.useSystemAccent')}
-                  onchange={handleUseSystemAccentChange}
+                <input
+                  type="color"
+                  class="color-picker"
+                  value={$settings.accentColor === 'rgb' ? '#6366F1' : $settings.accentColor}
+                  disabled={$settings.useSystemAccent || $settings.accentColor === 'rgb'}
+                  oninput={(e) => handleAccentColorChange((e.target as HTMLInputElement).value)}
                 />
-                <span class="setting-hint">{$t('settings.app.useSystemAccentDescription')}</span>
+                <input
+                  type="text"
+                  class="color-text-input"
+                  value={$settings.accentColor}
+                  disabled={$settings.useSystemAccent}
+                  oninput={(e) =>
+                    handleAccentColorChange((e.currentTarget as HTMLInputElement).value)}
+                  placeholder="#6366F1"
+                />
               </div>
+            </SettingItem>
+
+            <div class="setting-sub-row">
+              <Checkbox
+                checked={$settings.useSystemAccent}
+                label={$t('settings.app.useSystemAccent')}
+                onchange={handleUseSystemAccentChange}
+              />
+              <span class="setting-hint" style="margin-left: 0; padding-left: 0;">{$t('settings.app.useSystemAccentDescription')}</span>
             </div>
+          {/if}
+
+          {#if matchesSearch('accentStyle')}
+            <SettingItem
+              title={$t('settings.app.accentStyle')}
+              description={$t('settings.app.accentStyleDescription')}
+              icon="pen_new"
+              value={$settings.accentStyle}
+              defaultValue={defaultSettings.accentStyle}
+              onReset={() => updateSetting('accentStyle', defaultSettings.accentStyle)}
+            >
+              <div class="accent-style-options">
+                <button
+                  type="button"
+                  class="accent-style-btn"
+                  class:active={$settings.accentStyle === 'solid'}
+                  onclick={() => updateSetting('accentStyle', 'solid')}
+                >
+                  {$t('settings.app.accentStyleSolid')}
+                </button>
+                <button
+                  type="button"
+                  class="accent-style-btn"
+                  class:active={$settings.accentStyle === 'gradient'}
+                  onclick={() => updateSetting('accentStyle', 'gradient')}
+                >
+                  {$t('settings.app.accentStyleGradient')}
+                </button>
+                <button
+                  type="button"
+                  class="accent-style-btn"
+                  class:active={$settings.accentStyle === 'glow'}
+                  onclick={() => updateSetting('accentStyle', 'glow')}
+                >
+                  {$t('settings.app.accentStyleGlow')}
+                </button>
+              </div>
+            </SettingItem>
           {/if}
 
           {#if matchesSearch('disableAnimations')}
-            <div class="setting-item">
-              <div class="setting-with-undo">
-                <Checkbox
-                  checked={$settings.disableAnimations}
-                  label={$t('settings.app.disableAnimations')}
-                  onchange={handleDisableAnimationsChange}
-                />
-                <button
-                  class="undo-btn"
-                  class:hidden={$settings.disableAnimations === defaultSettings.disableAnimations}
-                  onclick={() =>
-                    updateSetting('disableAnimations', defaultSettings.disableAnimations)}
-                  use:tooltip={$t('settings.app.resetToDefault')}
-                >
-                  <Icon name="undo" size={18} />
-                </button>
-              </div>
-            </div>
+            <SettingItem
+              title={$t('settings.app.disableAnimations')}
+              icon="stop"
+              value={$settings.disableAnimations}
+              defaultValue={defaultSettings.disableAnimations}
+              onReset={() => updateSetting('disableAnimations', defaultSettings.disableAnimations)}
+            >
+              <Toggle
+                checked={$settings.disableAnimations}
+                onchange={handleDisableAnimationsChange}
+              />
+            </SettingItem>
           {/if}
 
           {#if matchesSearch('toastPosition')}
-            <div class="setting-item">
-              <div class="setting-row">
-                <div class="setting-label-group">
-                  <span class="setting-label">{$t('settings.notifications.toastPosition')}</span>
-                  <span class="setting-description"
-                    >{$t('settings.notifications.toastPositionDescription')}</span
-                  >
-                </div>
-                <div class="setting-controls">
-                  {#if $settings.toastPosition !== defaultSettings.toastPosition}
-                    <button
-                      class="undo-btn"
-                      onclick={() => updateSetting('toastPosition', defaultSettings.toastPosition)}
-                      use:tooltip={$t('settings.app.resetToDefault')}
-                    >
-                      <Icon name="undo" size={14} />
-                    </button>
-                  {/if}
-                  <div style="width: 180px;">
-                    <Select
-                      options={toastPositionOptions}
-                      value={$settings.toastPosition}
-                      onchange={handleToastPositionChange}
-                    />
-                  </div>
-                </div>
+            <SettingItem
+              title={$t('settings.notifications.toastPosition')}
+              description={$t('settings.notifications.toastPositionDescription')}
+              icon="chat"
+              value={$settings.toastPosition}
+              defaultValue={defaultSettings.toastPosition}
+              onReset={() => updateSetting('toastPosition', defaultSettings.toastPosition)}
+            >
+              <div style="width: 180px;">
+                <Select
+                  options={toastPositionOptions}
+                  value={$settings.toastPosition}
+                  onchange={handleToastPositionChange}
+                />
               </div>
-            </div>
+            </SettingItem>
           {/if}
 
           {#if matchesSearch('sizeUnit')}
-            <div class="setting-item">
-              <div class="setting-row">
-                <div class="setting-label-group">
-                  <span class="setting-label">{$t('settings.app.sizeUnit')}</span>
-                  <span class="setting-description">{$t('settings.app.sizeUnitDescription')}</span>
-                </div>
-                <div class="setting-control-group">
-                  <button
-                    class="undo-btn"
-                    class:hidden={$settings.sizeUnit === defaultSettings.sizeUnit}
-                    onclick={() => updateSetting('sizeUnit', defaultSettings.sizeUnit)}
-                    use:tooltip={$t('settings.app.resetToDefault')}
-                  >
-                    <Icon name="undo" size={18} />
-                  </button>
-                  <Select
-                    options={sizeUnitOptions}
-                    value={$settings.sizeUnit}
-                    onchange={handleSizeUnitChange}
-                  />
-                </div>
-              </div>
-            </div>
+            <SettingItem
+              title={$t('settings.app.sizeUnit')}
+              description={$t('settings.app.sizeUnitDescription')}
+              icon="weight"
+              value={$settings.sizeUnit}
+              defaultValue={defaultSettings.sizeUnit}
+              onReset={() => updateSetting('sizeUnit', defaultSettings.sizeUnit)}
+            >
+              <Select
+                options={sizeUnitOptions}
+                value={$settings.sizeUnit}
+                onchange={handleSizeUnitChange}
+              />
+            </SettingItem>
           {/if}
 
           {#if matchesSearch('showHistoryStats')}
-            <div class="setting-item">
-              <div class="setting-with-undo">
-                <Checkbox
-                  checked={$settings.showHistoryStats}
-                  label={$t('settings.app.showHistoryStats')}
-                  onchange={() => {
-                    updateSetting('showHistoryStats', !$settings.showHistoryStats);
-                  }}
-                />
-                <button
-                  class="undo-btn"
-                  class:hidden={$settings.showHistoryStats === defaultSettings.showHistoryStats}
-                  onclick={() =>
-                    updateSetting('showHistoryStats', defaultSettings.showHistoryStats)}
-                  use:tooltip={$t('settings.app.resetToDefault')}
-                >
-                  <Icon name="undo" size={18} />
-                </button>
-              </div>
-            </div>
+            <SettingItem
+              title={$t('settings.app.showHistoryStats')}
+              icon="history"
+              value={$settings.showHistoryStats}
+              defaultValue={defaultSettings.showHistoryStats}
+              onReset={() => updateSetting('showHistoryStats', defaultSettings.showHistoryStats)}
+            >
+              <Toggle
+                checked={$settings.showHistoryStats}
+                onchange={() => {
+                  updateSetting('showHistoryStats', !$settings.showHistoryStats);
+                }}
+              />
+            </SettingItem>
           {/if}
 
           {#if matchesSearch('thumbnailTheming')}
-            <div class="setting-item">
-              <div class="setting-with-undo">
-                <Checkbox
-                  checked={$settings.thumbnailTheming}
-                  label={$t('settings.app.thumbnailTheming')}
-                  onchange={() => {
-                    updateSetting('thumbnailTheming', !$settings.thumbnailTheming);
-                  }}
-                />
-                <button
-                  class="undo-btn"
-                  class:hidden={$settings.thumbnailTheming === defaultSettings.thumbnailTheming}
-                  onclick={() =>
-                    updateSetting('thumbnailTheming', defaultSettings.thumbnailTheming)}
-                  use:tooltip={$t('settings.app.resetToDefault')}
-                >
-                  <Icon name="undo" size={18} />
-                </button>
-              </div>
-              <span class="setting-description"
-                >{$t('settings.app.thumbnailThemingDescription')}</span
-              >
-            </div>
+            <SettingItem
+              title={$t('settings.app.thumbnailTheming')}
+              description={$t('settings.app.thumbnailThemingDescription')}
+              icon="pen_new"
+              value={$settings.thumbnailTheming}
+              defaultValue={defaultSettings.thumbnailTheming}
+              onReset={() => updateSetting('thumbnailTheming', defaultSettings.thumbnailTheming)}
+            >
+              <Toggle
+                checked={$settings.thumbnailTheming}
+                onchange={() => {
+                  updateSetting('thumbnailTheming', !$settings.thumbnailTheming);
+                }}
+              />
+            </SettingItem>
           {/if}
-        </section>
+        </SettingsBlock>
       {/if}
 
       <!-- Dependencies Section (desktop only - Android uses bundled youtubedl-android) -->
       {#if sectionHasMatches('deps') && onDesktop}
-        <section class="settings-section">
-          <h3 class="section-title">{$t('settings.deps.title')}</h3>
-
+        <SettingsBlock 
+          title={$t('settings.deps.title')} 
+          icon="package"
+        >
           {#if matchesSearch('ytdlp')}
-            <div class="setting-item">
-              <div class="dep-item">
-                <div class="dep-info">
-                  <span class="dep-name">yt-dlp</span>
+            <SettingItem
+              title="yt-dlp"
+              description={$t('settings.deps.ytdlpDescription')}
+            >
+              <div class="dep-item" style="width: 100%; display: flex; justify-content: space-between; align-items: center;">
+                <div class="dep-info" style="display: flex; align-items: center; gap: 8px;">
                   <span class="dep-badge required">{$t('settings.deps.required')}</span>
                   {#if $deps.checking === 'ytdlp'}
                     <span class="dep-status checking">{$t('settings.deps.checking')}</span>
@@ -2228,7 +2097,7 @@
                   {/if}
                 </div>
                 <div class="dep-actions">
-                  {#if $deps.installing === 'ytdlp'}
+                  {#if $deps.installingDeps.has('ytdlp')}
                     <button class="dep-btn" disabled>
                       <span class="btn-spinner"></span>
                       {$t('settings.deps.installing')}
@@ -2237,33 +2106,34 @@
                     <button class="dep-btn danger" onclick={() => deps.uninstallYtdlp()}>
                       {$t('settings.deps.uninstall')}
                     </button>
-                    <button class="dep-btn" onclick={() => deps.installYtdlp()}>
+                    <button class="dep-btn" onclick={() => installDepWithToast('ytdlp', () => deps.installYtdlp(), 'yt-dlp')}>
                       {$t('settings.deps.reinstall')}
                     </button>
                   {:else}
-                    <button class="dep-btn primary" onclick={() => deps.installYtdlp()}>
+                    <button class="dep-btn primary" onclick={() => installDepWithToast('ytdlp', () => deps.installYtdlp(), 'yt-dlp')}>
                       {$t('settings.deps.install')}
                     </button>
                   {/if}
                 </div>
               </div>
-              <p class="dep-description">{$t('settings.deps.ytdlpDescription')}</p>
-              {#if $deps.installing === 'ytdlp' && $deps.installProgress}
-                <div class="dep-progress">
+              {#if $deps.installingDeps.has('ytdlp') && $deps.installProgressMap.get('ytdlp')}
+                <div class="dep-progress" style="margin-top: 8px;">
                   <div
                     class="dep-progress-bar"
-                    style="width: {$deps.installProgress.progress}%"
+                    style="width: {$deps.installProgressMap.get('ytdlp')?.progress ?? 0}%"
                   ></div>
                 </div>
               {/if}
-            </div>
+            </SettingItem>
           {/if}
 
           <!-- ffmpeg -->
-          <div class="setting-item">
-            <div class="dep-item">
-              <div class="dep-info">
-                <span class="dep-name">ffmpeg</span>
+          <SettingItem
+            title="ffmpeg"
+            description={$t('settings.deps.ffmpegDescription')}
+          >
+            <div class="dep-item" style="width: 100%; display: flex; justify-content: space-between; align-items: center;">
+              <div class="dep-info" style="display: flex; align-items: center; gap: 8px;">
                 {#if $deps.checking === 'ffmpeg'}
                   <span class="dep-status checking">{$t('settings.deps.checking')}</span>
                 {:else if $deps.ffmpeg?.installed}
@@ -2273,7 +2143,7 @@
                 {/if}
               </div>
               <div class="dep-actions">
-                {#if $deps.installing === 'ffmpeg'}
+                {#if $deps.installingDeps.has('ffmpeg')}
                   <button class="dep-btn" disabled>
                     <span class="btn-spinner"></span>
                     {$t('settings.deps.installing')}
@@ -2282,32 +2152,33 @@
                   <button class="dep-btn danger" onclick={() => deps.uninstallFfmpeg()}>
                     {$t('settings.deps.uninstall')}
                   </button>
-                  <button class="dep-btn" onclick={() => deps.installFfmpeg()}>
+                  <button class="dep-btn" onclick={() => installDepWithToast('ffmpeg', () => deps.installFfmpeg(), 'ffmpeg')}>
                     {$t('settings.deps.reinstall')}
                   </button>
                 {:else}
-                  <button class="dep-btn primary" onclick={() => deps.installFfmpeg()}>
+                  <button class="dep-btn primary" onclick={() => installDepWithToast('ffmpeg', () => deps.installFfmpeg(), 'ffmpeg')}>
                     {$t('settings.deps.install')}
                   </button>
                 {/if}
               </div>
             </div>
-            <p class="dep-description">{$t('settings.deps.ffmpegDescription')}</p>
-            {#if $deps.installing === 'ffmpeg' && $deps.installProgress}
-              <div class="dep-progress">
+            {#if $deps.installingDeps.has('ffmpeg') && $deps.installProgressMap.get('ffmpeg')}
+              <div class="dep-progress" style="margin-top: 8px;">
                 <div
                   class="dep-progress-bar"
-                  style="width: {$deps.installProgress.progress}%"
+                  style="width: {$deps.installProgressMap.get('ffmpeg')?.progress ?? 0}%"
                 ></div>
               </div>
             {/if}
-          </div>
+          </SettingItem>
 
           <!-- aria2 -->
-          <div class="setting-item">
-            <div class="dep-item">
-              <div class="dep-info">
-                <span class="dep-name">aria2</span>
+          <SettingItem
+            title="aria2"
+            description={$t('settings.deps.aria2Description')}
+          >
+            <div class="dep-item" style="width: 100%; display: flex; justify-content: space-between; align-items: center;">
+              <div class="dep-info" style="display: flex; align-items: center; gap: 8px;">
                 {#if $deps.checking === 'aria2'}
                   <span class="dep-status checking">{$t('settings.deps.checking')}</span>
                 {:else if $deps.aria2?.installed}
@@ -2317,7 +2188,7 @@
                 {/if}
               </div>
               <div class="dep-actions">
-                {#if $deps.installing === 'aria2'}
+                {#if $deps.installingDeps.has('aria2')}
                   <button class="dep-btn" disabled>
                     <span class="btn-spinner"></span>
                     {$t('settings.deps.installing')}
@@ -2326,32 +2197,33 @@
                   <button class="dep-btn danger" onclick={() => deps.uninstallAria2()}>
                     {$t('settings.deps.uninstall')}
                   </button>
-                  <button class="dep-btn" onclick={() => deps.installAria2()}>
+                  <button class="dep-btn" onclick={() => installDepWithToast('aria2', () => deps.installAria2(), 'aria2')}>
                     {$t('settings.deps.reinstall')}
                   </button>
                 {:else}
-                  <button class="dep-btn primary" onclick={() => deps.installAria2()}>
+                  <button class="dep-btn primary" onclick={() => installDepWithToast('aria2', () => deps.installAria2(), 'aria2')}>
                     {$t('settings.deps.install')}
                   </button>
                 {/if}
               </div>
             </div>
-            <p class="dep-description">{$t('settings.deps.aria2Description')}</p>
-            {#if $deps.installing === 'aria2' && $deps.installProgress}
-              <div class="dep-progress">
+            {#if $deps.installingDeps.has('aria2') && $deps.installProgressMap.get('aria2')}
+              <div class="dep-progress" style="margin-top: 8px;">
                 <div
                   class="dep-progress-bar"
-                  style="width: {$deps.installProgress.progress}%"
+                  style="width: {$deps.installProgressMap.get('aria2')?.progress ?? 0}%"
                 ></div>
               </div>
             {/if}
-          </div>
+          </SettingItem>
 
           <!-- deno (JavaScript runtime for yt-dlp) -->
-          <div class="setting-item">
-            <div class="dep-item">
-              <div class="dep-info">
-                <span class="dep-name">deno</span>
+          <SettingItem
+            title="deno"
+            description={$t('settings.deps.denoDescription')}
+          >
+            <div class="dep-item" style="width: 100%; display: flex; justify-content: space-between; align-items: center;">
+              <div class="dep-info" style="display: flex; align-items: center; gap: 8px;">
                 {#if $deps.checking === 'deno'}
                   <span class="dep-status checking">{$t('settings.deps.checking')}</span>
                 {:else if $deps.deno?.installed}
@@ -2361,7 +2233,7 @@
                 {/if}
               </div>
               <div class="dep-actions">
-                {#if $deps.installing === 'deno'}
+                {#if $deps.installingDeps.has('deno')}
                   <button class="dep-btn" disabled>
                     <span class="btn-spinner"></span>
                     {$t('settings.deps.installing')}
@@ -2370,32 +2242,33 @@
                   <button class="dep-btn danger" onclick={() => deps.uninstallDeno()}>
                     {$t('settings.deps.uninstall')}
                   </button>
-                  <button class="dep-btn" onclick={() => deps.installDeno()}>
+                  <button class="dep-btn" onclick={() => installDepWithToast('deno', () => deps.installDeno(), 'deno')}>
                     {$t('settings.deps.reinstall')}
                   </button>
                 {:else}
-                  <button class="dep-btn primary" onclick={() => deps.installDeno()}>
+                  <button class="dep-btn primary" onclick={() => installDepWithToast('deno', () => deps.installDeno(), 'deno')}>
                     {$t('settings.deps.install')}
                   </button>
                 {/if}
               </div>
             </div>
-            <p class="dep-description">{$t('settings.deps.denoDescription')}</p>
-            {#if $deps.installing === 'deno' && $deps.installProgress}
-              <div class="dep-progress">
+            {#if $deps.installingDeps.has('deno') && $deps.installProgressMap.get('deno')}
+              <div class="dep-progress" style="margin-top: 8px;">
                 <div
                   class="dep-progress-bar"
-                  style="width: {$deps.installProgress.progress}%"
+                  style="width: {$deps.installProgressMap.get('deno')?.progress ?? 0}%"
                 ></div>
               </div>
             {/if}
-          </div>
+          </SettingItem>
 
           <!-- quickjs (Lightweight JavaScript runtime for yt-dlp PO tokens) -->
-          <div class="setting-item">
-            <div class="dep-item">
-              <div class="dep-info">
-                <span class="dep-name">quickjs</span>
+          <SettingItem
+            title="quickjs"
+            description={$t('settings.deps.quickjsDescription')}
+          >
+            <div class="dep-item" style="width: 100%; display: flex; justify-content: space-between; align-items: center;">
+              <div class="dep-info" style="display: flex; align-items: center; gap: 8px;">
                 {#if $deps.checking === 'quickjs'}
                   <span class="dep-status checking">{$t('settings.deps.checking')}</span>
                 {:else if $deps.quickjs?.installed}
@@ -2414,127 +2287,149 @@
                   <button class="dep-btn danger" onclick={() => deps.uninstallQuickjs()}>
                     {$t('settings.deps.uninstall')}
                   </button>
-                  <button class="dep-btn" onclick={() => deps.installQuickjs()}>
+                  <button class="dep-btn" onclick={() => installDepWithToast('quickjs', () => deps.installQuickjs(), 'quickjs')}>
                     {$t('settings.deps.reinstall')}
                   </button>
                 {:else}
-                  <button class="dep-btn primary" onclick={() => deps.installQuickjs()}>
+                  <button class="dep-btn primary" onclick={() => installDepWithToast('quickjs', () => deps.installQuickjs(), 'quickjs')}>
                     {$t('settings.deps.install')}
                   </button>
                 {/if}
               </div>
             </div>
-            <p class="dep-description">{$t('settings.deps.quickjsDescription')}</p>
             {#if $deps.installingDeps.has('quickjs') && $deps.installProgressMap.get('quickjs')}
-              <div class="dep-progress">
+              <div class="dep-progress" style="margin-top: 8px;">
                 <div
                   class="dep-progress-bar"
                   style="width: {$deps.installProgressMap.get('quickjs')?.progress ?? 0}%"
                 ></div>
               </div>
             {/if}
-          </div>
+          </SettingItem>
+
+          <!-- lux -->
+          <SettingItem
+            title="lux"
+            description={$t('settings.deps.luxDescription')}
+          >
+            <div class="dep-item" style="width: 100%; display: flex; justify-content: space-between; align-items: center;">
+              <div class="dep-info" style="display: flex; align-items: center; gap: 8px;">
+                <span class="dep-badge optional">{$t('settings.deps.optional')}</span>
+                {#if $deps.checking === 'lux'}
+                  <span class="dep-status checking">{$t('settings.deps.checking')}</span>
+                {:else if $deps.lux?.installed}
+                  <span class="dep-status installed">v{$deps.lux.version}</span>
+                {:else}
+                  <span class="dep-status not-installed">{$t('settings.deps.notInstalled')}</span>
+                {/if}
+              </div>
+              <div class="dep-actions">
+                {#if $deps.installingDeps.has('lux')}
+                  <button class="dep-btn" disabled>
+                    <span class="btn-spinner"></span>
+                    {$t('settings.deps.installing')}
+                  </button>
+                {:else if $deps.lux?.installed}
+                  <button class="dep-btn danger" onclick={() => deps.uninstallLux()}>
+                    {$t('settings.deps.uninstall')}
+                  </button>
+                  <button class="dep-btn" onclick={() => installDepWithToast('lux', () => deps.installLux(), 'lux')}>
+                    {$t('settings.deps.reinstall')}
+                  </button>
+                {:else}
+                  <button class="dep-btn primary" onclick={() => installDepWithToast('lux', () => deps.installLux(), 'lux')}>
+                    {$t('settings.deps.install')}
+                  </button>
+                {/if}
+              </div>
+            </div>
+            {#if $deps.installingDeps.has('lux') && $deps.installProgressMap.get('lux')}
+              <div class="dep-progress" style="margin-top: 8px;">
+                <div
+                  class="dep-progress-bar"
+                  style="width: {$deps.installProgressMap.get('lux')?.progress ?? 0}%"
+                ></div>
+              </div>
+            {/if}
+          </SettingItem>
 
           {#if $deps.error}
             <p class="dep-error">{$deps.error}</p>
           {/if}
-        </section>
+        </SettingsBlock>
       {/if}
 
       <!-- Data Section -->
       {#if !searchQuery.trim() || 'data reset clear export import история сброс очистить экспорт импорт'.includes(searchQuery.toLowerCase())}
-        <section class="settings-section">
-          <h3 class="section-title">{$t('settings.data.title')}</h3>
-
+        <SettingsBlock 
+          title={$t('settings.data.title')} 
+          icon="folder"
+        >
           <!-- Reset Settings -->
-          <div class="setting-item">
-            <div class="data-item">
-              <div class="data-info">
-                <span class="data-label">{$t('settings.data.resetSettings')}</span>
-                <span class="data-description">{$t('settings.data.resetSettingsDescription')}</span>
-              </div>
-              <button class="data-btn danger" onclick={() => (showResetModal = true)}>
-                <Icon name="undo" size={16} />
-                {$t('settings.data.resetSettings')}
-              </button>
-            </div>
-          </div>
-
-          <!-- Restart Onboarding -->
-          <div class="setting-item">
-            <div class="data-item">
-              <div class="data-info">
-                <span class="data-label">{$t('onboarding.restart')}</span>
-                <span class="data-description">{$t('onboarding.welcome.description')}</span>
-              </div>
-              <button class="data-btn" onclick={handleRestartOnboarding}>
-                <Icon name="settings" size={16} />
-                {$t('onboarding.restart')}
-              </button>
-            </div>
-          </div>
+          <SettingItem
+            title={$t('settings.data.resetSettings')}
+            description={$t('settings.data.resetSettingsDescription')}
+            icon="undo"
+          >
+            <button class="data-btn danger" onclick={() => (showResetModal = true)}>
+              <Icon name="undo" size={16} />
+              {$t('settings.data.resetSettings')}
+            </button>
+          </SettingItem>
 
           <!-- Clear History -->
-          <div class="setting-item">
-            <div class="data-item">
-              <div class="data-info">
-                <span class="data-label">{$t('settings.data.clearHistory')}</span>
-                <span class="data-description">{$t('settings.data.clearHistoryDescription')}</span>
-              </div>
-              <button class="data-btn danger" onclick={() => (showClearHistoryModal = true)}>
-                <Icon name="trash" size={16} />
-                {$t('settings.data.clearHistory')}
-              </button>
-            </div>
-          </div>
+          <SettingItem
+            title={$t('settings.data.clearHistory')}
+            description={$t('settings.data.clearHistoryDescription')}
+            icon="trash"
+          >
+            <button class="data-btn danger" onclick={() => (showClearHistoryModal = true)}>
+              <Icon name="trash" size={16} />
+              {$t('settings.data.clearHistory')}
+            </button>
+          </SettingItem>
 
           <!-- Clear Cache -->
           {#if onDesktop}
-            <div class="setting-item">
-              <div class="data-item">
-                <div class="data-info">
-                  <span class="data-label">{$t('settings.data.clearCache')}</span>
-                  <span class="data-description">{$t('settings.data.clearCacheDescription')}</span>
-                </div>
-                <button class="data-btn" onclick={handleClearCache} disabled={clearingCache}>
-                  {#if clearingCache}
-                    <span class="btn-spinner"></span>
-                  {:else}
-                    <Icon name="trash" size={16} />
-                  {/if}
-                  {$t('settings.data.clearCache')}
-                </button>
-              </div>
-            </div>
+            <SettingItem
+              title={$t('settings.data.clearCache')}
+              description={$t('settings.data.clearCacheDescription')}
+              icon="trash"
+            >
+              <button class="data-btn" onclick={handleClearCache} disabled={clearingCache}>
+                {#if clearingCache}
+                  <span class="btn-spinner"></span>
+                {:else}
+                  <Icon name="trash" size={16} />
+                {/if}
+                {$t('settings.data.clearCache')}
+              </button>
+            </SettingItem>
           {/if}
 
           <!-- Export History -->
-          <div class="setting-item">
-            <div class="data-item">
-              <div class="data-info">
-                <span class="data-label">{$t('settings.data.exportHistory')}</span>
-                <span class="data-description">{$t('settings.data.exportHistoryDescription')}</span>
-              </div>
-              <button class="data-btn" onclick={handleExportHistory}>
-                <Icon name="download" size={16} />
-                {$t('settings.data.exportHistory')}
-              </button>
-            </div>
-          </div>
+          <SettingItem
+            title={$t('settings.data.exportHistory')}
+            description={$t('settings.data.exportHistoryDescription')}
+            icon="download"
+          >
+            <button class="data-btn" onclick={handleExportHistory}>
+              <Icon name="download" size={16} />
+              {$t('settings.data.exportHistory')}
+            </button>
+          </SettingItem>
 
           <!-- Import History -->
-          <div class="setting-item">
-            <div class="data-item">
-              <div class="data-info">
-                <span class="data-label">{$t('settings.data.importHistory')}</span>
-                <span class="data-description">{$t('settings.data.importHistoryDescription')}</span>
-              </div>
-              <button class="data-btn" onclick={handleImportHistory}>
-                <Icon name="move_to_folder" size={16} />
-                {$t('settings.data.importHistory')}
-              </button>
-            </div>
-          </div>
+          <SettingItem
+            title={$t('settings.data.importHistory')}
+            description={$t('settings.data.importHistoryDescription')}
+            icon="move_to_folder"
+          >
+            <button class="data-btn" onclick={handleImportHistory}>
+              <Icon name="move_to_folder" size={16} />
+              {$t('settings.data.importHistory')}
+            </button>
+          </SettingItem>
 
           <!-- Import Message -->
           {#if importMessage}
@@ -2546,7 +2441,7 @@
               {importMessage.text}
             </p>
           {/if}
-        </section>
+        </SettingsBlock>
       {/if}
 
       <!-- No results -->
@@ -2643,6 +2538,13 @@
     font-size: 14px;
   }
 
+  .settings-content {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    margin-top: 24px;
+  }
+
   /* Search Bar */
   .search-bar {
     display: flex;
@@ -2673,35 +2575,36 @@
     color: rgba(255, 255, 255, 0.4);
   }
 
-  .settings-content {
-    display: flex;
-    flex-direction: column;
-    gap: 32px;
-    margin-top: 24px;
-  }
-
-  .settings-section {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .section-title {
-    font-size: 17px;
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.9);
-    margin-bottom: 4px;
-  }
-
-  .setting-item {
-    padding-left: 4px;
-  }
-
-  .setting-row {
+  /* Sub-rows for nested settings */
+  .setting-sub-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 16px;
+    padding: 4px 0 4px 36px;
+  }
+
+  .setting-sub-row.update-available {
+    background: rgba(34, 197, 94, 0.1);
+    padding: 12px 16px 12px 36px;
+    border-radius: 8px;
+    margin-top: 4px;
+  }
+
+  .setting-label-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .setting-label {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.75);
+  }
+
+  .setting-description {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.45);
   }
 
   .setting-controls {
@@ -2710,20 +2613,57 @@
     gap: 8px;
   }
 
-  .setting-label {
-    color: rgba(255, 255, 255, 0.85);
-    font-size: 14px;
-    font-weight: 400;
+  .setting-hint {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.45);
+    padding: 2px 0 6px 36px;
+    line-height: 1.4;
   }
 
-  .setting-with-info,
-  .setting-with-undo {
+  /* Reset padding for hints inside SettingItem */
+  :global(.setting-item) .setting-hint {
+    padding: 0;
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  .setting-control-group {
     display: flex;
     align-items: center;
     gap: 6px;
   }
 
-  .info-btn,
+  .input-with-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 300px;
+  }
+
+  .input-with-actions :global(.input-wrapper) {
+    flex: 1;
+  }
+
+  .picker-btn {
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    color: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+
+  .picker-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.2);
+    color: white;
+  }
+
   .undo-btn {
     background: transparent;
     border: none;
@@ -2737,18 +2677,6 @@
     flex-shrink: 0;
     width: 26px;
     height: 26px;
-  }
-
-  .info-btn {
-    color: rgba(255, 255, 255, 0.5);
-  }
-
-  .info-btn:hover {
-    color: rgba(255, 255, 255, 0.8);
-    background: rgba(255, 255, 255, 0.08);
-  }
-
-  .undo-btn {
     color: rgba(99, 102, 241, 0.7);
   }
 
@@ -2757,62 +2685,163 @@
     background: rgba(99, 102, 241, 0.15);
   }
 
-  .undo-btn.hidden {
-    visibility: hidden;
-    pointer-events: none;
-  }
-
-  .setting-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    width: 100%;
-  }
-
-  .setting-label-group {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .setting-label {
-    font-size: 14px;
-    color: rgba(255, 255, 255, 0.9);
-  }
-
-  .setting-description {
-    font-size: 12px;
-    color: rgba(255, 255, 255, 0.5);
-  }
-
-  .setting-control-group {
+  .path-btn {
     display: flex;
     align-items: center;
     gap: 6px;
+    padding: 10px 14px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.15s;
+    max-width: 280px;
   }
 
-  .setting-sub-row {
+  .path-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.2);
+    color: white;
+  }
+
+  .path-text {
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 220px;
+  }
+
+  .color-picker-group {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    margin-top: 12px;
-    padding-left: 16px;
-    border-left: 2px solid var(--accent-alpha, rgba(99, 102, 241, 0.3));
+    gap: 8px;
+    flex-wrap: wrap;
   }
 
-  .setting-sub-row.update-available {
-    background: rgba(34, 197, 94, 0.1);
-    border-left-color: #22c55e;
-    padding: 12px 16px;
+  .color-presets {
+    display: flex;
+    gap: 4px;
+  }
+
+  .color-swatch {
+    width: 24px;
+    height: 24px;
+    border: 2px solid transparent;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    padding: 0;
+  }
+
+  .color-swatch:hover:not(:disabled) {
+    transform: scale(1.1);
+  }
+
+  .color-swatch.active {
+    border-color: white;
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.3);
+  }
+
+  .color-swatch:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* RGB animated swatch */
+  .color-swatch.rgb-swatch {
+    background: linear-gradient(
+      90deg,
+      #ff0000 0%,
+      #ff8000 14%,
+      #ffff00 28%,
+      #00ff00 42%,
+      #00ffff 56%,
+      #0000ff 70%,
+      #8000ff 84%,
+      #ff0080 100%
+    );
+    background-size: 200% 100%;
+    animation: rgb-shift 3s linear infinite;
+  }
+
+  @keyframes rgb-shift {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 200% 50%; }
+  }
+
+  /* Accent style buttons */
+  .accent-style-options {
+    display: flex;
+    gap: 8px;
+  }
+
+  .accent-style-btn {
+    padding: 8px 16px;
+    font-size: 12px;
+    font-weight: 500;
+    border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 8px;
+    background: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-family: inherit;
   }
 
-  .setting-sub-row.update-progress {
-    padding: 0 16px 12px 16px;
-    margin-top: -8px;
-    border-left-color: #22c55e;
+  .accent-style-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+  }
+
+  .accent-style-btn.active {
+    background: var(--accent, #6366f1);
+    border-color: var(--accent, #6366f1);
+    color: white;
+  }
+
+  .color-picker {
+    width: 40px;
+    height: 32px;
+    padding: 2px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    cursor: pointer;
+  }
+
+  .color-picker::-webkit-color-swatch-wrapper {
+    padding: 2px;
+  }
+
+  .color-picker::-webkit-color-swatch {
+    border: none;
+    border-radius: 4px;
+  }
+
+  .color-picker:disabled,
+  .color-text-input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .color-text-input {
+    width: 90px;
+    padding: 6px 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    color: white;
+    outline: none;
+    transition: all 0.2s;
+  }
+
+  .color-text-input:focus {
+    border-color: rgba(99, 102, 241, 0.5);
   }
 
   .update-progress-bar {
@@ -2885,147 +2914,7 @@
     border-radius: 2px;
   }
 
-  .setting-hint {
-    font-size: 12px;
-    color: rgba(255, 255, 255, 0.5);
-    margin-left: 8px;
-  }
 
-  .input-with-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 300px;
-  }
-
-  .input-with-actions :global(.input-wrapper) {
-    flex: 1;
-  }
-
-  .picker-btn {
-    width: 32px;
-    height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 6px;
-    color: rgba(255, 255, 255, 0.7);
-    cursor: pointer;
-    transition: all 0.15s;
-    flex-shrink: 0;
-  }
-
-  .picker-btn:hover {
-    background: rgba(255, 255, 255, 0.12);
-    color: white;
-  }
-
-  .path-btn {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 14px;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 8px;
-    color: rgba(255, 255, 255, 0.8);
-    cursor: pointer;
-    transition: all 0.15s;
-    max-width: 280px;
-  }
-
-  .path-btn:hover {
-    background: rgba(255, 255, 255, 0.12);
-    color: white;
-  }
-
-  .path-text {
-    font-size: 13px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 220px;
-  }
-
-  .color-picker-group {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-
-  .color-presets {
-    display: flex;
-    gap: 4px;
-  }
-
-  .color-swatch {
-    width: 24px;
-    height: 24px;
-    border: 2px solid transparent;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: all 0.15s;
-    padding: 0;
-  }
-
-  .color-swatch:hover:not(:disabled) {
-    transform: scale(1.1);
-  }
-
-  .color-swatch.active {
-    border-color: white;
-    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.3);
-  }
-
-  .color-swatch:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-
-  .color-picker {
-    width: 40px;
-    height: 32px;
-    padding: 2px;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 6px;
-    background: rgba(255, 255, 255, 0.05);
-    cursor: pointer;
-  }
-
-  .color-picker::-webkit-color-swatch-wrapper {
-    padding: 2px;
-  }
-
-  .color-picker::-webkit-color-swatch {
-    border: none;
-    border-radius: 4px;
-  }
-
-  .color-picker:disabled,
-  .color-text-input:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .color-text-input {
-    width: 90px;
-    padding: 6px 10px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 6px;
-    color: white;
-    outline: none;
-    transition: all 0.2s;
-  }
-
-  .color-text-input:focus {
-    border-color: rgba(99, 102, 241, 0.5);
-  }
 
   .slider-with-value {
     display: flex;
@@ -3121,11 +3010,6 @@
     gap: 12px;
   }
 
-  .dep-name {
-    font-weight: 500;
-    color: rgba(255, 255, 255, 0.9);
-  }
-
   .dep-badge {
     font-size: 11px;
     padding: 2px 6px;
@@ -3150,12 +3034,7 @@
     background: rgba(59, 130, 246, 0.15);
   }
 
-  .dep-description {
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.5);
-    margin-top: 4px;
-    margin-left: 0;
-  }
+
 
   .dep-status {
     font-size: 13px;
@@ -3187,11 +3066,11 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 12px;
+    padding: 10px 14px;
     font-size: 13px;
     font-weight: 500;
     background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 6px;
     color: rgba(255, 255, 255, 0.8);
     cursor: pointer;
@@ -3200,6 +3079,7 @@
 
   .dep-btn:hover:not(:disabled) {
     background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.2);
   }
 
   .dep-btn:disabled {
@@ -3262,31 +3142,7 @@
     color: rgba(239, 68, 68, 0.9);
   }
 
-  /* Data Section */
-  .data-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 12px 0;
-  }
 
-  .data-info {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .data-label {
-    font-size: 14px;
-    font-weight: 500;
-    color: rgba(255, 255, 255, 0.9);
-  }
-
-  .data-description {
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.5);
-  }
 
   .data-btn {
     display: flex;
@@ -3478,7 +3334,6 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
-    padding-top: 4px;
   }
 
   .proxy-error .error-text {
@@ -3530,37 +3385,12 @@
     color: rgba(251, 191, 36, 0.9);
   }
 
+
+
   /* Mobile responsive styles */
   @media (max-width: 700px) {
-    .page {
-      padding: 0 12px 16px 12px;
-    }
-
     h1 {
       font-size: 24px;
-    }
-
-    .setting-row {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 12px;
-    }
-
-    .setting-controls {
-      width: 100%;
-    }
-
-    .setting-controls > div[style*='width'] {
-      width: 100% !important;
-    }
-
-    .setting-control-group {
-      width: 100%;
-      flex-wrap: wrap;
-    }
-
-    .setting-control-group :global(.select-trigger) {
-      flex: 1;
     }
 
     .slider-with-value {
@@ -3568,34 +3398,21 @@
       width: 100%;
     }
 
-    .input-with-actions {
-      min-width: unset;
-      width: 100%;
-    }
-
+    /* Sub-rows on mobile - stack vertically */
     .setting-sub-row {
       flex-direction: column;
       align-items: flex-start;
-      gap: 10px;
+      gap: 8px;
+      padding-left: 16px;
     }
 
-    .color-picker-group {
-      width: 100%;
-      flex-wrap: wrap;
-    }
-
-    .color-presets {
-      flex-wrap: wrap;
-      justify-content: flex-start;
-    }
-
-    .path-btn {
-      max-width: 100%;
+    .setting-sub-row .setting-controls {
       width: 100%;
     }
 
-    .path-text {
-      max-width: calc(100% - 40px);
+    /* Hints on mobile */
+    .setting-hint {
+      padding-left: 16px;
     }
 
     /* Dependency items on mobile */
@@ -3612,18 +3429,6 @@
     .dep-actions {
       width: 100%;
       justify-content: flex-start;
-    }
-
-    /* Data section on mobile */
-    .data-item {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 12px;
-    }
-
-    .data-btn {
-      width: 100%;
-      justify-content: center;
     }
 
     /* Proxy section on mobile */

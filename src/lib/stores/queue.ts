@@ -20,7 +20,9 @@ import {
   getVideoInfoOnAndroid,
   waitForAndroidYtDlp,
   type DownloadProgress as AndroidProgress,
+  type AndroidDownloadSettings,
 } from '$lib/utils/android';
+import { detectBackendForUrl, isLuxPreferred } from '$lib/utils/backend-detection';
 
 export type DownloadStatus =
   | 'pending'
@@ -32,6 +34,8 @@ export type DownloadStatus =
   | 'failed';
 
 export type QueueItemSource = 'ytdlp' | 'file';
+
+export type ProcessorType = 'ytdlp' | 'lux';
 
 export interface QueueItem {
   id: string;
@@ -61,6 +65,7 @@ export interface QueueItem {
   mimeType?: string;
   totalBytes?: number;
   downloadedBytes?: number;
+  processor: ProcessorType;
 }
 
 export interface PrefetchedInfo {
@@ -76,13 +81,17 @@ export interface DownloadOptions {
   audioQuality: string;
   convertToMp4: boolean;
   remux: boolean;
-  useHLS: boolean;
   clearMetadata: boolean;
   dontShowInHistory: boolean;
   useAria2: boolean;
   ignoreMixes: boolean;
   cookiesFromBrowser: string;
   customCookies: string;
+  sponsorBlock: boolean;
+  chapters: boolean;
+  embedSubtitles: boolean;
+  subtitleLanguages: string;
+  embedThumbnail: boolean;
   prefetchedInfo?: PrefetchedInfo;
 }
 
@@ -167,8 +176,7 @@ function createQueueStore() {
 
   const cancelledIds = new Set<string>();
 
-  // Aggressive cleanup of orphaned Map entries (every 30 seconds)
-  const CLEANUP_INTERVAL_MS = 30 * 1000;
+  const CLEANUP_INTERVAL_MS = 5 * 1000;
   let cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
   function cleanupMaps() {
@@ -267,8 +275,36 @@ function createQueueStore() {
 
     logs.debug('queue', 'Setting up download progress listener');
 
+    const progressThrottleMap = new Map<string, number>();
+    const PROGRESS_THROTTLE_MS = 200;
+
     unlisten = await listen<{ url: string; message: string }>('download-progress', (event) => {
       const { url, message } = event.payload;
+      
+      const now = Date.now();
+      const lastUpdate = progressThrottleMap.get(url) || 0;
+      const isImportantMessage = message.includes('100%') || 
+                                  message.includes('Destination') ||
+                                  message.includes('[Merger]') ||
+                                  message.includes('[ffmpeg]') ||
+                                  message.includes('Deleting') ||
+                                  message.includes('ERROR') ||
+                                  message.includes('WARNING');
+      
+      if (!isImportantMessage && (now - lastUpdate) < PROGRESS_THROTTLE_MS) {
+        return; // Skip this update to reduce memory pressure
+      }
+      
+      progressThrottleMap.set(url, now);
+      
+      if (progressThrottleMap.size > 100) {
+        const activeUrls = get({ subscribe }).items.map(i => i.url);
+        for (const [throttleUrl] of progressThrottleMap) {
+          if (!activeUrls.includes(throttleUrl)) {
+            progressThrottleMap.delete(throttleUrl);
+          }
+        }
+      }
 
       logs.trace('progress', `[${url.slice(0, 50)}...] ${message}`);
       let statusMessage = '';
@@ -325,17 +361,71 @@ function createQueueStore() {
           : translate('downloads.status.downloading');
       }
 
-      const match = message.match(/^\s+(\d+\.?\d*)%\s+(\S*)\s*(.*)/);
+      let match = message.match(/^\s+(\d+\.?\d*)%\s+(\S*)\s*(.*)/);
+      let speed = '';
+      let eta = '';
+      let rawProgress = -1;
+
       if (match && !message.includes('[debug]') && !message.includes('[info]')) {
-        const rawProgress = parseFloat(match[1]);
-
-        if (rawProgress < 0 || rawProgress > 100) {
-          return;
+        rawProgress = parseFloat(match[1]);
+        speed = match[2] || '';
+        eta = match[3] || '';
+      } else {
+        const aria2TrailingMatch = message.match(/\[#\w+[^\]]*\](\d+\.?\d*)%\s+(\S+)\s*(.*)/);
+        const aria2InlineMatch = message.match(/\[#\w+\s+[\d.]+\w+\/[\d.]+\w+\((\d+)%\)\s*CN:\d+\s+DL:([\d.]+\w+)(?:\s+ETA:(\S+))?\]/);
+        const aria2Match = aria2TrailingMatch || aria2InlineMatch;
+        if (aria2Match) {
+          rawProgress = parseFloat(aria2Match[1]);
+          speed = aria2Match[2] ? (aria2Match[2].replace(/^DL:/, '') + '/s') : '';
+          const etaRaw = aria2Match[3] || '';
+          eta = (etaRaw === 'NA' || etaRaw === '') ? '' : etaRaw.replace(/^ETA:/, '');
+          if (!statusMessage) {
+            const state = get({ subscribe });
+            const item = state.items.find((i) => i.url === url);
+            const isAudio = item?.options?.downloadMode === 'audio';
+            statusMessage = isAudio
+              ? translate('downloads.status.downloadingAudio')
+              : translate('downloads.status.downloading');
+          }
+        } else {
+          const luxMatch = message.match(
+            /[\d.]+\s*\w*\s*\/\s*[\d.]+\s*\w*\s*\[.*?\]\s*([\d.]+)%\s*([\d.]+\s*\w+\/s)?\s*(\d+m\d+s)?/
+          );
+          if (luxMatch) {
+            rawProgress = parseFloat(luxMatch[1]);
+            speed = luxMatch[2]?.replace(/\s+/g, '') || '';
+            eta = luxMatch[3]?.replace(/(\d+)m(\d+)s/, '$1:$2') || '';
+            if (!statusMessage) {
+              const state = get({ subscribe });
+              const item = state.items.find((i) => i.url === url);
+              const isAudio = item?.options?.downloadMode === 'audio';
+              statusMessage = isAudio
+                ? translate('downloads.status.downloadingAudio')
+                : translate('downloads.status.downloading');
+            }
+          }
         }
+      }
 
-        let speed = match[2] || '';
-        let eta = match[3] || '';
+      if (message.includes('Merging video parts')) {
+        statusMessage = translate('downloads.status.merging');
+        update((state) => ({
+          ...state,
+          items: state.items.map((item) =>
+            item.url === url
+              ? {
+                  ...item,
+                  status: 'processing' as DownloadStatus,
+                  statusMessage,
+                  progress: 95,
+                }
+              : item
+          ),
+        }));
+        return;
+      }
 
+      if (rawProgress >= 0 && rawProgress <= 100) {
         if (
           speed.toLowerCase() === 'na' ||
           speed.toLowerCase() === 'unknown' ||
@@ -531,14 +621,25 @@ function createQueueStore() {
       const currentSettings = getSettings();
       const proxyConfig = getProxyConfig();
 
+      // Bypass proxy for file downloads if setting is enabled
+      const effectiveProxyConfig = currentSettings.bypassProxyForDownloads 
+        ? { mode: 'none', customUrl: '', retryWithoutProxy: false }
+        : proxyConfig;
+
+      logs.info('queue', `Invoking download_file command for ${pendingItem.title}`);
+
       const result = await invoke<string>('download_file', {
         url: url,
         filename: pendingItem.title,
         downloadPath: currentSettings.downloadPath || '',
-        proxyConfig: proxyConfig,
+        proxyConfig: effectiveProxyConfig,
         connections: currentSettings.aria2Connections,
+        splits: currentSettings.aria2Splits,
+        minSplitSize: currentSettings.aria2MinSplitSize,
         speedLimit: currentSettings.downloadSpeedLimit,
       });
+
+      logs.info('queue', `download_file returned: ${result}`);
 
       const filePath = result;
       const extension = filePath.split('.').pop()?.toLowerCase() || pendingItem.extension;
@@ -553,6 +654,12 @@ function createQueueStore() {
 
       logs.info('queue', `File download completed: ${filePath}`);
 
+      // Check if the file is an image - use the file itself as thumbnail
+      const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'ico'];
+      const isImage = imageExtensions.includes(extension.toLowerCase());
+      const thumbnail = isImage ? filePath : '';
+      const fileType = isImage ? 'image' as const : 'file' as const;
+
       update((state) => {
         const newItems = state.items.map((item) =>
           item.id === itemId
@@ -563,6 +670,8 @@ function createQueueStore() {
                 filePath,
                 extension,
                 filesize,
+                thumbnail,
+                type: fileType,
               }
             : item
         );
@@ -578,16 +687,16 @@ function createQueueStore() {
         };
       });
 
-      history.add({
+      await history.add({
         url: url,
         title: pendingItem.title || 'Downloaded file',
         author: new URL(url).hostname,
-        thumbnail: '',
+        thumbnail: thumbnail,
         extension: extension,
         size: filesize,
         duration: 0,
         filePath: filePath,
-        type: 'file' as const,
+        type: fileType,
       });
 
       sendDownloadNotification(
@@ -679,13 +788,17 @@ function createQueueStore() {
     try {
       const hasPrefetchedInfo = pendingItem.options?.prefetchedInfo?.title;
       if (!hasPrefetchedInfo) {
-        const infoPromise = fetchVideoInfo(
-          itemId,
-          url,
-          pendingItem.options?.cookiesFromBrowser,
-          pendingItem.options?.customCookies
-        );
-        videoInfoPromises.set(itemId, infoPromise);
+        logs.debug('queue', `Fetching video info before download for: ${url.slice(0, 50)}...`);
+        try {
+          await fetchVideoInfo(
+            itemId,
+            url,
+            pendingItem.options?.cookiesFromBrowser,
+            pendingItem.options?.customCookies
+          );
+        } catch (infoError) {
+          logs.warn('queue', `Failed to fetch video info (continuing with download): ${infoError}`);
+        }
       }
 
       let filePath = '';
@@ -698,7 +811,6 @@ function createQueueStore() {
         const downloadMode = pendingItem.options?.downloadMode ?? 'auto';
         const videoQuality = pendingItem.options?.videoQuality ?? '';
 
-        // Check if videoQuality is a raw format ID (from format modal)
         const isRawFormat =
           videoQuality &&
           (/^\d/.test(videoQuality) ||
@@ -734,16 +846,44 @@ function createQueueStore() {
           `Starting Android download: ${url} (format: ${format}, isAudioOnly: ${isAudioOnly}${playlistFolder ? `, folder: ${playlistFolder}` : ''})`
         );
 
+        const currentSettings = getSettings();
+        const androidSettings: AndroidDownloadSettings = {
+          aria2Connections: currentSettings.aria2Connections,
+          aria2Splits: currentSettings.aria2Splits,
+          aria2MinSplitSize: currentSettings.aria2MinSplitSize,
+          speedLimit: currentSettings.downloadSpeedLimit,
+          downloadPath: currentSettings.downloadPath,
+        };
+
         const result = await downloadOnAndroid(
           url,
           format,
           (progress: AndroidProgress) => {
-            const progressValue = Math.max(0, progress.progress);
+            const rawProgress = Math.max(0, progress.progress);
+            
+            let cappedProgress: number;
+            if (rawProgress >= 99.9) {
+              cappedProgress = 95;
+            } else if (rawProgress >= 90) {
+              cappedProgress = 85 + ((rawProgress - 90) / 10) * 10;
+            } else {
+              cappedProgress = rawProgress * 0.85 / 90 * 90;
+            }
 
             const currentMax = maxProgressMap.get(url) || 0;
-            const effectiveProgress = Math.max(progressValue, currentMax);
-            if (progressValue > currentMax) {
-              maxProgressMap.set(url, progressValue);
+            const effectiveProgress = Math.max(cappedProgress, currentMax);
+            if (cappedProgress > currentMax) {
+              maxProgressMap.set(url, cappedProgress);
+            }
+            
+            let statusMessage = '';
+            const line = progress.line || '';
+            if (line.includes('[ExtractAudio]') || line.includes('[ffmpeg]')) {
+              statusMessage = 'Converting...';
+            } else if (line.includes('[download]') && !line.includes('Destination')) {
+              statusMessage = 'Downloading...';
+            } else if (line.includes('[Merger]')) {
+              statusMessage = 'Merging...';
             }
 
             update((state) => ({
@@ -755,13 +895,15 @@ function createQueueStore() {
                       progress: effectiveProgress,
                       eta: progress.etaSeconds > 0 ? `${progress.etaSeconds}s` : '',
                       status: 'downloading' as DownloadStatus,
+                      statusMessage: statusMessage || item.statusMessage,
                     }
                   : item
               ),
             }));
           },
           playlistFolder,
-          isAudioOnly
+          isAudioOnly,
+          androidSettings
         );
 
         console.log('Android download result:', result);
@@ -798,39 +940,90 @@ function createQueueStore() {
 
         const proxyConfig = getProxyConfig();
 
-        const downloadPromise = invoke<string>('download_video', {
-          url: url,
-          videoQuality: pendingItem.options?.videoQuality ?? 'max',
-          downloadMode: pendingItem.options?.downloadMode ?? 'auto',
-          audioQuality: pendingItem.options?.audioQuality ?? 'best',
-          convertToMp4: pendingItem.options?.convertToMp4 ?? false,
-          remux: pendingItem.options?.remux ?? true,
-          clearMetadata: pendingItem.options?.clearMetadata ?? false,
-          useAria2: pendingItem.options?.useAria2 ?? false,
-          noPlaylist: pendingItem.options?.ignoreMixes ?? true,
-          cookiesFromBrowser: pendingItem.options?.cookiesFromBrowser ?? '',
-          customCookies: pendingItem.options?.customCookies ?? '',
-          downloadPath: downloadPath,
-          embedThumbnail: isAudioDownload && currentSettings.embedThumbnail,
-          thumbnailUrlForEmbed: pendingItem.thumbnail || '',
-          playlistTitle: playlistTitle,
-          proxyConfig: proxyConfig,
-          sponsorBlock: currentSettings.sponsorBlock,
-          chapters: currentSettings.chapters,
-          embedSubtitles: currentSettings.embedSubtitles,
-          downloadSpeedLimit: currentSettings.downloadSpeedLimit,
-        });
+        const useLux = pendingItem.processor === 'lux';
+        const depsState = get(deps);
+
+        if (useLux && !depsState.lux?.installed) {
+          logs.warn('queue', 'Lux selected but not installed, falling back to yt-dlp');
+          toast.warning('Lux not installed, using yt-dlp instead');
+          update((state) => ({
+            ...state,
+            items: state.items.map((item) =>
+              item.id === itemId ? { ...item, processor: 'ytdlp' as ProcessorType } : item
+            ),
+          }));
+        }
+
+        const canUseLux = useLux && depsState.lux?.installed;
+
+        let downloadPromise: Promise<string>;
+
+        if (canUseLux) {
+          logs.info('queue', `Using LUX backend for: ${url}`);
+          
+          let luxFormatId = pendingItem.options?.videoQuality;
+          
+          if (luxFormatId && (
+            luxFormatId.includes('+') ||  // Format merging like "bestvideo+bestaudio"
+            luxFormatId.includes('/') ||  // Fallback like "best/bestvideo+bestaudio"
+            luxFormatId === 'bestvideo' ||
+            luxFormatId === 'bestaudio' ||
+            luxFormatId === 'best' ||
+            luxFormatId === 'max'
+          )) {
+            luxFormatId = '';
+            logs.info('queue', `Converted yt-dlp format string to lux auto-select`);
+          }
+          
+          downloadPromise = invoke<string>('lux_download_video', {
+            url: url,
+            formatId: luxFormatId || '',
+            downloadPath: downloadPath,
+            customCookies: pendingItem.options?.customCookies ?? '',
+            proxyConfig: proxyConfig,
+            multiThread: true,
+            threadCount: currentSettings.aria2Connections ?? 8,
+          });
+        } else {
+          logs.info('queue', `Using yt-dlp backend for: ${url}`);
+          downloadPromise = invoke<string>('download_video', {
+            url: url,
+            videoQuality: pendingItem.options?.videoQuality ?? 'max',
+            downloadMode: pendingItem.options?.downloadMode ?? 'auto',
+            audioQuality: pendingItem.options?.audioQuality ?? 'best',
+            convertToMp4: pendingItem.options?.convertToMp4 ?? false,
+            remux: pendingItem.options?.remux ?? true,
+            clearMetadata: pendingItem.options?.clearMetadata ?? false,
+            useAria2: pendingItem.options?.useAria2 ?? currentSettings.useAria2 ?? true,
+            aria2Connections: currentSettings.aria2Connections,
+            aria2Splits: currentSettings.aria2Splits,
+            aria2MinSplitSize: currentSettings.aria2MinSplitSize,
+            noPlaylist: pendingItem.options?.ignoreMixes ?? true,
+            cookiesFromBrowser: pendingItem.options?.cookiesFromBrowser ?? '',
+            customCookies: pendingItem.options?.customCookies ?? '',
+            downloadPath: downloadPath,
+            embedThumbnail: isAudioDownload && (pendingItem.options?.embedThumbnail ?? currentSettings.embedThumbnail),
+            thumbnailUrlForEmbed: pendingItem.thumbnail || '',
+            playlistTitle: playlistTitle,
+            proxyConfig: proxyConfig,
+            sponsorBlock: pendingItem.options?.sponsorBlock ?? currentSettings.sponsorBlock,
+            chapters: pendingItem.options?.chapters ?? currentSettings.chapters,
+            embedSubtitles: pendingItem.options?.embedSubtitles ?? currentSettings.embedSubtitles,
+            subtitleLanguages: pendingItem.options?.subtitleLanguages ?? currentSettings.subtitleLanguages ?? 'en,ru',
+            downloadSpeedLimit: currentSettings.downloadSpeedLimit,
+          });
+        }
 
         logs.info(
           'queue',
-          `Invoking download_video: downloadMode=${pendingItem.options?.downloadMode}, isAudioDownload=${isAudioDownload}, downloadPath=${downloadPath}, playlistTitle=${playlistTitle}`
+          `Invoking ${canUseLux ? 'lux_download_video' : 'download_video'}: downloadMode=${pendingItem.options?.downloadMode}, isAudioDownload=${isAudioDownload}, downloadPath=${downloadPath}, playlistTitle=${playlistTitle}`
         );
         logs.debug(
           'queue',
           `Full invoke params: videoQuality=${pendingItem.options?.videoQuality ?? 'max'}, remux=${pendingItem.options?.remux ?? true}, convertToMp4=${pendingItem.options?.convertToMp4 ?? false}`
         );
 
-        logs.debug('queue', 'Awaiting download_video invoke...');
+        logs.debug('queue', `Awaiting ${canUseLux ? 'lux' : 'ytdlp'} download invoke...`);
         const result = await downloadPromise;
         logs.info('queue', `download_video returned: ${result?.slice(0, 100) || 'null'}`);
 
@@ -869,6 +1062,23 @@ function createQueueStore() {
       logs.info('queue', `Download completed: ${url}`);
       logs.debug('queue', `File details: path=${filePath}, size=${filesize}, ext=${extension}`);
 
+      let extractedThumb = '';
+      const currentItem = get({ subscribe }).items.find((i) => i.id === itemId);
+      if (!currentItem?.thumbnail && filePath && !isAndroid()) {
+        try {
+          extractedThumb = await invoke<string>('extract_video_thumbnail', { filePath });
+          if (extractedThumb) {
+            update((state) => ({
+              ...state,
+              items: state.items.map((item) =>
+                item.id === itemId ? { ...item, thumbnail: extractedThumb } : item
+              ),
+            }));
+          }
+        } catch {
+        }
+      }
+
       update((state) => {
         const newItems = state.items.map((item) =>
           item.id === itemId
@@ -887,21 +1097,13 @@ function createQueueStore() {
         };
       });
 
-      const infoPromise = videoInfoPromises.get(itemId);
-      if (infoPromise) {
-        try {
-          await infoPromise;
-        } catch {}
-        videoInfoPromises.delete(itemId);
-      }
-
       const completedItem = get({ subscribe }).items.find((i) => i.id === itemId);
       if (completedItem) {
         logs.debug(
           'queue',
           `Saving to history: title=${completedItem.title}, duration=${completedItem.duration}, size=${completedItem.filesize}, playlist=${completedItem.playlistTitle || 'none'}`
         );
-        history.add({
+        await history.add({
           url: completedItem.url,
           title: completedItem.title || 'Downloaded video',
           author: completedItem.author || 'Unknown',
@@ -999,6 +1201,10 @@ function createQueueStore() {
       ext?: string;
     }
 
+    const useLux = isLuxPreferred(url);
+    const depsState = get(deps);
+    const luxAvailable = depsState.lux?.installed ?? false;
+
     let lastError: unknown;
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -1023,6 +1229,18 @@ function createQueueStore() {
           logs.debug(
             'queue',
             `Android video info: title=${info.title}, uploader_id=${info.uploader_id}, duration=${info.duration}`
+          );
+        } else if (useLux && luxAvailable) {
+          const proxyConfig = getProxyConfig();
+          logs.debug('queue', `Using lux to fetch video info for: ${url}`);
+          info = await invoke<VideoInfo>('lux_get_video_info', {
+            url,
+            customCookies: customCookies ?? '',
+            proxyConfig: proxyConfig,
+          });
+          logs.debug(
+            'queue',
+            `Lux video info (attempt ${attempt}): title=${info.title}, uploader=${info.uploader}`
           );
         } else {
           const proxyConfig = getProxyConfig();
@@ -1186,6 +1404,25 @@ function createQueueStore() {
 
       logs.info('queue', `Final downloadMode: ${finalOptions.downloadMode}`);
 
+      let processor: ProcessorType = 'ytdlp';
+      const processorSetting = currentSettings.defaultProcessor;
+
+      if (processorSetting === 'auto') {
+        processor = detectBackendForUrl(url);
+        logs.info('queue', `Auto-detected processor: ${processor} for URL: ${url.slice(0, 50)}...`);
+      } else if (processorSetting === 'lux') {
+        if (isLuxPreferred(url)) {
+          processor = 'lux';
+        } else {
+          logs.warn('queue', `Lux selected but URL is not a Chinese platform, falling back to yt-dlp: ${url.slice(0, 50)}...`);
+          processor = 'ytdlp';
+        }
+      } else {
+        processor = 'ytdlp';
+      }
+
+      logs.info('queue', `Using processor: ${processor} (setting: ${processorSetting})`);
+
       const id = crypto.randomUUID();
       const prefetched = finalOptions?.prefetchedInfo;
 
@@ -1213,6 +1450,7 @@ function createQueueStore() {
         playlistIndex: playlistInfo?.playlistIndex,
         usePlaylistFolder: playlistInfo?.usePlaylistFolder,
         source: 'ytdlp',
+        processor,
       };
 
       update((state) => {
@@ -1271,6 +1509,7 @@ function createQueueStore() {
         mimeType: fileInfo.mimeType,
         totalBytes: fileInfo.size,
         downloadedBytes: 0,
+        processor: 'ytdlp',
       };
 
       update((state) => {
@@ -1301,6 +1540,12 @@ function createQueueStore() {
         duration?: number;
         downloadMode?: 'auto' | 'audio' | 'mute';
         videoQuality?: string;
+        sponsorBlock?: boolean;
+        chapters?: boolean;
+        embedSubtitles?: boolean;
+        subtitleLanguages?: string;
+        embedThumbnail?: boolean;
+        clearMetadata?: boolean;
       }>,
       playlistInfo: {
         playlistId: string;
@@ -1327,6 +1572,12 @@ function createQueueStore() {
           ...globalOptions,
           downloadMode: entry.downloadMode ?? globalOptions?.downloadMode,
           videoQuality: entry.videoQuality ?? globalOptions?.videoQuality,
+          sponsorBlock: entry.sponsorBlock ?? globalOptions?.sponsorBlock,
+          chapters: entry.chapters ?? globalOptions?.chapters,
+          embedSubtitles: entry.embedSubtitles ?? globalOptions?.embedSubtitles,
+          subtitleLanguages: entry.subtitleLanguages ?? globalOptions?.subtitleLanguages,
+          embedThumbnail: entry.embedThumbnail ?? globalOptions?.embedThumbnail,
+          clearMetadata: entry.clearMetadata ?? globalOptions?.clearMetadata,
           prefetchedInfo: {
             title: entry.title,
             thumbnail: entry.thumbnail,

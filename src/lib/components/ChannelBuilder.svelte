@@ -1,10 +1,13 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { t } from '$lib/i18n';
   import { tooltip } from '$lib/actions/tooltip';
   import { settings, type DownloadMode, getProxyConfig } from '$lib/stores/settings';
+  import { deps } from '$lib/stores/deps';
   import { isAndroid, getPlaylistInfoOnAndroid } from '$lib/utils/android';
   import { formatDuration, getDisplayThumbnailUrl } from '$lib/utils/format';
+  import { detectBackendForUrl } from '$lib/utils/backend-detection';
   import Icon from './Icon.svelte';
   import Checkbox from './Checkbox.svelte';
   import Select from './Select.svelte';
@@ -59,12 +62,23 @@
     subscriberCount?: number;
   }
 
+  export interface DefaultSettings {
+    downloadMode?: 'auto' | 'audio' | 'mute';
+    sponsorBlock?: boolean;
+    chapters?: boolean;
+    embedSubtitles?: boolean;
+    subtitleLanguages?: string;
+    embedThumbnail?: boolean;
+    clearMetadata?: boolean;
+  }
+
   type ChannelTab = 'videos' | 'shorts' | 'live';
 
   interface Props {
     url: string;
     cookiesFromBrowser?: string;
     customCookies?: string;
+    defaults?: DefaultSettings;
     ondownload?: (selection: ChannelSelection) => void;
     onback?: () => void;
     onopenitem?: (entry: ChannelEntry) => void;
@@ -77,6 +91,7 @@
     url,
     cookiesFromBrowser = '',
     customCookies = '',
+    defaults,
     ondownload,
     onback,
     onopenitem,
@@ -147,6 +162,7 @@
   let lastLoadedUrl = $state(initialState.lastLoadedUrl);
   let channelInfoCached = $state<boolean>(initialState.fromCache);
   let destroyed = false;
+  let thumbnailError = $state(false);
 
   let selectedMode = $state<'all' | 'some'>(initialState.selectedMode);
   let selectedSomeIds = $state<Set<string>>(new Set(initialState.selectedIds));
@@ -226,11 +242,23 @@
     { value: '128', label: '128 kbps' },
   ];
 
-  let globalSkipSponsors = $state(true);
-  let globalEmbedChapters = $state(true);
-  let globalEmbedThumbnail = $state(true);
-  let globalEmbedMetadata = $state(true);
-  let bulkMode = $state<DownloadMode | null>(null);
+  const initialDefaults = untrack(() => ({
+    sponsorBlock: defaults?.sponsorBlock ?? false,
+    chapters: defaults?.chapters ?? true,
+    embedThumbnail: defaults?.embedThumbnail ?? true,
+    clearMetadata: defaults?.clearMetadata ?? false,
+    downloadMode: defaults?.downloadMode ?? null,
+    embedSubtitles: defaults?.embedSubtitles ?? false,
+    subtitleLanguages: defaults?.subtitleLanguages ?? 'en',
+  }));
+
+  let globalSkipSponsors = $state(initialDefaults.sponsorBlock);
+  let globalEmbedChapters = $state(initialDefaults.chapters);
+  let globalEmbedThumbnail = $state(initialDefaults.embedThumbnail);
+  let globalEmbedMetadata = $state(!initialDefaults.clearMetadata);
+  let globalEmbedSubs = $state(initialDefaults.embedSubtitles);
+  let globalSubLangs = $state(initialDefaults.subtitleLanguages);
+  let bulkMode = $state<DownloadMode | null>(initialDefaults.downloadMode);
 
   let displayName = $derived(channelInfo?.name ?? prefetchedInfo?.name ?? '');
   let displayThumbnail = $derived.by(() => {
@@ -312,6 +340,8 @@
       embedChapters: globalEmbedChapters,
       embedThumbnail: globalEmbedThumbnail,
       embedMetadata: globalEmbedMetadata,
+      embedSubs: globalEmbedSubs,
+      subLangs: globalSubLangs,
     };
   }
 
@@ -382,7 +412,10 @@
         rawInfo = await getPlaylistInfoOnAndroid(url);
         if (destroyed) return;
       } else {
-        rawInfo = await invoke<any>('get_playlist_info', {
+        const backend = detectBackendForUrl(url);
+        const luxInstalled = backend === 'lux' && $deps.lux?.installed;
+        const command = luxInstalled ? 'lux_get_playlist_info' : 'get_playlist_info';
+        rawInfo = await invoke<any>(command, {
           url,
           offset: 0,
           limit: 200,
@@ -396,7 +429,10 @@
         rawInfo.entries = allEntries;
         while (rawInfo.has_more && rawInfo.total_count > 0 && !destroyed) {
           const currentOffset = allEntries.length;
-          const moreInfo = await invoke<any>('get_playlist_info', {
+          const backend = detectBackendForUrl(url);
+          const luxInstalled = backend === 'lux' && $deps.lux?.installed;
+          const command = luxInstalled ? 'lux_get_playlist_info' : 'get_playlist_info';
+          const moreInfo = await invoke<any>(command, {
             url,
             offset: currentOffset,
             limit: 200,
@@ -519,7 +555,7 @@
       entries,
       channelInfo: {
         id: channelInfo.id ?? '',
-        name: channelInfo.name ?? 'Channel',
+        name: channelInfo.name ?? $t('common.channel'),
         useChannelFolder,
       },
     };
@@ -585,7 +621,7 @@
   {:else}
     <div class="yt-badge">
       <Icon name="user" size={14} />
-      <span>YouTube Channel</span>
+      <span>{$t('common.youtubeChannel')}</span>
     </div>
   {/if}
 
@@ -602,8 +638,8 @@
       <!-- Main row: avatar + info + mode selector -->
       <div class="main-row">
         <div class="left">
-          {#if displayThumbnail}
-            <img src={displayThumbnail} alt="" class="thumb" />
+          {#if displayThumbnail && !thumbnailError}
+            <img src={displayThumbnail} alt="" class="thumb" onerror={() => (thumbnailError = true)} />
           {:else if loading && !hasPrefetchedInfo}
             <div class="thumb skeleton"></div>
           {:else}
@@ -768,6 +804,21 @@
                   bind:checked={globalEmbedMetadata}
                   label={$t('download.tracks.embedMetadata')}
                 />
+              </div>
+            </div>
+
+            <div class="option-group">
+              <span class="group-label">{$t('download.tracks.subtitles')}</span>
+              <div class="subs-row">
+                <Checkbox bind:checked={globalEmbedSubs} label={$t('download.tracks.embedSubs')} />
+                {#if globalEmbedSubs}
+                  <input
+                    type="text"
+                    class="lang-input"
+                    bind:value={globalSubLangs}
+                    placeholder="en"
+                  />
+                {/if}
               </div>
             </div>
           </div>
@@ -938,6 +989,13 @@
     height: 100%;
     display: flex;
     flex-direction: column;
+  }
+
+  @media (max-width: 480px) {
+    .channel-builder.full-bleed {
+      height: auto;
+      min-height: 100%;
+    }
   }
 
   .channel-builder.full-bleed .view-header {
@@ -1432,6 +1490,34 @@
     gap: 8px;
   }
 
+  .subs-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .lang-input {
+    flex: 1;
+    max-width: 200px;
+    padding: 6px 10px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    color: white;
+    font-size: 12px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  .lang-input::placeholder {
+    color: rgba(255, 255, 255, 0.3);
+  }
+
+  .lang-input:focus {
+    border-color: var(--accent, #6366f1);
+  }
+
   /* Tab bar */
   .tab-bar {
     display: flex;
@@ -1708,7 +1794,6 @@
     transform: none;
   }
 
-  /* Responsive adjustments */
   @media (max-width: 480px) {
     .main-row {
       flex-direction: column;

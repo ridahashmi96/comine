@@ -1,13 +1,15 @@
-<script lang="ts" context="module">
+<script lang="ts" module>
   import { writable } from 'svelte/store';
 
-  export type ToastType = 'success' | 'error' | 'warning' | 'info';
+  export type ToastType = 'success' | 'error' | 'warning' | 'info' | 'progress';
 
   export interface Toast {
     id: number;
     message: string;
     type: ToastType;
     duration: number;
+    progress?: number; // 0-100 for progress toasts
+    subMessage?: string;
   }
 
   let idCounter = 0;
@@ -28,10 +30,23 @@
     toasts.update((t) => t.filter((toast) => toast.id !== id));
   }
 
+  /** Update an existing toast's message, progress, or type */
+  export function updateToast(id: number, updates: Partial<Pick<Toast, 'message' | 'progress' | 'type' | 'subMessage'>>) {
+    toasts.update((t) => t.map((toast) => 
+      toast.id === id ? { ...toast, ...updates } : toast
+    ));
+  }
+
   toast.success = (msg: string, duration?: number) => toast(msg, 'success', duration);
   toast.error = (msg: string, duration?: number) => toast(msg, 'error', duration);
   toast.warning = (msg: string, duration?: number) => toast(msg, 'warning', duration);
   toast.info = (msg: string, duration?: number) => toast(msg, 'info', duration);
+  /** Create a persistent progress toast (duration=0 means no auto-dismiss) */
+  toast.progress = (msg: string, progress: number = 0, subMessage?: string) => {
+    const id = ++idCounter;
+    toasts.update((t) => [...t, { id, message: msg, type: 'progress', duration: 0, progress, subMessage }]);
+    return id;
+  };
 </script>
 
 <script lang="ts">
@@ -46,6 +61,7 @@
     error: 'cross_circle',
     warning: 'warning',
     info: 'info',
+    progress: 'download',
   };
 
   let position = $derived<ToastPosition>(
@@ -71,7 +87,17 @@
       out:fade={{ duration: 150 }}
     >
       <Icon name={iconMap[t.type]} size={18} />
-      <span class="message">{t.message}</span>
+      <div class="toast-content">
+        <span class="message">{t.message}</span>
+        {#if t.type === 'progress'}
+          <div class="progress-bar">
+            <div class="progress-fill" style="width: {t.progress ?? 0}%"></div>
+          </div>
+          {#if t.subMessage}
+            <span class="sub-message">{t.subMessage}</span>
+          {/if}
+        {/if}
+      </div>
       <button class="dismiss" onclick={() => dismissToast(t.id)}>
         <Icon name="cross" size={14} />
       </button>
@@ -111,10 +137,10 @@
     transform: translateX(-50%);
   }
 
-  /* On mobile, add extra bottom padding for nav bar */
+  /* On mobile, add extra bottom padding for floating nav bar */
   @media (max-width: 480px) {
     .toast-container.bottom {
-      bottom: 80px; /* Above bottom nav bar */
+      bottom: calc(90px + env(safe-area-inset-bottom, 0px)); /* Above floating nav */
     }
 
     .toast-container.top {
@@ -153,8 +179,40 @@
     border-left: 3px solid var(--accent, #6366f1);
   }
 
+  .toast.progress {
+    border-left: 3px solid var(--accent, #6366f1);
+  }
+
+  .toast-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+
   .message {
     flex: 1;
+  }
+
+  .sub-message {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  .progress-bar {
+    width: 100%;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: var(--accent, #6366f1);
+    border-radius: 2px;
+    transition: width 0.3s ease;
   }
 
   .dismiss {

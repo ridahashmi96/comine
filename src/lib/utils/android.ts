@@ -15,19 +15,47 @@ interface AndroidYtDlp {
     isAudioOnly: boolean,
     callbackName: string
   ): void;
+  downloadWithPath(
+    url: string,
+    format: string | null,
+    playlistFolder: string | null,
+    isAudioOnly: boolean,
+    downloadPath: string | null,
+    callbackName: string
+  ): void;
+  downloadWithSettings(
+    url: string,
+    format: string | null,
+    playlistFolder: string | null,
+    isAudioOnly: boolean,
+    aria2Connections: number,
+    aria2Splits: number,
+    aria2MinSplitSize: string | null,
+    speedLimit: number,
+    downloadPath: string | null,
+    callbackName: string
+  ): void;
   openFile(filePath: string): boolean;
   openFolder(filePath: string): boolean;
   pickFile(mimeTypes: string, callbackName: string): void;
+  pickFolder(callbackName: string): void;
   processYtmThumbnail(thumbnailUrl: string, callbackName: string): void;
 }
 
-declare global {
-  interface Window {
-    AndroidYtDlp?: AndroidYtDlp;
-    __YTDLP_READY__?: boolean;
-    __androidLog?: (level: string, source: string, message: string) => void;
-  }
+type AndroidCallback = (json: string) => void;
+type AndroidProgressCallback = (json: string) => void;
+
+interface AndroidCallbacks {
+  [key: string]: AndroidCallback | AndroidProgressCallback | undefined;
 }
+
+interface AndroidWindow extends Window {
+  AndroidYtDlp?: AndroidYtDlp;
+  __YTDLP_READY__?: boolean;
+  __androidLog?: (level: string, source: string, message: string) => void;
+}
+
+declare let window: AndroidWindow;
 
 type LogHandler = (
   level: 'trace' | 'debug' | 'info' | 'warn' | 'error',
@@ -41,14 +69,12 @@ let logHandler: LogHandler | null = null;
  */
 export function setupAndroidLogHandler(handler: LogHandler): void {
   logHandler = handler;
-  if (typeof window !== 'undefined') {
-    window.__androidLog = (level: string, source: string, message: string) => {
-      const validLevel = ['trace', 'debug', 'info', 'warn', 'error'].includes(level)
-        ? (level as 'trace' | 'debug' | 'info' | 'warn' | 'error')
-        : 'debug';
-      handler(validLevel, source, message);
-    };
-  }
+  window.__androidLog = (level: string, source: string, message: string) => {
+    const validLevel = ['trace', 'debug', 'info', 'warn', 'error'].includes(level)
+      ? (level as 'trace' | 'debug' | 'info' | 'warn' | 'error')
+      : 'debug';
+    handler(validLevel, source, message);
+  };
 }
 
 /**
@@ -119,10 +145,22 @@ const activeCallbacks = new Set<string>();
  */
 export function cleanupAndroidCallbacks(): void {
   activeCallbacks.forEach((name) => {
-    delete (window as unknown as Record<string, unknown>)[name];
-    delete (window as unknown as Record<string, unknown>)[`${name}_progress`];
+    const callbacks = window as unknown as AndroidCallbacks;
+    delete callbacks[name];
+    delete callbacks[`${name}_progress`];
   });
   activeCallbacks.clear();
+}
+
+/**
+ * Download settings for Android
+ */
+export interface AndroidDownloadSettings {
+  aria2Connections?: number;
+  aria2Splits?: number;
+  aria2MinSplitSize?: string;
+  speedLimit?: number;
+  downloadPath?: string | null;
 }
 
 /**
@@ -134,7 +172,8 @@ export function downloadOnAndroid(
   format: string = 'best',
   onProgress?: (progress: DownloadProgress) => void,
   playlistFolder?: string | null,
-  isAudioOnly: boolean = false
+  isAudioOnly: boolean = false,
+  settings?: AndroidDownloadSettings
 ): Promise<DownloadResult> {
   return new Promise((resolve, reject) => {
     if (!isAndroid() || !window.AndroidYtDlp) {
@@ -163,13 +202,15 @@ export function downloadOnAndroid(
     const cleanup = () => {
       clearTimeout(timeout);
       activeCallbacks.delete(callbackName);
-      delete (window as unknown as Record<string, unknown>)[`${callbackName}_progress`];
-      delete (window as unknown as Record<string, unknown>)[callbackName];
+      const callbacks = window as unknown as AndroidCallbacks;
+      delete callbacks[`${callbackName}_progress`];
+      delete callbacks[callbackName];
     };
 
     let maxProgress = 0;
 
-    (window as unknown as Record<string, unknown>)[`${callbackName}_progress`] = (json: string) => {
+    const callbacks = window as unknown as AndroidCallbacks;
+    callbacks[`${callbackName}_progress`] = (json: string) => {
       try {
         const data = JSON.parse(json);
         let progressValue = typeof data.progress === 'number' ? data.progress : 0;
@@ -190,7 +231,7 @@ export function downloadOnAndroid(
       }
     };
 
-    (window as unknown as Record<string, unknown>)[callbackName] = (json: string) => {
+    callbacks[callbackName] = (json: string) => {
       if (hasCompleted) return;
       hasCompleted = true;
 
@@ -227,16 +268,27 @@ export function downloadOnAndroid(
     };
 
     try {
+      const aria2Connections = settings?.aria2Connections ?? 16;
+      const aria2Splits = settings?.aria2Splits ?? 16;
+      const speedLimit = settings?.speedLimit ?? 0;
+      const aria2MinSplitSize = settings?.aria2MinSplitSize ?? '1M';
+      const downloadPath = settings?.downloadPath ?? null;
+      
       logHandler?.(
         'info',
         'Android',
-        `Starting download via bridge: ${url}${playlistFolder ? ` (folder: ${playlistFolder})` : ''}, isAudioOnly: ${isAudioOnly}`
+        `Starting download via bridge: ${url}${playlistFolder ? ` (folder: ${playlistFolder})` : ''}, isAudioOnly: ${isAudioOnly}, aria2: ${aria2Connections}x${aria2Splits} (min-split: ${aria2MinSplitSize}), speedLimit: ${speedLimit}M, downloadPath: ${downloadPath}`
       );
-      window.AndroidYtDlp.download(
+      window.AndroidYtDlp.downloadWithSettings(
         url,
         format || null,
         playlistFolder || null,
         isAudioOnly,
+        aria2Connections,
+        aria2Splits,
+        aria2MinSplitSize,
+        speedLimit,
+        downloadPath,
         callbackName
       );
     } catch (error) {
@@ -271,19 +323,21 @@ export function getVideoInfoOnAndroid(url: string): Promise<Record<string, unkno
       if (!hasCompleted) {
         hasCompleted = true;
         activeCallbacks.delete(callbackName);
-        delete (window as unknown as Record<string, unknown>)[callbackName];
+        const callbacks = window as unknown as AndroidCallbacks;
+        delete callbacks[callbackName];
         logHandler?.('warn', 'Android', 'Video info fetch timeout');
         reject(new Error('Video info fetch timeout'));
       }
     }, 60000);
 
-    (window as unknown as Record<string, unknown>)[callbackName] = (json: string) => {
+    const callbacks = window as unknown as AndroidCallbacks;
+    callbacks[callbackName] = (json: string) => {
       if (hasCompleted) return;
       hasCompleted = true;
       clearTimeout(timeout);
 
       activeCallbacks.delete(callbackName);
-      delete (window as unknown as Record<string, unknown>)[callbackName];
+      delete callbacks[callbackName];
 
       try {
         const data = JSON.parse(json);
@@ -311,7 +365,7 @@ export function getVideoInfoOnAndroid(url: string): Promise<Record<string, unkno
       hasCompleted = true;
       clearTimeout(timeout);
       activeCallbacks.delete(callbackName);
-      delete (window as unknown as Record<string, unknown>)[callbackName];
+      delete callbacks[callbackName];
       logHandler?.('error', 'Android', `Failed to call getVideoInfo: ${error}`);
       reject(error);
     }
@@ -368,19 +422,21 @@ export function getPlaylistInfoOnAndroid(url: string): Promise<PlaylistInfo> {
       if (!hasCompleted) {
         hasCompleted = true;
         activeCallbacks.delete(callbackName);
-        delete (window as unknown as Record<string, unknown>)[callbackName];
+        const callbacks = window as unknown as AndroidCallbacks;
+        delete callbacks[callbackName];
         logHandler?.('warn', 'Android', 'Playlist info fetch timeout');
         reject(new Error('Playlist info fetch timeout'));
       }
     }, 120000);
 
-    (window as unknown as Record<string, unknown>)[callbackName] = (json: string) => {
+    const callbacks = window as unknown as AndroidCallbacks;
+    callbacks[callbackName] = (json: string) => {
       if (hasCompleted) return;
       hasCompleted = true;
       clearTimeout(timeout);
 
       activeCallbacks.delete(callbackName);
-      delete (window as unknown as Record<string, unknown>)[callbackName];
+      delete callbacks[callbackName];
 
       try {
         const data = JSON.parse(json);
@@ -412,7 +468,7 @@ export function getPlaylistInfoOnAndroid(url: string): Promise<PlaylistInfo> {
       hasCompleted = true;
       clearTimeout(timeout);
       activeCallbacks.delete(callbackName);
-      delete (window as unknown as Record<string, unknown>)[callbackName];
+      delete callbacks[callbackName];
       logHandler?.('error', 'Android', `Failed to call getPlaylistInfo: ${error}`);
       reject(error);
     }
@@ -495,7 +551,7 @@ export function openFileOnAndroid(filePath: string): boolean {
   try {
     return window.AndroidYtDlp.openFile(filePath);
   } catch (e) {
-    console.error('Failed to open file on Android:', e);
+    logHandler?.('error', 'Android', `Failed to open file: ${e}`);
     return false;
   }
 }
@@ -510,7 +566,7 @@ export function openFolderOnAndroid(filePath: string): boolean {
   try {
     return window.AndroidYtDlp.openFolder(filePath);
   } catch (e) {
-    console.error('Failed to open folder on Android:', e);
+    logHandler?.('error', 'Android', `Failed to open folder: ${e}`);
     return false;
   }
 }
@@ -532,14 +588,16 @@ export function pickFileOnAndroid(mimeTypes: string): Promise<string | null> {
 
     const timeout = setTimeout(() => {
       activeCallbacks.delete(callbackName);
-      delete (window as unknown as Record<string, unknown>)[callbackName];
+      const callbacks = window as unknown as AndroidCallbacks;
+      delete callbacks[callbackName];
       resolve(null);
     }, 300000);
 
-    (window as unknown as Record<string, unknown>)[callbackName] = (uri: string | null) => {
+    const callbacks = window as unknown as AndroidCallbacks;
+    callbacks[callbackName] = (uri: string | null) => {
       clearTimeout(timeout);
       activeCallbacks.delete(callbackName);
-      delete (window as unknown as Record<string, unknown>)[callbackName];
+      delete callbacks[callbackName];
       resolve(uri || null);
     };
 
@@ -548,8 +606,65 @@ export function pickFileOnAndroid(mimeTypes: string): Promise<string | null> {
     } catch (error) {
       clearTimeout(timeout);
       activeCallbacks.delete(callbackName);
-      delete (window as unknown as Record<string, unknown>)[callbackName];
-      console.error('Failed to open file picker on Android:', error);
+      const callbacks = window as unknown as AndroidCallbacks;
+      delete callbacks[callbackName];
+      logHandler?.('error', 'Android', `Failed to open file picker: ${error}`);
+      resolve(null);
+    }
+  });
+}
+
+/**
+ * Pick a folder on Android using the Storage Access Framework.
+ * @returns Promise that resolves with the folder path or null if cancelled
+ */
+export function pickFolderOnAndroid(): Promise<string | null> {
+  return new Promise((resolve) => {
+    if (!isAndroid() || !window.AndroidYtDlp) {
+      resolve(null);
+      return;
+    }
+
+    const callbackName = `folder_pick_cb_${++callbackCounter}`;
+    activeCallbacks.add(callbackName);
+
+    const timeout = setTimeout(() => {
+      activeCallbacks.delete(callbackName);
+      const callbacks = window as unknown as AndroidCallbacks;
+      delete callbacks[callbackName];
+      resolve(null);
+    }, 300000);
+
+    const callbacks = window as unknown as AndroidCallbacks;
+    callbacks[callbackName] = (resultJson: string) => {
+      clearTimeout(timeout);
+      activeCallbacks.delete(callbackName);
+      delete callbacks[callbackName];
+      
+      try {
+        const result = JSON.parse(resultJson);
+        if (result.success && result.path) {
+          resolve(result.path);
+        } else if (result.cancelled) {
+          resolve(null);
+        } else {
+          logHandler?.('error', 'Android', `Folder picker error: ${result.error || 'Unknown error'}`);
+          resolve(null);
+        }
+      } catch (error) {
+        logHandler?.('error', 'Android', `Failed to parse folder picker result: ${error}`);
+        resolve(null);
+      }
+    };
+
+    try {
+      window.AndroidYtDlp.pickFolder(callbackName);
+    } catch (error) {
+      clearTimeout(timeout);
+      activeCallbacks.delete(callbackName);
+      const callbacks = window as unknown as AndroidCallbacks;
+      delete callbacks[callbackName];
+      logHandler?.('error', 'Android', `Failed to open folder picker: ${error}`);
       resolve(null);
     }
   });
@@ -572,15 +687,17 @@ export function processYtmThumbnailOnAndroid(thumbnailUrl: string): Promise<stri
 
     const timeout = setTimeout(() => {
       activeCallbacks.delete(callbackName);
-      delete (window as unknown as Record<string, unknown>)[callbackName];
+      const callbacks = window as unknown as AndroidCallbacks;
+      delete callbacks[callbackName];
       logHandler?.('warn', 'Android', 'Thumbnail processing timeout');
       resolve(thumbnailUrl);
     }, 30000);
 
-    (window as unknown as Record<string, unknown>)[callbackName] = (json: string) => {
+    const callbacks = window as unknown as AndroidCallbacks;
+    callbacks[callbackName] = (json: string) => {
       clearTimeout(timeout);
       activeCallbacks.delete(callbackName);
-      delete (window as unknown as Record<string, unknown>)[callbackName];
+      delete callbacks[callbackName];
 
       try {
         const data = JSON.parse(json);
@@ -601,7 +718,8 @@ export function processYtmThumbnailOnAndroid(thumbnailUrl: string): Promise<stri
     } catch (error) {
       clearTimeout(timeout);
       activeCallbacks.delete(callbackName);
-      delete (window as unknown as Record<string, unknown>)[callbackName];
+      const callbacks = window as unknown as AndroidCallbacks;
+      delete callbacks[callbackName];
       logHandler?.('error', 'Android', `Failed to call processYtmThumbnail: ${error}`);
       resolve(thumbnailUrl);
     }

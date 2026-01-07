@@ -343,10 +343,16 @@ class UnifiedMediaCache {
   private dirty = false;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private flushPromise: Promise<void> | null = null;
+  private cleanupTimer: ReturnType<typeof setInterval> | null = null;
+  private loaded = false;
 
   constructor() {
     this.metadata.setMutationCallback(() => this.scheduleDiskFlush());
     this.heavyData.setMutationCallback(() => this.scheduleDiskFlush());
+    
+    this.cleanupTimer = setInterval(() => {
+      this.clearStale();
+    }, 5 * 60 * 1000);
   }
 
   private scheduleDiskFlush(): void {
@@ -430,6 +436,11 @@ class UnifiedMediaCache {
   }
 
   get(url: string): CacheEntry | null {
+    if (!this.loaded) {
+      this.load();
+      this.loaded = true;
+    }
+    
     const key = normalizeUrl(url);
     const meta = this.metadata.get(key);
     if (!meta) {
@@ -722,13 +733,25 @@ class UnifiedMediaCache {
 
   async unload(): Promise<void> {
     await this.flush();
+    
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+    
     this.metadata.clear();
     this.heavyData.clear();
     this.log('UNLOAD', 'memory cleared, disk persisted');
     this.notify();
   }
 
-  async load(): Promise<void> {
+  load(): void {
+    this.loadAsync().catch(e => {
+      console.error('[MediaCache] Load failed:', e);
+    });
+  }
+
+  private async loadAsync(): Promise<void> {
     try {
       const store = await getStore();
       const data = await store.get<DiskCacheData>('cache');
@@ -764,7 +787,7 @@ class UnifiedMediaCache {
       this.log('LOAD', `${this.metadata.size}m/${this.heavyData.size}h from disk`);
       this.notify();
     } catch (e) {
-      console.error('[MediaCache] Load failed:', e);
+      console.error('[MediaCache] Load async failed:', e);
     }
   }
 

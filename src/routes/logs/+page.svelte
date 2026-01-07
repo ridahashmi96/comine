@@ -1,6 +1,6 @@
 <script lang="ts">
   import { t } from '$lib/i18n';
-  import { logs, filteredLogs, logStats, type LogLevel } from '$lib/stores/logs';
+  import { logs, filteredLogs, logStats, type LogLevel, type LogEntry } from '$lib/stores/logs';
   import { onMount, onDestroy } from 'svelte';
   import { beforeNavigate } from '$app/navigation';
   import Icon from '$lib/components/Icon.svelte';
@@ -10,18 +10,24 @@
   import Modal from '$lib/components/Modal.svelte';
   import Button from '$lib/components/Button.svelte';
   import { saveScrollPosition, getScrollPosition } from '$lib/stores/scroll';
+  import VirtualList from '$lib/components/VirtualList.svelte';
 
   const ROUTE_PATH = '/logs';
+  const ESTIMATED_HEIGHT_DESKTOP = 28;
+  const ESTIMATED_HEIGHT_MOBILE = 48;
 
   let searchQuery = $state('');
-  let logContainer: HTMLElement | null = null;
+  let virtualList: ReturnType<typeof VirtualList<LogEntry>> | null = $state(null);
   let autoScroll = $state(true);
+  let hasScrolledDown = $state(false);
   let isMobile = $state(false);
   let isDesktop = $state(false);
   let isLoading = $state(true);
 
+  let estimatedHeight = $derived(isMobile ? ESTIMATED_HEIGHT_MOBILE : ESTIMATED_HEIGHT_DESKTOP);
+
   beforeNavigate(() => {
-    const pos = logContainer?.scrollTop ?? 0;
+    const pos = virtualList?.getScrollTop() ?? 0;
     saveScrollPosition(ROUTE_PATH, pos);
   });
 
@@ -49,11 +55,11 @@
     logs.info('system', 'Log viewer opened');
 
     const savedPosition = getScrollPosition(ROUTE_PATH);
-    if (savedPosition > 0 && logContainer) {
+    if (savedPosition > 0 && virtualList) {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          if (logContainer) {
-            logContainer.scrollTop = savedPosition;
+          if (virtualList) {
+            virtualList.setScrollTop(savedPosition);
             autoScroll = false;
           }
         });
@@ -173,8 +179,10 @@
   }
 
   function handleScroll() {
-    if (!logContainer) return;
-    const isAtTop = logContainer.scrollTop <= 10;
+    if (!virtualList) return;
+    const scrollTop = virtualList.getScrollTop();
+    const isAtTop = scrollTop <= 10;
+    hasScrolledDown = !isAtTop;
     if (isAtTop && !autoScroll) {
       autoScroll = true;
     } else if (!isAtTop && autoScroll) {
@@ -183,14 +191,14 @@
   }
 
   $effect(() => {
-    if (autoScroll && logContainer && $filteredLogs.length > 0) {
-      logContainer.scrollTop = 0;
+    if (autoScroll && virtualList && $filteredLogs.length > 0) {
+      virtualList.scrollToTop();
     }
   });
 </script>
 
 <div class="logs-page">
-  <div class="log-container" bind:this={logContainer} onscroll={handleScroll}>
+  <div class="log-container" class:scrolled={hasScrolledDown}>
     {#if isLoading}
       <div class="empty-state">
         <div class="empty-icon">
@@ -208,8 +216,16 @@
         <span class="empty-hint">Logs will appear here as the app runs</span>
       </div>
     {:else}
-      <div class="log-list">
-        {#each $filteredLogs as entry (entry.id)}
+      <VirtualList
+        bind:this={virtualList}
+        items={$filteredLogs}
+        estimatedItemHeight={estimatedHeight}
+        overscan={10}
+        containerClass="log-list-virtual"
+        onscroll={handleScroll}
+        getKey={(entry) => entry.id}
+      >
+        {#snippet children(entry, _index)}
           {#if isMobile}
             <div class="log-entry mobile {entry.level}">
               <div class="log-header">
@@ -227,8 +243,8 @@
               <span class="log-message">{entry.message}</span>
             </div>
           {/if}
-        {/each}
-      </div>
+        {/snippet}
+      </VirtualList>
     {/if}
   </div>
 
@@ -258,13 +274,13 @@
 
       <div class="filter-chips">
         <button
-          class="chip info"
-          class:active={activeFilters.has('info')}
-          onclick={() => toggleFilter('info')}
-          use:tooltip={'Toggle info logs'}
+          class="chip trace"
+          class:active={activeFilters.has('trace')}
+          onclick={() => toggleFilter('trace')}
+          use:tooltip={'Toggle trace logs'}
         >
-          INF
-          {#if $logStats.info > 0}<span class="chip-count">{$logStats.info}</span>{/if}
+          TRC
+          {#if $logStats.trace > 0}<span class="chip-count">{$logStats.trace}</span>{/if}
         </button>
         <button
           class="chip debug"
@@ -274,6 +290,15 @@
         >
           DBG
           {#if $logStats.debug > 0}<span class="chip-count">{$logStats.debug}</span>{/if}
+        </button>
+        <button
+          class="chip info"
+          class:active={activeFilters.has('info')}
+          onclick={() => toggleFilter('info')}
+          use:tooltip={'Toggle info logs'}
+        >
+          INF
+          {#if $logStats.info > 0}<span class="chip-count">{$logStats.info}</span>{/if}
         </button>
         <button
           class="chip warn"
@@ -363,29 +388,48 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    /* Match other pages: left padding for content */
-    padding-left: 16px;
+    padding-left: 0px;
   }
 
   .log-container {
     flex: 1;
-    overflow-y: auto;
-    overflow-x: hidden;
-    background: linear-gradient(180deg, rgba(0, 0, 0, 0.15) 0%, rgba(0, 0, 0, 0.25) 100%);
+    overflow: hidden;
     font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Consolas', monospace;
     font-size: 12px;
-    padding-bottom: 80px;
+    padding-bottom: 30px;
     padding-right: 6px;
     margin-right: 4px;
     margin-bottom: 4px;
-    mask-image: linear-gradient(to bottom, black, black 0px, black calc(100% - 90px), transparent);
+    mask-image: linear-gradient(to bottom, black, black 0px, black calc(100% - 56px), transparent);
     -webkit-mask-image: linear-gradient(
       to bottom,
       black,
       black 0px,
-      black calc(100% - 90px),
+      black calc(100% - 56px),
       transparent
     );
+  }
+
+  .log-container.scrolled {
+    mask-image: linear-gradient(to bottom, transparent, black 32px, black calc(100% - 56px), transparent);
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      transparent,
+      black 32px,
+      black calc(100% - 56px),
+      transparent
+    );
+  }
+
+  :global(.log-list-virtual) {
+    padding: 4px 8px;
+  }
+
+  :global(.app.mobile) .log-container {
+    padding-bottom: 180px;
+    /* No bottom mask on mobile - navbar has glassmorphism */
+    mask-image: none;
+    -webkit-mask-image: none;
   }
 
   .empty-state {
@@ -414,10 +458,6 @@
   .empty-hint {
     font-size: 13px;
     color: rgba(255, 255, 255, 0.35);
-  }
-
-  .log-list {
-    padding: 8px 12px;
   }
 
   /* Desktop log entry */
@@ -536,13 +576,23 @@
     color: rgba(251, 191, 36, 0.95);
   }
 
-  /* Floating toolbar - clean inline style */
+  /* Floating toolbar - glassmorphism style */
   .floating-toolbar {
     position: absolute;
     bottom: 8px;
     left: 8px;
     right: 8px;
     z-index: 100;
+    background: rgba(30, 30, 35, 0.85);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 8px;
+  }
+
+  :global(.app.mobile) .floating-toolbar {
+    bottom: 96px; /* Account for floating nav bar */
   }
 
   .toolbar-content {
@@ -556,17 +606,19 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    background: rgb(35, 35, 40);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 6px;
-    padding: 6px 10px;
+    padding: 0 10px;
+    height: 30px;
     min-width: 120px;
     color: rgba(255, 255, 255, 0.6);
+    transition: all 0.15s;
   }
 
   .search-box:focus-within {
-    border-color: rgba(255, 255, 255, 0.35);
-    background: rgb(40, 40, 45);
+    border-color: rgba(255, 255, 255, 0.25);
+    background: rgba(255, 255, 255, 0.12);
   }
 
   .search-box input {
@@ -607,11 +659,12 @@
   .chip {
     font-size: 10px;
     font-weight: 600;
-    padding: 5px 8px;
-    border-radius: 4px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    background: rgb(35, 35, 40);
-    color: rgba(255, 255, 255, 0.6);
+    padding: 0 8px;
+    height: 30px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.5);
     cursor: pointer;
     transition: all 0.15s;
     display: flex;
@@ -620,28 +673,34 @@
   }
 
   .chip:hover {
-    background: rgb(50, 50, 55);
-    color: rgba(255, 255, 255, 0.85);
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.2);
+    color: rgba(255, 255, 255, 0.8);
   }
 
+  .chip.active.trace {
+    background: rgba(156, 163, 175, 0.2);
+    border-color: rgba(156, 163, 175, 0.5);
+    color: rgb(180, 185, 195);
+  }
   .chip.active.info {
-    background: rgb(20, 60, 40);
-    border-color: rgb(34, 197, 94);
+    background: rgba(34, 197, 94, 0.2);
+    border-color: rgba(34, 197, 94, 0.5);
     color: rgb(34, 197, 94);
   }
   .chip.active.debug {
-    background: rgb(35, 35, 70);
-    border-color: rgb(99, 102, 241);
+    background: rgba(99, 102, 241, 0.2);
+    border-color: rgba(99, 102, 241, 0.5);
     color: rgb(129, 132, 255);
   }
   .chip.active.warn {
-    background: rgb(60, 50, 20);
-    border-color: rgb(251, 191, 36);
+    background: rgba(251, 191, 36, 0.2);
+    border-color: rgba(251, 191, 36, 0.5);
     color: rgb(251, 191, 36);
   }
   .chip.active.error {
-    background: rgb(60, 25, 25);
-    border-color: rgb(239, 68, 68);
+    background: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.5);
     color: rgb(255, 100, 100);
   }
 
@@ -660,8 +719,8 @@
     width: 30px;
     height: 30px;
     border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    background: rgb(35, 35, 40);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.08);
     color: rgba(255, 255, 255, 0.8);
     cursor: pointer;
     display: flex;
@@ -671,20 +730,20 @@
   }
 
   .action-btn:hover {
-    background: rgb(55, 55, 60);
+    background: rgba(255, 255, 255, 0.15);
     color: #fff;
-    border-color: rgba(255, 255, 255, 0.3);
+    border-color: rgba(255, 255, 255, 0.2);
   }
 
   .action-btn.active {
-    background: rgb(35, 35, 70);
-    border-color: rgb(99, 102, 241);
+    background: rgba(99, 102, 241, 0.2);
+    border-color: rgba(99, 102, 241, 0.5);
     color: rgb(129, 132, 255);
   }
 
   .action-btn.danger:hover {
-    background: rgb(60, 25, 25);
-    border-color: rgb(239, 68, 68);
+    background: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.5);
     color: rgb(255, 100, 100);
   }
 
@@ -693,10 +752,12 @@
     position: absolute;
     top: 8px;
     right: 8px;
-    background: rgb(35, 35, 40);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 4px;
-    padding: 4px 8px;
+    background: rgba(30, 30, 35, 0.85);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 6px 10px;
     display: flex;
     align-items: baseline;
     gap: 4px;
@@ -795,10 +856,6 @@
     .filter-chips {
       order: 2;
       width: 100%;
-    }
-
-    .log-container {
-      padding-bottom: 90px;
     }
   }
 </style>

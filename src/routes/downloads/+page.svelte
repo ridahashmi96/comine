@@ -3,7 +3,7 @@
   import { beforeNavigate } from '$app/navigation';
   import { t } from '$lib/i18n';
   import { goto } from '$app/navigation';
-  import { invoke } from '@tauri-apps/api/core';
+  import { invoke, convertFileSrc } from '@tauri-apps/api/core';
   import { revealItemInDir, openUrl, openPath } from '@tauri-apps/plugin-opener';
   import { stat } from '@tauri-apps/plugin-fs';
   import { toast } from '$lib/components/Toast.svelte';
@@ -13,6 +13,7 @@
     historyStats,
     formatDuration,
     isPlaylistGroup,
+    refreshDateGroups,
     type FilterType,
     type SortType,
     type HistoryItem,
@@ -42,21 +43,29 @@
   const DATE_HEADER_HEIGHT = 44;
   const PLAYLIST_HEADER_HEIGHT = 60;
   const BUFFER_COUNT = 5;
+  const GRID_MIN_COL_WIDTH = 160;
+  const GRID_GAP = 10;
+  const GRID_CARD_INFO_HEIGHT = 64;
 
   type FlatRowType =
     | { kind: 'date'; label: string }
-    | { kind: 'single'; item: HistoryItem }
-    | { kind: 'playlist'; group: HistoryPlaylistGroup }
-    | { kind: 'playlist-child'; item: HistoryItem; playlistId: string };
+    | { kind: 'single'; item: HistoryItem; dateLabel: string }
+    | { kind: 'playlist'; group: HistoryPlaylistGroup; dateLabel: string }
+    | { kind: 'playlist-child'; item: HistoryItem; playlistId: string; isLast: boolean; dateLabel: string };
 
   let containerEl: HTMLDivElement | null = $state(null);
   let scrollTop = $state(0);
   let containerHeight = $state(600);
+  let containerWidth = $state(800);
   let maskStyle = $state('');
   const MASK_SIZE = 25;
 
   beforeNavigate(() => {
     saveScrollPosition(ROUTE_PATH, scrollTop);
+    thumbnailSrcCache.clear();
+    thumbnailCacheOrder = [];
+    playlistThumbnailCache.clear();
+    playlistCacheOrder = [];
   });
 
   function updateMaskStyle() {
@@ -68,9 +77,10 @@
       return;
     }
     const topProgress = Math.min(st / MASK_SIZE, 1);
-    const bottomProgress = Math.min((maxScroll - st) / MASK_SIZE, 1);
     const topFade =
       topProgress > 0 ? `transparent, black ${MASK_SIZE * topProgress}px` : 'black, black 0px';
+    
+    const bottomProgress = Math.min((maxScroll - st) / MASK_SIZE, 1);
     const bottomFade =
       bottomProgress > 0
         ? `black calc(100% - ${MASK_SIZE * bottomProgress}px), transparent`
@@ -78,7 +88,21 @@
     maskStyle = `mask-image: linear-gradient(to bottom, ${topFade}, ${bottomFade}); -webkit-mask-image: linear-gradient(to bottom, ${topFade}, ${bottomFade});`;
   }
 
+  function getGridItemsPerRow(width: number): number {
+    if (!Number.isFinite(width) || width <= 0) return 1;
+    return Math.max(1, Math.floor((width + GRID_GAP) / (GRID_MIN_COL_WIDTH + GRID_GAP)));
+  }
+
+  function getGridRowHeight(width: number, perRow: number): number {
+    if (!Number.isFinite(width) || width <= 0 || perRow <= 0) return 220;
+    const cardWidth = (width - GRID_GAP * Math.max(0, perRow - 1)) / perRow;
+    const thumbHeight = (cardWidth * 9) / 16;
+    return Math.max(180, Math.round(thumbHeight + GRID_CARD_INFO_HEIGHT + GRID_GAP));
+  }
+
   onMount(() => {
+    history.init();
+    
     const savedPosition = getScrollPosition(ROUTE_PATH);
     if (savedPosition > 0 && containerEl) {
       containerEl.scrollTop = savedPosition;
@@ -88,7 +112,42 @@
 
     const resizeObserver = new ResizeObserver(updateMaskStyle);
     if (containerEl) resizeObserver.observe(containerEl);
-    return () => resizeObserver.disconnect();
+
+    const cleanupInterval = setInterval(() => {
+      if (failedThumbnails.size > MAX_FAILED_THUMBNAILS) {
+        failedThumbnails = new Set();
+      }
+      if (missingFiles.size > 100) {
+        missingFiles = new Set();
+      }
+    }, 60000);
+
+    // Refresh date groups when page becomes visible (handles day change while app was backgrounded)
+    let lastRefreshDate = new Date().toDateString();
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'visible') {
+        const currentDate = new Date().toDateString();
+        if (currentDate !== lastRefreshDate) {
+          lastRefreshDate = currentDate;
+          refreshDateGroups();
+        }
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      resizeObserver.disconnect();
+      clearInterval(cleanupInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (scrollRAF) {
+        cancelAnimationFrame(scrollRAF);
+        scrollRAF = null;
+      }
+      thumbnailSrcCache.clear();
+      thumbnailCacheOrder = [];
+      playlistThumbnailCache.clear();
+      playlistCacheOrder = [];
+    };
   });
 
   let missingFiles = $state<Set<string>>(new Set());
@@ -125,15 +184,77 @@
   let sortType = $state<SortType>('date');
   let viewMode = $derived($settings.downloadsViewMode);
   let hoveredItemId = $state<string | null>(null);
+  let showStatsPanel = $state(false);
 
+  // Derived type counts for stats panel
+  let typeCounts = $derived.by(() => {
+    const items = $history.items;
+    const counts = { video: 0, audio: 0, image: 0, file: 0 };
+    for (const item of items) {
+      if (item.type in counts) {
+        counts[item.type as keyof typeof counts]++;
+      }
+    }
+    return counts;
+  });
+
+  // Top formats for stats
+  let topFormats = $derived.by(() => {
+    const formatCounts = $historyStats.formatCounts;
+    return Object.entries(formatCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
+  });
+
+  const MAX_COLOR_CACHE = 200;
   let itemColors = $state<Map<string, RGB>>(new Map());
+  let colorAccessOrder = $state<string[]>([]);
 
   async function extractItemColor(id: string, thumbnailUrl: string | undefined) {
     if (!$settings.thumbnailTheming || !thumbnailUrl || itemColors.has(id)) return;
     const color = await extractDominantColor(thumbnailUrl);
     if (color) {
+      if (itemColors.size >= MAX_COLOR_CACHE) {
+        const oldest = colorAccessOrder.shift();
+        if (oldest) {
+          const next = new Map(itemColors);
+          next.delete(oldest);
+          itemColors = next;
+        }
+      }
       itemColors = new Map(itemColors).set(id, color);
+      colorAccessOrder = [...colorAccessOrder, id];
     }
+  }
+
+  const MAX_THUMBNAIL_CACHE = 300;
+  const thumbnailSrcCache = new Map<string, string>();
+  let thumbnailCacheOrder: string[] = [];
+  const MAX_FAILED_THUMBNAILS = 100;
+  let failedThumbnails = $state(new Set<string>());
+
+  function getThumbnailSrc(thumbnail: string | undefined): string | undefined {
+    if (!thumbnail) return undefined;
+    
+    if (thumbnailSrcCache.has(thumbnail)) {
+      return thumbnailSrcCache.get(thumbnail);
+    }
+    
+    let result: string;
+    if (thumbnail.match(/^[A-Z]:\\/i) || thumbnail.startsWith('/')) {
+      result = convertFileSrc(thumbnail);
+    } else {
+      result = thumbnail;
+    }
+    
+    if (thumbnailSrcCache.size >= MAX_THUMBNAIL_CACHE) {
+      const oldest = thumbnailCacheOrder.shift();
+      if (oldest) thumbnailSrcCache.delete(oldest);
+    }
+    
+    thumbnailSrcCache.set(thumbnail, result);
+    thumbnailCacheOrder.push(thumbnail);
+    return result;
   }
 
   function getItemColorStyle(id: string): string {
@@ -145,6 +266,30 @@
 
   let collapsedPlaylists = $state<Set<string>>(new Set());
   let collapsedHistoryPlaylists = $state<Set<string>>(new Set());
+
+  const MAX_PLAYLIST_THUMB_CACHE = 50;
+  const playlistThumbnailCache = new Map<string, string[]>();
+  let playlistCacheOrder: string[] = [];
+  
+  function getPlaylistGridThumbs(playlistId: string, items: { thumbnail?: string }[]): string[] {
+    if (playlistThumbnailCache.has(playlistId)) {
+      return playlistThumbnailCache.get(playlistId)!;
+    }
+    
+    const thumbs = items
+      .filter((i) => i.thumbnail)
+      .slice(0, 4)
+      .map((i) => getThumbnailSrc(i.thumbnail!) || i.thumbnail!);
+    
+    if (playlistThumbnailCache.size >= MAX_PLAYLIST_THUMB_CACHE) {
+      const oldest = playlistCacheOrder.shift();
+      if (oldest) playlistThumbnailCache.delete(oldest);
+    }
+    
+    playlistThumbnailCache.set(playlistId, thumbs);
+    playlistCacheOrder.push(playlistId);
+    return thumbs;
+  }
 
   function togglePlaylistExpanded(playlistId: string) {
     const next = new Set(collapsedPlaylists);
@@ -165,26 +310,95 @@
     }
     collapsedHistoryPlaylists = next;
   }
+  
+  function handlePlaylistKeydown(event: KeyboardEvent, playlistId: string, isHistory: boolean) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      if (isHistory) {
+        toggleHistoryPlaylistExpanded(playlistId);
+      } else {
+        togglePlaylistExpanded(playlistId);
+      }
+    }
+  }
 
   let flatRows = $derived.by<FlatRowType[]>(() => {
     const rows: FlatRowType[] = [];
     for (const group of $playlistGroupedHistory) {
-      rows.push({ kind: 'date', label: group.label });
+      const dateLabel = group.label;
+      rows.push({ kind: 'date', label: dateLabel });
       for (const item of group.items) {
         if (isPlaylistGroup(item)) {
           const pg = item as HistoryPlaylistGroup;
-          rows.push({ kind: 'playlist', group: pg });
+          rows.push({ kind: 'playlist', group: pg, dateLabel });
           if (!collapsedHistoryPlaylists.has(pg.playlistId)) {
-            for (const child of pg.items) {
-              rows.push({ kind: 'playlist-child', item: child, playlistId: pg.playlistId });
-            }
+            const childCount = pg.items.length;
+            pg.items.forEach((child, idx) => {
+              rows.push({
+                kind: 'playlist-child',
+                item: child,
+                playlistId: pg.playlistId,
+                isLast: idx === childCount - 1,
+                dateLabel,
+              });
+            });
           }
         } else {
-          rows.push({ kind: 'single', item: item as HistoryItem });
+          rows.push({ kind: 'single', item: item as HistoryItem, dateLabel });
         }
       }
     }
     return rows;
+  });
+
+  let flatGridItems = $derived.by(() => {
+    const items: Array<HistoryItem> = [];
+    for (const group of $playlistGroupedHistory) {
+      for (const item of group.items) {
+        if (isPlaylistGroup(item)) {
+          const pg = item as HistoryPlaylistGroup;
+          items.push(...pg.items);
+        } else {
+          items.push(item as HistoryItem);
+        }
+      }
+    }
+    return items;
+  });
+
+  let gridItemsPerRow = $derived(getGridItemsPerRow(containerWidth));
+  let gridRowHeight = $derived(getGridRowHeight(containerWidth, gridItemsPerRow));
+
+  let gridVisibleRange = $derived.by(() => {
+    if (viewMode !== 'grid' || flatGridItems.length <= 30) {
+      return { startIdx: 0, endIdx: flatGridItems.length };
+    }
+
+    const startRow = Math.floor(scrollTop / gridRowHeight);
+    const visibleRows = Math.ceil(containerHeight / gridRowHeight) + 1;
+
+    const startIdx = Math.max(0, (startRow - BUFFER_COUNT) * gridItemsPerRow);
+    const endIdx = Math.min(flatGridItems.length, (startRow + visibleRows + BUFFER_COUNT) * gridItemsPerRow);
+
+    return { startIdx, endIdx };
+  });
+
+  let visibleGridItems = $derived(
+    viewMode !== 'grid' || flatGridItems.length <= 30
+      ? flatGridItems
+      : flatGridItems.slice(gridVisibleRange.startIdx, gridVisibleRange.endIdx)
+  );
+
+  let gridTotalHeight = $derived.by(() => {
+    if (viewMode !== 'grid' || flatGridItems.length <= 30) return 'auto';
+    const rows = Math.ceil(flatGridItems.length / gridItemsPerRow);
+    return `${rows * gridRowHeight}px`;
+  });
+
+  let gridOffsetTop = $derived.by(() => {
+    if (viewMode !== 'grid' || flatGridItems.length <= 30) return 0;
+    const startRow = Math.floor(gridVisibleRange.startIdx / gridItemsPerRow);
+    return startRow * gridRowHeight;
   });
 
   function getRowHeight(row: FlatRowType): number {
@@ -419,15 +633,15 @@
   onMount(() => {
     if (isAndroid()) return;
 
-    const items = history.getItems();
-    const itemsToFix = items.filter(
-      (item) =>
-        item.duration === 0 && item.filePath && (item.type === 'video' || item.type === 'audio')
-    );
-
-    if (itemsToFix.length === 0) return;
-
     (async () => {
+      const items = await history.getItems();
+      const itemsToFix = items.filter(
+        (item) =>
+          item.duration === 0 && item.filePath && (item.type === 'video' || item.type === 'audio')
+      );
+
+      if (itemsToFix.length === 0) return;
+
       for (const item of itemsToFix) {
         try {
           const duration = await invoke<number>('get_media_duration', { filePath: item.filePath });
@@ -497,13 +711,85 @@
           <Icon name="gallery" size={18} />
         </button>
       </div>
+
+      {#if $settings.showHistoryStats && $historyStats.totalDownloads > 0}
+        <button
+          class="stats-toggle-btn"
+          class:active={showStatsPanel}
+          onclick={() => showStatsPanel = !showStatsPanel}
+          use:tooltip={$t('downloads.stats.toggle')}
+        >
+          <Icon name="stats" size={18} />
+        </button>
+      {/if}
     </div>
   </div>
+
+  <!-- Collapsible Statistics Panel -->
+  {#if $settings.showHistoryStats && showStatsPanel && $historyStats.totalDownloads > 0}
+    <div class="stats-panel">
+      <div class="stats-grid">
+        <div class="stat-card">
+          <Icon name="download" size={20} />
+          <div class="stat-content">
+            <span class="stat-value">{$historyStats.totalDownloads}</span>
+            <span class="stat-label">{$t('downloads.stats.totalDownloads')}</span>
+          </div>
+        </div>
+        <div class="stat-card">
+          <Icon name="file_text" size={20} />
+          <div class="stat-content">
+            <span class="stat-value">{formatFileSize($historyStats.totalSize)}</span>
+            <span class="stat-label">{$t('downloads.stats.totalSize')}</span>
+          </div>
+        </div>
+        <div class="stat-card">
+          <Icon name="clock" size={20} />
+          <div class="stat-content">
+            <span class="stat-value">{formatDuration($historyStats.totalDuration)}</span>
+            <span class="stat-label">{$t('downloads.stats.totalDuration')}</span>
+          </div>
+        </div>
+      </div>
+      
+      <div class="stats-breakdown">
+        <div class="breakdown-section">
+          <span class="breakdown-title">{$t('downloads.stats.byType')}</span>
+          <div class="breakdown-items">
+            {#if typeCounts.video > 0}
+              <span class="breakdown-item"><Icon name="video" size={14} /> {typeCounts.video} {$t('downloads.filters.video')}</span>
+            {/if}
+            {#if typeCounts.audio > 0}
+              <span class="breakdown-item"><Icon name="music" size={14} /> {typeCounts.audio} {$t('downloads.filters.audio')}</span>
+            {/if}
+            {#if typeCounts.image > 0}
+              <span class="breakdown-item"><Icon name="image" size={14} /> {typeCounts.image} {$t('downloads.filters.image')}</span>
+            {/if}
+            {#if typeCounts.file > 0}
+              <span class="breakdown-item"><Icon name="file_text" size={14} /> {typeCounts.file} {$t('downloads.filters.file')}</span>
+            {/if}
+          </div>
+        </div>
+        
+        {#if topFormats.length > 0}
+          <div class="breakdown-section">
+            <span class="breakdown-title">{$t('downloads.stats.topFormats')}</span>
+            <div class="breakdown-items format-items">
+              {#each topFormats as [format, count]}
+                <span class="format-badge">{format.toUpperCase()} <span class="format-count">{count}</span></span>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      </div>
+    </div>
+  {/if}
 
   <div
     class="scroll-container"
     bind:this={containerEl}
     bind:clientHeight={containerHeight}
+    bind:clientWidth={containerWidth}
     onscroll={handleScroll}
     style={maskStyle}
   >
@@ -614,13 +900,15 @@
                         <span class="playlist-index">#{download.playlistIndex}</span>
                       {/if}
                       <div class="active-thumb">
-                        {#if download.thumbnail}
+                        {#if download.thumbnail && !failedThumbnails.has(download.id)}
+                          {@const thumbSrc = getThumbnailSrc(download.thumbnail)}
                           <img
-                            src={download.thumbnail}
+                            src={thumbSrc}
                             alt=""
                             loading="lazy"
                             decoding="async"
-                            onload={() => extractItemColor(download.id, download.thumbnail)}
+                            onload={() => extractItemColor(download.id, thumbSrc)}
+                            onerror={() => { failedThumbnails = new Set([...failedThumbnails, download.id]); }}
                           />
                         {:else}
                           <div class="thumb-placeholder">
@@ -726,13 +1014,15 @@
 
               <!-- Thumbnail or spinner -->
               <div class="active-thumb">
-                {#if download.thumbnail}
+                {#if download.thumbnail && !failedThumbnails.has(download.id)}
+                  {@const thumbSrc = getThumbnailSrc(download.thumbnail)}
                   <img
-                    src={download.thumbnail}
+                    src={thumbSrc}
                     alt=""
                     loading="lazy"
                     decoding="async"
-                    onload={() => extractItemColor(download.id, download.thumbnail)}
+                    onload={() => extractItemColor(download.id, thumbSrc)}
+                    onerror={() => { failedThumbnails = new Set([...failedThumbnails, download.id]); }}
                   />
                 {:else}
                   <div class="thumb-placeholder">
@@ -842,7 +1132,7 @@
         {:else}
           <div class="virtual-spacer" style="height: {totalHeight}px;">
             <div class="virtual-content" style="transform: translateY({offsetTop}px);">
-              {#each visibleRows as row (row.kind === 'date' ? `date-${row.label}` : row.kind === 'playlist' ? `pl-${row.group.playlistId}` : row.kind === 'playlist-child' ? `plc-${row.item.id}` : `s-${row.item.id}`)}
+              {#each visibleRows as row (row.kind === 'date' ? `date-${row.label}` : row.kind === 'playlist' ? `pl-${row.dateLabel}-${row.group.playlistId}` : row.kind === 'playlist-child' ? `plc-${row.dateLabel}-${row.item.id}` : `s-${row.dateLabel}-${row.item.id}`)}
                 {#if row.kind === 'date'}
                   <div class="date-header" style="height: {DATE_HEADER_HEIGHT}px;">
                     <span class="date-label">{row.label}</span>
@@ -850,20 +1140,33 @@
                 {:else if row.kind === 'playlist'}
                   {@const playlistGroup = row.group}
                   {@const isExpanded = !collapsedHistoryPlaylists.has(playlistGroup.playlistId)}
-                  {@const playlistThumb = playlistGroup.items[0]?.thumbnail}
-                  <!-- svelte-ignore a11y_no_static_element_interactions -->
-                  <!-- svelte-ignore a11y_click_events_have_key_events -->
+                  {@const gridThumbs = getPlaylistGridThumbs(playlistGroup.playlistId, playlistGroup.items)}
                   <div
                     class="playlist-header-row"
+                    class:expanded={isExpanded}
                     style="height: {PLAYLIST_HEADER_HEIGHT}px;"
+                    role="button"
+                    tabindex="0"
+                    aria-expanded={isExpanded}
+                    aria-label="{playlistGroup.playlistTitle} - {playlistGroup.items.length} items"
                     onclick={() => toggleHistoryPlaylistExpanded(playlistGroup.playlistId)}
+                    onkeydown={(e) => handlePlaylistKeydown(e, playlistGroup.playlistId, true)}
                   >
                     <div class="col-thumb">
-                      <div class="playlist-thumb">
-                        {#if playlistThumb}
-                          <img src={playlistThumb} alt="" />
+                      <div class="playlist-thumb-grid" class:single={gridThumbs.length <= 1}>
+                        {#if gridThumbs.length === 0}
+                          <div class="grid-placeholder"><Icon name="playlist" size={16} /></div>
+                        {:else if gridThumbs.length === 1}
+                          <img src={gridThumbs[0]} alt="" />
                         {:else}
-                          <Icon name="playlist" size={16} />
+                          {#each gridThumbs as thumb}
+                            <img src={thumb} alt="" />
+                          {/each}
+                          {#if gridThumbs.length < 4}
+                            {#each Array(4 - gridThumbs.length) as _}
+                              <div class="grid-empty"></div>
+                            {/each}
+                          {/if}
                         {/if}
                       </div>
                     </div>
@@ -894,35 +1197,35 @@
                 {:else if row.kind === 'playlist-child'}
                   {@const subItem = row.item}
                   {@const fileMissing = isFileMissing(subItem.id)}
+                  {@const isLastChild = row.isLast}
                   <!-- svelte-ignore a11y_no_static_element_interactions -->
                   <div
                     class="history-item playlist-child"
+                    class:last-child={isLastChild}
                     style="height: {ITEM_HEIGHT}px; {getItemColorStyle(subItem.id)}"
                     class:file-missing={fileMissing}
                     onmouseenter={() => (hoveredItemId = subItem.id)}
                     onmouseleave={() => (hoveredItemId = null)}
                   >
                     <div class="col-thumb">
-                      {#if subItem.thumbnail}
+                      {#if subItem.thumbnail && !failedThumbnails.has(subItem.id)}
+                        {@const thumbSrc = getThumbnailSrc(subItem.thumbnail)}
                         <img
-                          src={subItem.thumbnail}
+                          src={thumbSrc}
                           alt=""
                           class="thumbnail"
                           loading="lazy"
                           decoding="async"
                           onload={() => {
-                            extractItemColor(subItem.id, subItem.thumbnail);
+                            extractItemColor(subItem.id, thumbSrc);
                             checkFileExists(subItem.id, subItem.filePath);
                           }}
+                          onerror={() => { failedThumbnails = new Set([...failedThumbnails, subItem.id]); }}
                         />
                       {:else}
                         <div class="thumbnail-placeholder">
                           <Icon name={getTypeIcon(subItem.type)} size={20} />
                         </div>
-                        {(() => {
-                          checkFileExists(subItem.id, subItem.filePath);
-                          return '';
-                        })()}
                       {/if}
                       {#if fileMissing}
                         <div
@@ -1011,26 +1314,24 @@
                     onmouseleave={() => (hoveredItemId = null)}
                   >
                     <div class="col-thumb">
-                      {#if singleItem.thumbnail}
+                      {#if singleItem.thumbnail && !failedThumbnails.has(singleItem.id)}
+                        {@const thumbSrc = getThumbnailSrc(singleItem.thumbnail)}
                         <img
-                          src={singleItem.thumbnail}
+                          src={thumbSrc}
                           alt=""
                           class="thumbnail"
                           loading="lazy"
                           decoding="async"
                           onload={() => {
-                            extractItemColor(singleItem.id, singleItem.thumbnail);
+                            extractItemColor(singleItem.id, thumbSrc);
                             checkFileExists(singleItem.id, singleItem.filePath);
                           }}
+                          onerror={() => { failedThumbnails = new Set([...failedThumbnails, singleItem.id]); }}
                         />
                       {:else}
                         <div class="thumbnail-placeholder">
                           <Icon name={getTypeIcon(singleItem.type)} size={20} />
                         </div>
-                        {(() => {
-                          checkFileExists(singleItem.id, singleItem.filePath);
-                          return '';
-                        })()}
                       {/if}
                       {#if fileMissing}
                         <div
@@ -1118,349 +1419,154 @@
             </div>
           </div>
           <p class="end-message">{$t('downloads.endMessage')}</p>
-          {#if $settings.showHistoryStats && $historyStats.totalDownloads > 0}
-            <div class="stats-bar">
-              <div class="stat-item">
-                <span class="stat-value">{$historyStats.totalDownloads}</span>
-                <span class="stat-label">{$t('downloads.stats.totalDownloads')}</span>
-              </div>
-              <div class="stat-divider"></div>
-              <div class="stat-item">
-                <span class="stat-value">{formatFileSize($historyStats.totalSize)}</span>
-                <span class="stat-label">{$t('downloads.stats.totalSize')}</span>
-              </div>
-              <div class="stat-divider"></div>
-              <div class="stat-item">
-                <span class="stat-value">{formatDuration($historyStats.totalDuration)}</span>
-                <span class="stat-label">{$t('downloads.stats.totalDuration')}</span>
-              </div>
-              <div class="stat-divider"></div>
-              <div class="stat-item">
-                <span class="stat-value">{$historyStats.mostCommonFormat.toUpperCase()}</span>
-                <span class="stat-label">{$t('downloads.stats.mostCommon')}</span>
-              </div>
-            </div>
-          {/if}
         {/if}
       </div>
     {:else}
-      <div class="history-list grid-view">
-        {#if $playlistGroupedHistory.length === 0}
+      <div class="history-list grid-view" class:virtualized={flatGridItems.length > 30}>
+        {#if flatGridItems.length === 0}
           <div class="empty-state">
             <Icon name="download" size={48} />
             <p>{$t('downloads.empty')}</p>
             <p class="empty-hint">{$t('downloads.startHint')}</p>
           </div>
         {:else}
-          {#each $playlistGroupedHistory as group}
-            <div class="date-group">
-              <span class="date-label">{group.label}</span>
-              <div class="grid-items">
-                {#each group.items as item}
-                  {#if isPlaylistGroup(item)}
-                    {@const playlistGroup = item as HistoryPlaylistGroup}
-                    {#each playlistGroup.items as subItem, idx (subItem.id)}
-                      {@const fileMissing = isFileMissing(subItem.id)}
-                      <!-- svelte-ignore a11y_no_static_element_interactions -->
-                      <div
-                        class="grid-card"
-                        class:playlist-card={true}
-                        class:file-missing={fileMissing}
-                        style={getItemColorStyle(subItem.id)}
-                        onmouseenter={() => (hoveredItemId = subItem.id)}
-                        onmouseleave={() => (hoveredItemId = null)}
-                      >
-                        <div class="card-thumbnail">
-                          {#if subItem.thumbnail}
-                            <img
-                              src={subItem.thumbnail}
-                              alt=""
-                              loading="lazy"
-                              decoding="async"
-                              onload={() => {
-                                extractItemColor(subItem.id, subItem.thumbnail);
-                                checkFileExists(subItem.id, subItem.filePath);
-                              }}
-                            />
-                          {:else}
-                            <div
-                              class="card-thumb-placeholder"
-                              use:tooltip={fileMissing ? $t('downloads.fileMissing') : ''}
-                            >
-                              <Icon name={getTypeIcon(subItem.type)} size={32} />
-                            </div>
-                            {(() => {
-                              checkFileExists(subItem.id, subItem.filePath);
-                              return '';
-                            })()}
-                          {/if}
-                          {#if subItem.duration > 0}<span class="duration-badge"
-                              >{formatDuration(subItem.duration)}</span
-                            >{/if}
-                          <span class="type-badge">{subItem.extension.toUpperCase()}</span>
-                          <div class="playlist-badge" use:tooltip={playlistGroup.playlistTitle}>
-                            <Icon name="playlist" size={10} />
-                            <span>{idx + 1}/{playlistGroup.items.length}</span>
-                          </div>
-                          {#if fileMissing}
-                            <div
-                              class="missing-file-overlay"
-                              use:tooltip={$t('downloads.fileMissing')}
-                            >
-                              <Icon name="trash" size={24} />
-                            </div>
-                          {/if}
-                          {#if hoveredItemId === subItem.id && !fileMissing}
-                            <div class="card-overlay">
-                              <button
-                                class="play-overlay"
-                                onclick={(e) => {
-                                  e.stopPropagation();
-                                  handlePlayFile(e, subItem.filePath);
-                                }}
-                                use:tooltip={$t('downloads.play')}
-                                ><Icon name="play" size={24} /></button
-                              >
-                              <div class="card-actions-bar">
-                                <button
-                                  class="card-action-btn"
-                                  use:tooltip={$t('downloads.openFolder')}
-                                  onclick={(e) => {
-                                    e.stopPropagation();
-                                    handleOpenFile(e, subItem.filePath);
-                                  }}><Icon name="folder" size={14} /></button
-                                >
-                                <button
-                                  class="card-action-btn"
-                                  use:tooltip={$t('downloads.redownload')}
-                                  onclick={(e) => {
-                                    e.stopPropagation();
-                                    handleRedownload(e, subItem.url);
-                                  }}><Icon name="download" size={14} /></button
-                                >
-                                <button
-                                  class="card-action-btn"
-                                  use:tooltip={$t('downloads.openLink')}
-                                  onclick={(e) => {
-                                    e.stopPropagation();
-                                    handleOpenLink(e, subItem.url);
-                                  }}><Icon name="link" size={14} /></button
-                                >
-                                <button
-                                  class="card-action-btn delete"
-                                  use:tooltip={$t('downloads.delete')}
-                                  onclick={(e) => {
-                                    e.stopPropagation();
-                                    handleDelete(e, subItem.id);
-                                  }}><Icon name="trash" size={14} /></button
-                                >
-                              </div>
-                            </div>
-                          {:else if hoveredItemId === subItem.id && fileMissing}
-                            <div class="card-overlay missing">
-                              <div class="card-actions-bar">
-                                <button
-                                  class="card-action-btn"
-                                  use:tooltip={$t('downloads.redownload')}
-                                  onclick={(e) => {
-                                    e.stopPropagation();
-                                    handleRedownload(e, subItem.url);
-                                  }}><Icon name="download" size={14} /></button
-                                >
-                                <button
-                                  class="card-action-btn"
-                                  use:tooltip={$t('downloads.openLink')}
-                                  onclick={(e) => {
-                                    e.stopPropagation();
-                                    handleOpenLink(e, subItem.url);
-                                  }}><Icon name="link" size={14} /></button
-                                >
-                                <button
-                                  class="card-action-btn delete"
-                                  use:tooltip={$t('downloads.delete')}
-                                  onclick={(e) => {
-                                    e.stopPropagation();
-                                    handleDelete(e, subItem.id);
-                                  }}><Icon name="trash" size={14} /></button
-                                >
-                              </div>
-                            </div>
-                          {/if}
-                        </div>
-                        <div class="card-info">
-                          <!-- svelte-ignore a11y_click_events_have_key_events -->
-                          <!-- svelte-ignore a11y_no_static_element_interactions -->
-                          <span
-                            class="card-title clickable"
-                            onclick={(e) => handleOpenVideoView(e, subItem)}
-                            title={$t('downloads.openInApp')}>{subItem.title}</span
-                          >
-                          <div class="card-meta">
-                            <!-- svelte-ignore a11y_click_events_have_key_events -->
-                            <!-- svelte-ignore a11y_no_static_element_interactions -->
-                            <span
-                              class="card-author clickable"
-                              onclick={(e) => handleOpenChannelView(e, subItem)}
-                              title={$t('downloads.openAuthor')}>{subItem.author}</span
-                            >
-                            <span class="card-size">{formatFileSize(subItem.size)}</span>
-                          </div>
-                        </div>
+          <div class="virtual-spacer-grid" style="height: {gridTotalHeight}; position: relative;">
+            <div class="virtual-content-grid" style="transform: translateY({gridOffsetTop}px);">
+              {#each visibleGridItems as item (item.id)}
+                {@const fileMissing = isFileMissing(item.id)}
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div
+                  class="grid-card"
+                  class:file-missing={fileMissing}
+                  style={getItemColorStyle(item.id)}
+                  onmouseenter={() => (hoveredItemId = item.id)}
+                  onmouseleave={() => (hoveredItemId = null)}
+                >
+                  <div class="card-thumbnail">
+                    {#if item.thumbnail && !failedThumbnails.has(item.id)}
+                      {@const thumbSrc = getThumbnailSrc(item.thumbnail)}
+                      <img
+                        src={thumbSrc}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                        fetchpriority="low"
+                        onload={() => {
+                          extractItemColor(item.id, thumbSrc);
+                          checkFileExists(item.id, item.filePath);
+                        }}
+                        onerror={() => { failedThumbnails = new Set([...failedThumbnails, item.id]); }}
+                      />
+                    {:else}
+                      <div class="card-thumb-placeholder">
+                        <Icon name={getTypeIcon(item.type)} size={32} />
                       </div>
-                    {/each}
-                  {:else}
-                    {@const singleItem = item as HistoryItem}
-                    {@const fileMissing = isFileMissing(singleItem.id)}
-                    <!-- svelte-ignore a11y_no_static_element_interactions -->
-                    <div
-                      class="grid-card"
-                      class:file-missing={fileMissing}
-                      style={getItemColorStyle(singleItem.id)}
-                      onmouseenter={() => (hoveredItemId = singleItem.id)}
-                      onmouseleave={() => (hoveredItemId = null)}
-                    >
-                      <div class="card-thumbnail">
-                        {#if singleItem.thumbnail}
-                          <img
-                            src={singleItem.thumbnail}
-                            alt=""
-                            loading="lazy"
-                            decoding="async"
-                            onload={() => {
-                              extractItemColor(singleItem.id, singleItem.thumbnail);
-                              checkFileExists(singleItem.id, singleItem.filePath);
-                            }}
-                          />
-                        {:else}
-                          <div class="card-thumb-placeholder">
-                            <Icon name={getTypeIcon(singleItem.type)} size={32} />
-                          </div>
-                          {(() => {
-                            checkFileExists(singleItem.id, singleItem.filePath);
-                            return '';
-                          })()}
-                        {/if}
-                        {#if singleItem.duration > 0}<span class="duration-badge"
-                            >{formatDuration(singleItem.duration)}</span
-                          >{/if}
-                        <span class="type-badge">{singleItem.extension.toUpperCase()}</span>
-                        {#if fileMissing}
-                          <div
-                            class="missing-file-overlay"
-                            use:tooltip={$t('downloads.fileMissing')}
-                          >
-                            <Icon name="trash" size={24} />
-                          </div>
-                        {/if}
-                        {#if hoveredItemId === singleItem.id && !fileMissing}
-                          <div class="card-overlay">
-                            <button
-                              class="play-overlay"
-                              onclick={(e) => handlePlayFile(e, singleItem.filePath)}
-                              use:tooltip={$t('downloads.play')}
-                              ><Icon name="play" size={24} /></button
-                            >
-                            <div class="card-actions-bar">
-                              <button
-                                class="card-action-btn"
-                                use:tooltip={$t('downloads.openFolder')}
-                                onclick={(e) => handleOpenFile(e, singleItem.filePath)}
-                                ><Icon name="folder" size={14} /></button
-                              >
-                              <button
-                                class="card-action-btn"
-                                use:tooltip={$t('downloads.redownload')}
-                                onclick={(e) => handleRedownload(e, singleItem.url)}
-                                ><Icon name="download" size={14} /></button
-                              >
-                              <button
-                                class="card-action-btn"
-                                use:tooltip={$t('downloads.openLink')}
-                                onclick={(e) => handleOpenLink(e, singleItem.url)}
-                                ><Icon name="link" size={14} /></button
-                              >
-                              <button
-                                class="card-action-btn delete"
-                                use:tooltip={$t('downloads.delete')}
-                                onclick={(e) => handleDelete(e, singleItem.id)}
-                                ><Icon name="trash" size={14} /></button
-                              >
-                            </div>
-                          </div>
-                        {:else if hoveredItemId === singleItem.id && fileMissing}
-                          <div class="card-overlay missing">
-                            <div class="card-actions-bar">
-                              <button
-                                class="card-action-btn"
-                                use:tooltip={$t('downloads.redownload')}
-                                onclick={(e) => handleRedownload(e, singleItem.url)}
-                                ><Icon name="download" size={14} /></button
-                              >
-                              <button
-                                class="card-action-btn"
-                                use:tooltip={$t('downloads.openLink')}
-                                onclick={(e) => handleOpenLink(e, singleItem.url)}
-                                ><Icon name="link" size={14} /></button
-                              >
-                              <button
-                                class="card-action-btn delete"
-                                use:tooltip={$t('downloads.delete')}
-                                onclick={(e) => handleDelete(e, singleItem.id)}
-                                ><Icon name="trash" size={14} /></button
-                              >
-                            </div>
-                          </div>
-                        {/if}
+                    {/if}
+                    {#if item.duration > 0}
+                      <span class="duration-badge">{formatDuration(item.duration)}</span>
+                    {/if}
+                    <span class="type-badge">{item.extension.toUpperCase()}</span>
+                    {#if fileMissing}
+                      <div class="missing-file-overlay" use:tooltip={$t('downloads.fileMissing')}>
+                        <Icon name="trash" size={24} />
                       </div>
-                      <div class="card-info">
-                        <!-- svelte-ignore a11y_click_events_have_key_events -->
-                        <!-- svelte-ignore a11y_no_static_element_interactions -->
-                        <span
-                          class="card-title clickable"
-                          onclick={(e) => handleOpenVideoView(e, singleItem)}
-                          title={$t('downloads.openInApp')}>{singleItem.title}</span
+                    {/if}
+                    {#if hoveredItemId === item.id && !fileMissing}
+                      <div class="card-overlay">
+                        <button
+                          class="play-overlay"
+                          onclick={(e) => handlePlayFile(e, item.filePath)}
+                          use:tooltip={$t('downloads.play')}
                         >
-                        <div class="card-meta">
-                          <!-- svelte-ignore a11y_click_events_have_key_events -->
-                          <!-- svelte-ignore a11y_no_static_element_interactions -->
-                          <span
-                            class="card-author clickable"
-                            onclick={(e) => handleOpenChannelView(e, singleItem)}
-                            title={$t('downloads.openAuthor')}>{singleItem.author}</span
+                          <Icon name="play" size={24} />
+                        </button>
+                        <div class="card-actions-bar">
+                          <button
+                            class="card-action-btn"
+                            use:tooltip={$t('downloads.openFolder')}
+                            onclick={(e) => handleOpenFile(e, item.filePath)}
                           >
-                          <span class="card-size">{formatFileSize(singleItem.size)}</span>
+                            <Icon name="folder" size={14} />
+                          </button>
+                          <button
+                            class="card-action-btn"
+                            use:tooltip={$t('downloads.redownload')}
+                            onclick={(e) => handleRedownload(e, item.url)}
+                          >
+                            <Icon name="download" size={14} />
+                          </button>
+                          <button
+                            class="card-action-btn"
+                            use:tooltip={$t('downloads.openLink')}
+                            onclick={(e) => handleOpenLink(e, item.url)}
+                          >
+                            <Icon name="link" size={14} />
+                          </button>
+                          <button
+                            class="card-action-btn delete"
+                            use:tooltip={$t('downloads.delete')}
+                            onclick={(e) => handleDelete(e, item.id)}
+                          >
+                            <Icon name="trash" size={14} />
+                          </button>
                         </div>
                       </div>
+                    {:else if hoveredItemId === item.id && fileMissing}
+                      <div class="card-overlay missing">
+                        <div class="card-actions-bar">
+                          <button
+                            class="card-action-btn"
+                            use:tooltip={$t('downloads.redownload')}
+                            onclick={(e) => handleRedownload(e, item.url)}
+                          >
+                            <Icon name="download" size={14} />
+                          </button>
+                          <button
+                            class="card-action-btn"
+                            use:tooltip={$t('downloads.openLink')}
+                            onclick={(e) => handleOpenLink(e, item.url)}
+                          >
+                            <Icon name="link" size={14} />
+                          </button>
+                          <button
+                            class="card-action-btn delete"
+                            use:tooltip={$t('downloads.delete')}
+                            onclick={(e) => handleDelete(e, item.id)}
+                          >
+                            <Icon name="trash" size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    {/if}
+                  </div>
+                  <div class="card-info">
+                    <!-- svelte-ignore a11y_click_events_have_key_events -->
+                    <!-- svelte-ignore a11y_no_static_element_interactions -->
+                    <span
+                      class="card-title clickable"
+                      onclick={(e) => handleOpenVideoView(e, item)}
+                      title={$t('downloads.openInApp')}
+                    >
+                      {item.title}
+                    </span>
+                    <div class="card-meta">
+                      <!-- svelte-ignore a11y_click_events_have_key_events -->
+                      <!-- svelte-ignore a11y_no_static_element_interactions -->
+                      <span
+                        class="card-author clickable"
+                        onclick={(e) => handleOpenChannelView(e, item)}
+                        title={$t('downloads.openAuthor')}
+                      >
+                        {item.author}
+                      </span>
+                      <span class="card-size">{formatFileSize(item.size)}</span>
                     </div>
-                  {/if}
-                {/each}
-              </div>
+                  </div>
+                </div>
+              {/each}
             </div>
-          {/each}
+          </div>
           <p class="end-message">{$t('downloads.endMessage')}</p>
-          {#if $settings.showHistoryStats && $historyStats.totalDownloads > 0}
-            <div class="stats-bar">
-              <div class="stat-item">
-                <span class="stat-value">{$historyStats.totalDownloads}</span>
-                <span class="stat-label">{$t('downloads.stats.totalDownloads')}</span>
-              </div>
-              <div class="stat-divider"></div>
-              <div class="stat-item">
-                <span class="stat-value">{formatFileSize($historyStats.totalSize)}</span>
-                <span class="stat-label">{$t('downloads.stats.totalSize')}</span>
-              </div>
-              <div class="stat-divider"></div>
-              <div class="stat-item">
-                <span class="stat-value">{formatDuration($historyStats.totalDuration)}</span>
-                <span class="stat-label">{$t('downloads.stats.totalDuration')}</span>
-              </div>
-              <div class="stat-divider"></div>
-              <div class="stat-item">
-                <span class="stat-value">{$historyStats.mostCommonFormat.toUpperCase()}</span>
-                <span class="stat-label">{$t('downloads.stats.mostCommon')}</span>
-              </div>
-            </div>
-          {/if}
         {/if}
       </div>
     {/if}
@@ -1469,7 +1575,7 @@
 
 <style>
   .page {
-    padding: 0 14px 0 16px;
+    padding: 0 8px 0 16px;
     height: 100%;
     display: flex;
     flex-direction: column;
@@ -1483,6 +1589,10 @@
     margin-right: 4px;
     margin-bottom: 4px;
     padding-right: 6px;
+  }
+
+  :global(.app.mobile) .scroll-container {
+    padding-bottom: 120px; /* Space for floating nav bar */
   }
 
   /* Active Downloads Section */
@@ -1730,7 +1840,7 @@
   .active-progress {
     font-size: 14px;
     font-weight: 600;
-    color: var(--accent, rgba(99, 102, 241, 1));
+    color: var(--item-color, var(--accent, rgba(99, 102, 241, 1)));
     min-width: 45px;
     text-align: right;
   }
@@ -1854,23 +1964,41 @@
     flex-shrink: 0;
   }
 
-  /* History playlist header - grid layout for columns */
+  /* History playlist header - same as history-item */
   .history-list .playlist-header-row {
     display: grid;
     grid-template-columns: 60px 1fr 120px 50px 70px 60px 32px;
     gap: 12px;
     align-items: center;
     padding: 10px 12px;
-    background: rgba(255, 255, 255, 0.04);
     border: none;
     width: 100%;
     cursor: pointer;
     color: white;
     text-align: left;
+    border-radius: 8px;
+    transition: background 0.15s;
   }
 
   .history-list .playlist-header-row:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  /* Keyboard focus state for accessibility */
+  .history-list .playlist-header-row:focus {
+    outline: 2px solid rgba(59, 130, 246, 0.6);
+    outline-offset: 2px;
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .history-list .playlist-header-row:focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  /* When expanded, remove bottom radius and show background */
+  .history-list .playlist-header-row.expanded {
+    border-radius: 8px 8px 0 0;
+    background: rgba(255, 255, 255, 0.04);
   }
 
   .playlist-header-row .item-title {
@@ -1879,23 +2007,53 @@
     gap: 6px;
   }
 
-  .playlist-thumb {
+  .playlist-thumb-grid {
     width: 48px;
     height: 36px;
     border-radius: 4px;
     overflow: hidden;
     flex-shrink: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 1px;
+    background: rgba(0, 0, 0, 0.3);
+  }
+
+  .playlist-thumb-grid.single {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.5);
+    padding: 0;
   }
 
-  .playlist-thumb img {
+  .playlist-thumb-grid.single img {
     width: 100%;
     height: 100%;
     object-fit: cover;
+  }
+
+  .playlist-thumb-grid img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 2px;
+  }
+
+  .playlist-thumb-grid .grid-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255, 255, 255, 0.5);
+    grid-column: 1 / -1;
+    grid-row: 1 / -1;
+  }
+
+  .playlist-thumb-grid .grid-empty {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 2px;
   }
 
   .expand-icon {
@@ -1955,6 +2113,21 @@
 
   .playlist-item:last-child {
     border-bottom: none;
+  }
+
+  /* Playlist child items in history view - same layout, subtle background to show grouping */
+  .history-item.playlist-child {
+    border-radius: 0;
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .history-item.playlist-child:hover {
+    background: var(--item-color-hover, rgba(255, 255, 255, 0.06));
+  }
+
+  /* Last child gets bottom rounded corners */
+  .history-item.playlist-child.last-child {
+    border-radius: 0 0 8px 8px;
   }
 
   .playlist-index {
@@ -2094,12 +2267,6 @@
     padding: 12px 12px 8px;
   }
 
-  .date-group {
-    margin-bottom: 8px;
-    content-visibility: auto;
-    contain-intrinsic-size: auto 300px;
-  }
-
   .date-label {
     display: block;
     font-size: 12px;
@@ -2113,7 +2280,7 @@
     grid-template-columns: 60px 1fr 120px 50px 70px 60px 32px;
     gap: 12px;
     align-items: center;
-    padding: 10px 12px;
+    padding: 0 12px;
     border-radius: 8px;
     transition: background 0.15s;
   }
@@ -2189,7 +2356,7 @@
   }
 
   .item-title.clickable:hover {
-    color: var(--accent, #6366f1);
+    color: var(--item-color, var(--accent, #6366f1));
   }
 
   .item-author {
@@ -2206,7 +2373,7 @@
   }
 
   .item-author.clickable:hover {
-    color: var(--accent, #6366f1);
+    color: var(--item-color, var(--accent, #6366f1));
   }
 
   /* Actions */
@@ -2309,6 +2476,12 @@
     text-align: center;
   }
 
+  /* In grid view, make empty state span the entire width */
+  .history-list.grid-view .empty-state {
+    grid-column: 1 / -1;
+    min-height: 300px;
+  }
+
   .empty-hint {
     font-size: 13px;
     color: rgba(255, 255, 255, 0.3);
@@ -2322,20 +2495,34 @@
     color: rgba(255, 255, 255, 0.4);
   }
 
-  /* Grid View */
-  .history-list.grid-view .date-group {
-    margin-bottom: 20px;
-  }
-
-  .history-list.grid-view .date-label {
-    margin-bottom: 12px;
-  }
-
-  .grid-items {
+  /* Grid virtualization styles */
+  .history-list.grid-view:not(.virtualized) {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-    gap: 12px;
-    padding: 0;
+    gap: 10px;
+  }
+
+  .history-list.grid-view:not(.virtualized) .virtual-spacer-grid,
+  .history-list.grid-view:not(.virtualized) .virtual-content-grid {
+    display: contents;
+  }
+
+  .history-list.grid-view.virtualized {
+    display: block;
+    contain: layout style;
+  }
+
+  .virtual-spacer-grid {
+    width: 100%;
+    contain: strict;
+  }
+
+  .virtual-content-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 10px;
+    contain: layout style;
+    will-change: transform;
   }
 
   .grid-card {
@@ -2413,27 +2600,6 @@
     padding: 2px 5px;
     border-radius: 4px;
     letter-spacing: 0.3px;
-  }
-
-  /* Playlist indicator badge */
-  .playlist-badge {
-    position: absolute;
-    top: 6px;
-    right: 6px;
-    display: flex;
-    align-items: center;
-    gap: 3px;
-    background: rgba(0, 0, 0, 0.75);
-    backdrop-filter: blur(4px);
-    color: rgba(255, 255, 255, 0.9);
-    font-size: 9px;
-    font-weight: 600;
-    padding: 3px 6px;
-    border-radius: 4px;
-  }
-
-  .playlist-badge :global(svg) {
-    opacity: 0.8;
   }
 
   .play-overlay {
@@ -2541,7 +2707,7 @@
   }
 
   .card-title.clickable:hover {
-    color: var(--accent, #6366f1);
+    color: var(--item-color, var(--accent, #6366f1));
   }
 
   .card-meta {
@@ -2567,7 +2733,7 @@
   }
 
   .card-author.clickable:hover {
-    color: var(--accent, #6366f1);
+    color: var(--item-color, var(--accent, #6366f1));
   }
 
   .card-size {
@@ -2709,69 +2875,154 @@
       display: flex;
     }
 
-    .playlist-thumb {
+    .playlist-thumb-grid {
       width: 40px;
       height: 30px;
     }
-
-    .stats-bar {
-      flex-wrap: wrap;
-      gap: 16px;
-    }
-
-    .stat-divider {
-      display: none;
-    }
-
-    .stat-item {
-      flex: 1 1 40%;
-      min-width: 80px;
-    }
-
-    /* Grid view on mobile */
-    .grid-items {
-      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-      gap: 10px;
-    }
   }
 
-  /* Statistics Bar */
-  .stats-bar {
+  /* Stats Toggle Button */
+  .stats-toggle-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 24px;
-    padding: 20px;
-    margin: 12px 0 24px;
+    width: 36px;
+    height: 36px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    color: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .stats-toggle-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  .stats-toggle-btn.active {
+    background: var(--accent-alpha, rgba(99, 102, 241, 0.2));
+    border-color: var(--accent, rgba(99, 102, 241, 0.5));
+    color: var(--accent, #6366f1);
+  }
+
+  /* Stats Panel */
+  .stats-panel {
+    margin: 0 0 16px;
+    padding: 16px;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 12px;
+    animation: slideDown 0.2s ease-out;
   }
 
-  .stat-item {
+  @keyframes slideDown {
+    from {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .stat-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 8px;
+  }
+
+  .stat-card :global(svg) {
+    color: var(--accent, #6366f1);
+    opacity: 0.8;
+  }
+
+  .stat-content {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: 4px;
+    gap: 2px;
   }
 
-  .stat-value {
-    font-size: 18px;
-    font-weight: 700;
-    color: var(--accent, rgba(99, 102, 241, 1));
+  .stat-content .stat-value {
+    font-size: 16px;
   }
 
-  .stat-label {
+  .stat-content .stat-label {
+    font-size: 10px;
+  }
+
+  .stats-breakdown {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .breakdown-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .breakdown-title {
     font-size: 11px;
-    font-weight: 500;
+    font-weight: 600;
     color: rgba(255, 255, 255, 0.5);
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
 
-  .stat-divider {
-    width: 1px;
-    height: 32px;
-    background: rgba(255, 255, 255, 0.1);
+  .breakdown-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .breakdown-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  .breakdown-item :global(svg) {
+    opacity: 0.6;
+  }
+
+  .format-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .format-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.8);
+  }
+
+  .format-count {
+    color: var(--accent, #6366f1);
+    font-weight: 700;
   }
 </style>

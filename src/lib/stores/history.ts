@@ -75,22 +75,44 @@ function createHistoryStore() {
     filter: 'all',
     sort: 'date',
   });
+  
+  let initialized = false;
+  let initPromise: Promise<void> | null = null;
+
+  async function ensureInitialized() {
+    if (initialized) return;
+    
+    if (initPromise) {
+      await initPromise;
+      return;
+    }
+    
+    initPromise = (async () => {
+      try {
+        store = await load('history.json', { autoSave: false, defaults: {} });
+        const items = ((await store.get('items')) as HistoryItem[]) || [];
+        update((state) => ({ ...state, items }));
+        console.log(`[History] Lazy loaded ${items.length} items`);
+        initialized = true;
+      } catch (e) {
+        console.error('[History] Failed to initialize:', e);
+        initialized = true; // Mark as initialized even on error to prevent loops
+      }
+    })();
+    
+    await initPromise;
+  }
 
   return {
     subscribe,
 
     async init() {
-      try {
-        store = await load('history.json', { autoSave: false, defaults: {} });
-        const items = ((await store.get('items')) as HistoryItem[]) || [];
-        update((state) => ({ ...state, items }));
-        console.log(`[History] Loaded ${items.length} items`);
-      } catch (e) {
-        console.error('[History] Failed to initialize:', e);
-      }
+      await ensureInitialized();
     },
 
-    add(item: Omit<HistoryItem, 'id' | 'downloadedAt'>) {
+    async add(item: Omit<HistoryItem, 'id' | 'downloadedAt'>) {
+      await ensureInitialized();
+      
       const newItem: HistoryItem = {
         ...item,
         id: crypto.randomUUID(),
@@ -131,7 +153,8 @@ function createHistoryStore() {
       update((state) => ({ ...state, sort }));
     },
 
-    exportData(): string {
+    async exportData(): Promise<string> {
+      await ensureInitialized();
       const state = get({ subscribe });
       return JSON.stringify(state.items, null, 2);
     },
@@ -156,7 +179,8 @@ function createHistoryStore() {
       }
     },
 
-    getItems(): HistoryItem[] {
+    async getItems(): Promise<HistoryItem[]> {
+      await ensureInitialized();
       return get({ subscribe }).items;
     },
 
@@ -172,6 +196,11 @@ function createHistoryStore() {
 
 export const history = createHistoryStore();
 export const historyReady = writable(false);
+
+const dateRefreshTrigger = writable(0);
+export function refreshDateGroups() {
+  dateRefreshTrigger.update(n => n + 1);
+}
 
 export async function initHistory(): Promise<void> {
   await history.init();
@@ -210,7 +239,7 @@ export const filteredHistory = derived(history, ($history) => {
   return items;
 });
 
-export const groupedHistory = derived([filteredHistory, locale], ([$items, _locale]) => {
+export const groupedHistory = derived([filteredHistory, locale, dateRefreshTrigger], ([$items, _locale, _refresh]) => {
   const groups: { label: string; items: HistoryItem[] }[] = [];
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -263,8 +292,8 @@ export interface HistoryPlaylistGroup {
 }
 
 export const playlistGroupedHistory = derived(
-  [filteredHistory, locale, history],
-  ([$items, _locale, $history]) => {
+  [filteredHistory, locale, history, dateRefreshTrigger],
+  ([$items, _locale, $history, _refresh]) => {
     const groups: { label: string; items: (HistoryItem | HistoryPlaylistGroup)[] }[] = [];
     const sortType = $history.sort;
 

@@ -113,7 +113,6 @@
       logs.info('formats', `Fetching formats for: ${url}`);
 
       if (isAndroid()) {
-        // Use Android bridge
         await waitForAndroidYtDlp();
         const info = await getVideoInfoOnAndroid(url);
 

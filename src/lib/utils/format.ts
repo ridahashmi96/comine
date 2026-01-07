@@ -188,7 +188,22 @@ export function isValidMediaUrl(text: string, patterns: string[]): boolean {
     const urlObj = new URL(text);
     if (!['http:', 'https:'].includes(urlObj.protocol)) return false;
 
-    return patterns.some((pattern) => urlObj.hostname.includes(pattern));
+    const matchesPattern = patterns.some((pattern) => urlObj.hostname.includes(pattern));
+    if (matchesPattern) return true;
+
+    const hostname = urlObj.hostname.toLowerCase();
+    const commonVideoSites = [
+      // YouTube & Google
+      'youtube.com', 'youtu.be', 'music.youtube.com',
+      // Chinese platforms (lux)
+      'bilibili.com', 'b23.tv', 'douyin.com', 'iqiyi.com', 'youku.com', 
+      'qq.com', 'mgtv.com', 'le.com', 'weibo.com', 'kuaishou.com',
+      'xiaohongshu.com', 'xhslink.com', 'huya.com', 'douyu.com', 'acfun.cn',
+      // Other common platforms (yt-dlp)
+      'twitter.com', 'x.com', 'tiktok.com', 'instagram.com', 'facebook.com',
+      'twitch.tv', 'vimeo.com', 'dailymotion.com', 'nicovideo.jp'
+    ];
+    return commonVideoSites.some(site => hostname.includes(site));
   } catch {
     return false;
   }

@@ -79,6 +79,17 @@
   const GRID_INFO_EST_HEIGHT = 64;
   const BUFFER_COUNT = 5;
   const MASK_SIZE = 25;
+  const BOTTOM_PADDING = 12;
+  const BOTTOM_PADDING_MOBILE = 120;
+
+  let isMobile = $state(false);
+  $effect(() => {
+    if (typeof window === 'undefined') return;
+    const checkMobile = () => { isMobile = window.innerWidth <= 480; };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  });
 
   let containerEl: HTMLDivElement | null = $state(null);
   let scrollTop = $state(0);
@@ -130,6 +141,7 @@
   }
 
   let isFastScrolling = $state(false);
+  let failedThumbnails = $state(new Set<string>());
   let lastScrollTime = 0;
   let lastScrollPos = 0;
   let scrollEndTimer: ReturnType<typeof setTimeout> | null = null;
@@ -204,6 +216,17 @@
   let itemsPerRow = $derived(getItemsPerRowFor(viewMode, containerWidth));
   let itemHeight = $derived(getItemHeightFor(viewMode, containerWidth));
 
+  let gridCardWidth = $derived.by(() => {
+    if (viewMode !== 'grid' || containerWidth <= 0) return 150;
+    const perRow = getGridItemsPerRow(containerWidth);
+    return (containerWidth - GRID_GAP * Math.max(0, perRow - 1)) / perRow;
+  });
+
+  let gridCardHeight = $derived.by(() => {
+    const thumbHeight = (gridCardWidth * 9) / 16;
+    return Math.round(thumbHeight + 54); 
+  });
+
   let visibleRange = $derived.by(() => {
     if (items.length <= 50) return { startIdx: 0, endIdx: items.length };
 
@@ -225,10 +248,12 @@
     return (rawVisibleItems as any[]).map(mapItem);
   });
 
+  let bottomPadding = $derived(isMobile ? BOTTOM_PADDING_MOBILE : BOTTOM_PADDING);
+
   let totalHeight = $derived.by(() => {
     if (items.length <= 50) return 'auto';
     const rows = Math.ceil(items.length / itemsPerRow);
-    return `${rows * itemHeight}px`;
+    return `${rows * itemHeight + bottomPadding}px`;
   });
 
   let offsetTop = $derived.by(() => {
@@ -321,7 +346,7 @@
                 <Checkbox checked={isSelected} />
               </div>
               <div class="item-thumb">
-                {#if item.thumbnail}
+                {#if item.thumbnail && !failedThumbnails.has(item.id)}
                   <img
                     src={item.thumbnail}
                     alt=""
@@ -329,6 +354,7 @@
                     decoding="async"
                     fetchpriority="low"
                     referrerpolicy="no-referrer"
+                    onerror={() => { failedThumbnails = new Set([...failedThumbnails, item.id]); }}
                   />
                 {:else}
                   <div class="thumb-placeholder">
@@ -370,6 +396,7 @@
           {/each}
         </div>
       </div>
+      <div class="bottom-spacer"></div>
     {/if}
   </div>
 {:else}
@@ -380,7 +407,7 @@
     onscroll={handleScroll}
     bind:clientHeight={containerHeight}
     bind:clientWidth={containerWidth}
-    style={maskStyle}
+    style="{maskStyle} --card-height: {gridCardHeight}px;"
   >
     {#if loading}
       {#each Array(6) as _, i (i)}
@@ -404,7 +431,7 @@
             {@const isSelected = isItemSelected(item.id)}
             {@const settings = getSettings(item)}
             {@const isHovered = hoveredItemId === item.id}
-            {@const thumbSrc = item.thumbnail
+            {@const thumbSrc = item.thumbnail && !failedThumbnails.has(item.id)
               ? isFastScrolling
                 ? item.thumbnail
                 : normalizeYouTubeThumbnailUrl(item.thumbnail, 'mq')
@@ -427,6 +454,7 @@
                     decoding="async"
                     fetchpriority="low"
                     referrerpolicy="no-referrer"
+                    onerror={() => { failedThumbnails = new Set([...failedThumbnails, item.id]); }}
                   />
                 {:else}
                   <div class="card-thumb-placeholder">
@@ -493,6 +521,7 @@
           {/each}
         </div>
       </div>
+      <div class="bottom-spacer"></div>
     {/if}
   </div>
 {/if}
@@ -501,7 +530,6 @@
   /* ===== List View ===== */
   .list-view {
     display: block;
-    contain: layout style;
     overflow-y: auto;
     max-height: 100%;
     flex: 1;
@@ -510,9 +538,13 @@
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
     touch-action: pan-y;
-    margin-right: 4px;
-    margin-bottom: 4px;
-    padding-right: 6px;
+    padding-bottom: 12px;
+  }
+
+  @media (max-width: 480px) {
+    .list-view {
+      padding-bottom: 120px !important;
+    }
   }
 
   .list-view:not(.virtualized) .virtual-spacer,
@@ -689,20 +721,17 @@
 
   /* ===== Grid View ===== */
   .grid-view {
-    contain: layout style;
-    padding-right: 6px;
     overflow-y: auto;
     max-height: 100%;
     flex: 1;
     min-height: 0;
     will-change: scroll-position;
-    margin-right: 4px;
-    margin-bottom: 4px;
+    padding-bottom: 12px;
   }
 
   @media (max-width: 480px) {
     .grid-view {
-      padding-right: 1px;
+      padding-bottom: 120px !important;
     }
   }
 
@@ -734,12 +763,14 @@
   }
 
   .grid-card {
+    display: flex;
+    flex-direction: column;
+    height: var(--card-height, auto);
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 8px;
     overflow: hidden;
     transition:
-      transform 0.2s,
       background 0.2s,
       border-color 0.2s;
     cursor: pointer;
@@ -750,7 +781,6 @@
   .grid-card:hover {
     background: rgba(255, 255, 255, 0.05);
     border-color: rgba(255, 255, 255, 0.1);
-    transform: translateY(-2px);
   }
 
   .grid-card.selected {
@@ -761,12 +791,16 @@
   /* Card thumbnail */
   .card-thumb {
     position: relative;
+    width: 100%;
     aspect-ratio: 16 / 9;
     background: rgba(0, 0, 0, 0.3);
     overflow: hidden;
+    flex-shrink: 0;
   }
 
   .card-thumb img {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
     object-fit: cover;
@@ -924,6 +958,7 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
+    flex: 1;
   }
 
   .card-title {
@@ -947,7 +982,6 @@
     white-space: nowrap;
   }
 
-  /* ===== Empty & Skeleton ===== */
   .empty-state {
     display: flex;
     flex-direction: column;
@@ -1034,9 +1068,13 @@
     width: 50%;
   }
 
-  /* ===== Mobile ===== */
   @media (max-width: 560px) {
-    .grid-view {
+    .grid-view:not(.virtualized) {
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      gap: 8px;
+    }
+
+    .virtual-content-grid {
       grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
       gap: 8px;
     }
@@ -1059,6 +1097,18 @@
     .mode-badge {
       width: 24px;
       height: 24px;
+    }
+  }
+
+  .bottom-spacer {
+    flex-shrink: 0;
+    height: 12px;
+    width: 100%;
+  }
+
+  @media (max-width: 480px) {
+    .bottom-spacer {
+      height: 120px;
     }
   }
 </style>

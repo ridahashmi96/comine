@@ -15,7 +15,7 @@
   }
 
   :global(html, body) {
-    background: rgb(24, 24, 28) !important;
+    background: transparent !important;
     overflow: hidden;
     font-family:
       'Jost',
@@ -33,6 +33,7 @@
   .notification-root {
     width: 100%;
     height: 100vh;
-    background: rgb(24, 24, 28);
+    background: transparent;
+    padding: 2px;
   }
 </style>

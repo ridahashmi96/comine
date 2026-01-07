@@ -65,6 +65,24 @@ export async function extractDominantColor(imageUrl: string): Promise<RGB | null
     return cached;
   }
 
+  // Try fetching as blob first to bypass CORS issues
+  try {
+    const response = await fetch(imageUrl, { mode: 'cors' });
+    if (response.ok) {
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const result = await extractFromBlobUrl(blobUrl);
+      URL.revokeObjectURL(blobUrl);
+      if (result) {
+        setCacheEntry(imageUrl, result);
+        return result;
+      }
+    }
+  } catch {
+    // CORS fetch failed, try direct image load
+  }
+
+  // Fallback to direct image load
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
@@ -79,73 +97,14 @@ export async function extractDominantColor(imageUrl: string): Promise<RGB | null
     img.onload = () => {
       clearTimeout(timeout);
       try {
-        const shared = getSharedCanvas();
-        if (!shared) {
-          resolve(null);
-          return;
-        }
-        const { ctx } = shared;
-
-        // Clear and draw
-        ctx.clearRect(0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
-        ctx.drawImage(img, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
-
-        // Clean up image reference to allow GC
+        const result = extractFromImage(img);
         img.onload = null;
         img.onerror = null;
         img.src = '';
-
-        const imageData = ctx.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
-        const pixels = imageData.data;
-
-        let bestColor: RGB = { r: 99, g: 102, b: 241 };
-        let bestScore = 0;
-
-        for (let i = 0; i < pixels.length; i += 16) {
-          const r = pixels[i];
-          const g = pixels[i + 1];
-          const b = pixels[i + 2];
-          const a = pixels[i + 3];
-
-          if (a < 128) continue;
-
-          const max = Math.max(r, g, b);
-          const min = Math.min(r, g, b);
-          const lightness = (max + min) / 2 / 255;
-          const saturation =
-            max === min ? 0 : (max - min) / (1 - Math.abs(2 * lightness - 1)) / 255;
-
-          const lightnessScore = 1 - Math.abs(lightness - 0.5) * 2;
-          const score = saturation * lightnessScore * (1 - Math.abs(lightness - 0.4));
-
-          if (score > bestScore && saturation > 0.2) {
-            bestScore = score;
-            bestColor = { r, g, b };
-          }
+        if (result) {
+          setCacheEntry(imageUrl, result);
         }
-
-        if (bestScore < 0.1) {
-          for (let i = 0; i < pixels.length; i += 16) {
-            const r = pixels[i];
-            const g = pixels[i + 1];
-            const b = pixels[i + 2];
-            const a = pixels[i + 3];
-
-            if (a < 128) continue;
-
-            const max = Math.max(r, g, b);
-            const min = Math.min(r, g, b);
-            if (max - min > 30) {
-              bestColor = { r, g, b };
-              break;
-            }
-          }
-        }
-
-        const boosted = boostSaturation(bestColor, 1.2);
-
-        setCacheEntry(imageUrl, boosted);
-        resolve(boosted);
+        resolve(result);
       } catch {
         resolve(null);
       }
@@ -161,6 +120,98 @@ export async function extractDominantColor(imageUrl: string): Promise<RGB | null
 
     img.src = imageUrl;
   });
+}
+
+/**
+ * Extract color from a blob URL (no CORS issues)
+ */
+async function extractFromBlobUrl(blobUrl: string): Promise<RGB | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    
+    img.onload = () => {
+      const result = extractFromImage(img);
+      img.onload = null;
+      img.onerror = null;
+      resolve(result);
+    };
+
+    img.onerror = () => {
+      img.onload = null;
+      img.onerror = null;
+      resolve(null);
+    };
+
+    img.src = blobUrl;
+  });
+}
+
+/**
+ * Extract dominant color from an already loaded image element
+ */
+function extractFromImage(img: HTMLImageElement): RGB | null {
+  try {
+    const shared = getSharedCanvas();
+    if (!shared) {
+      return null;
+    }
+    const { ctx } = shared;
+
+    // Clear and draw
+    ctx.clearRect(0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
+    ctx.drawImage(img, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
+
+    const imageData = ctx.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
+    const pixels = imageData.data;
+
+    let bestColor: RGB = { r: 99, g: 102, b: 241 };
+    let bestScore = 0;
+
+    for (let i = 0; i < pixels.length; i += 16) {
+      const r = pixels[i];
+      const g = pixels[i + 1];
+      const b = pixels[i + 2];
+      const a = pixels[i + 3];
+
+      if (a < 128) continue;
+
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const lightness = (max + min) / 2 / 255;
+      const saturation =
+        max === min ? 0 : (max - min) / (1 - Math.abs(2 * lightness - 1)) / 255;
+
+      const lightnessScore = 1 - Math.abs(lightness - 0.5) * 2;
+      const score = saturation * lightnessScore * (1 - Math.abs(lightness - 0.4));
+
+      if (score > bestScore && saturation > 0.2) {
+        bestScore = score;
+        bestColor = { r, g, b };
+      }
+    }
+
+    if (bestScore < 0.1) {
+      for (let i = 0; i < pixels.length; i += 16) {
+        const r = pixels[i];
+        const g = pixels[i + 1];
+        const b = pixels[i + 2];
+        const a = pixels[i + 3];
+
+        if (a < 128) continue;
+
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        if (max - min > 30) {
+          bestColor = { r, g, b };
+          break;
+        }
+      }
+    }
+
+    return boostSaturation(bestColor, 1.2);
+  } catch {
+    return null;
+  }
 }
 
 /**

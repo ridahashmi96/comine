@@ -131,7 +131,18 @@
     | 'queue'
     | 'settings'
     | 'logs'
-    | 'github';
+    | 'github'
+    | 'platform_youtube'
+    | 'platform_youtube_music'
+    | 'platform_bilibili'
+    | 'platform_tiktok'
+    | 'platform_twitter'
+    | 'platform_instagram'
+    | 'platform_twitch'
+    | 'platform_vimeo'
+    | 'platform_facebook'
+    | 'platform_weibo'
+    | 'platform_generic';
 
   interface Props {
     name: IconName;

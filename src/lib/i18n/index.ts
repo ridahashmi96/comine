@@ -33,7 +33,7 @@ function getInitialLocale(): Locale {
   }
 
   const browserLang = navigator.language.split('-')[0];
-  if (browserLang in translations) {
+  if (browserLang && browserLang in translations) {
     return browserLang as Locale;
   }
 
@@ -50,10 +50,9 @@ if (typeof window !== 'undefined') {
     document.documentElement.lang = value;
   });
 
-  (window as any).i18n = {
-    setLocale: (code: Locale) => locale.set(code),
-    getLocale: () => get(locale),
-    locales: Object.keys(translations),
+  window.i18n = {
+    t: (key: string) => translate(key),
+    locale: get(locale),
   };
 }
 

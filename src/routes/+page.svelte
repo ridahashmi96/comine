@@ -18,26 +18,19 @@
   import Modal from '$lib/components/Modal.svelte';
   import Checkbox from '$lib/components/Checkbox.svelte';
   import Divider from '$lib/components/Divider.svelte';
+  import CollapsibleBlock from '$lib/components/CollapsibleBlock.svelte';
   import PlaylistBuilder, {
     type PlaylistSelection,
     type SelectedEntry,
     type EntrySettings,
     type PlaylistEntry,
   } from '$lib/components/PlaylistBuilder.svelte';
-  import TrackBuilder from '$lib/components/TrackBuilder.svelte';
+  import TrackBuilder, { type TrackSelection } from '$lib/components/TrackBuilder.svelte';
   import ChannelBuilder, { type ChannelSelection } from '$lib/components/ChannelBuilder.svelte';
   import { type ChannelEntry } from '$lib/stores/mediaCache';
   import ViewStack, { type ViewInstance } from '$lib/components/ViewStack.svelte';
   import type { IconName } from '$lib/components/Icon.svelte';
 
-  interface TrackSelection {
-    formatString: string;
-    downloadMode: 'auto' | 'audio' | 'mute';
-    title?: string;
-    author?: string;
-    thumbnail?: string;
-    duration?: number;
-  }
   import { isAndroid, isAndroidYtDlpReady, getPlaylistInfoOnAndroid } from '$lib/utils/android';
   import {
     settings,
@@ -65,11 +58,50 @@
   let lastYtmAutoSwitchUrl = $state('');
   let trackSelection = $state<TrackSelection | null>(null);
 
-  // Check if URL is a supported site for format/track selection
+  let scrollMaskStyle = $state('');
+  const MASK_SIZE = 25;
+
+  function handleViewScroll(event: Event) {
+    const container = event.target as HTMLDivElement;
+    if (!container) return;
+
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    const maxScroll = scrollHeight - clientHeight;
+
+    if (maxScroll <= 0) {
+      scrollMaskStyle = '';
+      return;
+    }
+
+    const topProgress = Math.min(scrollTop / MASK_SIZE, 1);
+    const bottomProgress = Math.min((maxScroll - scrollTop) / MASK_SIZE, 1);
+
+    const topFade = topProgress > 0 
+      ? `transparent, black ${MASK_SIZE * topProgress}px` 
+      : 'black, black 0px';
+    const bottomFade = bottomProgress > 0 
+      ? `black calc(100% - ${MASK_SIZE * bottomProgress}px), transparent` 
+      : 'black 100%, black 100%';
+
+    scrollMaskStyle = `mask-image: linear-gradient(to bottom, ${topFade}, ${bottomFade}); -webkit-mask-image: linear-gradient(to bottom, ${topFade}, ${bottomFade});`;
+  }
+
+  import { detectBackendForUrl } from '$lib/utils/backend-detection';
+
+  let ytdlpInstalled = $derived($deps.ytdlp?.installed ?? false);
+  let luxInstalled = $derived($deps.lux?.installed ?? false);
+  let aria2Installed = $derived($deps.aria2?.installed ?? false);
+  let ffmpegInstalled = $derived($deps.ffmpeg?.installed ?? false);
+
   function checkIsYouTubeUrl(urlStr: string): boolean {
     if (!urlStr.trim()) return false;
     const u = urlStr.toLowerCase();
     return u.includes('youtube.com') || u.includes('youtu.be');
+  }
+
+  function checkIsLuxUrl(urlStr: string): boolean {
+    if (!urlStr.trim()) return false;
+    return detectBackendForUrl(urlStr) === 'lux';
   }
 
   function checkIsPlaylistUrl(urlStr: string): boolean {
@@ -82,12 +114,39 @@
     return checkIsYouTubeUrl(urlStr) && isLikelyChannel(urlStr.trim());
   }
 
+  type PlatformIcon = 'platform_youtube' | 'platform_youtube_music' | 'platform_bilibili' | 'platform_tiktok' | 'platform_twitter' | 'platform_instagram' | 'platform_twitch' | 'platform_vimeo' | 'platform_facebook' | 'platform_weibo' | 'platform_generic';
+  
+  function getPlatformIcon(urlStr: string): PlatformIcon {
+    if (!urlStr.trim()) return 'platform_generic';
+    const u = urlStr.toLowerCase();
+    
+    if (u.includes('music.youtube.com')) return 'platform_youtube_music';
+    if (u.includes('youtube.com') || u.includes('youtu.be')) return 'platform_youtube';
+    if (u.includes('bilibili.com') || u.includes('b23.tv')) return 'platform_bilibili';
+    if (u.includes('tiktok.com') || u.includes('douyin.com') || u.includes('iesdouyin.com')) return 'platform_tiktok';
+    if (u.includes('twitter.com') || u.includes('x.com')) return 'platform_twitter';
+    if (u.includes('instagram.com')) return 'platform_instagram';
+    if (u.includes('twitch.tv')) return 'platform_twitch';
+    if (u.includes('vimeo.com')) return 'platform_vimeo';
+    if (u.includes('facebook.com') || u.includes('fb.watch')) return 'platform_facebook';
+    if (u.includes('weibo.com')) return 'platform_weibo';
+    
+    return 'platform_generic';
+  }
+
   // Derived state for current URL detection
   let isYouTubeUrl = $derived(checkIsYouTubeUrl(url));
+  let isLuxUrl = $derived(checkIsLuxUrl(url));
   let isPlaylistUrl = $derived(checkIsPlaylistUrl(url));
   let isChannelUrl = $derived(checkIsChannelUrl(url));
+  let isVideoUrl = $derived(isYouTubeUrl || isLuxUrl);
+  let platformIcon = $derived(getPlatformIcon(url));
 
-  // Check for URL params on mount
+  let activeBackend = $derived.by(() => {
+    if (!url.trim()) return null;
+    return detectBackendForUrl(url);
+  });
+
   $effect(() => {
     const urlParam = $page.url.searchParams.get('url');
     const openPlaylist = $page.url.searchParams.get('openPlaylist') === '1';
@@ -126,7 +185,10 @@
 
   let isDownloading = $derived($activeDownloadsCount > 0);
 
-  let optionsExpanded = $state(true);
+  let generalExpanded = $state(true);
+  let ytdlpExpanded = $state(true);
+  let luxExpanded = $state(false);
+  let advancedExpanded = $state(false);
 
   let selectedPreset = $state($settings.selectedPreset ?? 'best');
   let videoQuality = $state<VideoQuality>($settings.defaultVideoQuality ?? 'max');
@@ -134,13 +196,19 @@
   let audioQuality = $state<AudioQuality>($settings.defaultAudioQuality ?? 'best');
   let convertToMp4 = $state($settings.convertToMp4 ?? false);
   let remux = $state($settings.remux ?? true);
-  let useHLS = $state($settings.useHLS ?? true);
   let clearMetadata = $state($settings.clearMetadata ?? false);
   let dontShowInHistory = $state($settings.dontShowInHistory ?? false);
+  let usePlaylistFolders = $state($settings.usePlaylistFolders ?? true);
   let useAria2 = $state($settings.useAria2 ?? false);
   let ignoreMixes = $state($settings.ignoreMixes ?? true);
   let cookiesFromBrowser = $state($settings.cookiesFromBrowser ?? '');
   let customCookies = $state($settings.customCookies ?? '');
+  let sponsorBlock = $state($settings.sponsorBlock ?? false);
+  let chapters = $state($settings.chapters ?? true);
+  let embedSubtitles = $state($settings.embedSubtitles ?? false);
+  let subtitleLanguages = $state($settings.subtitleLanguages ?? 'en,ru');
+  let embedThumbnail = $state($settings.embedThumbnail ?? true);
+  let downloadSpeedLimit = $state($settings.downloadSpeedLimit ?? 0);
 
   let settingsInitialized = false;
   $effect(() => {
@@ -151,14 +219,43 @@
       audioQuality = $settings.defaultAudioQuality ?? 'best';
       convertToMp4 = $settings.convertToMp4 ?? false;
       remux = $settings.remux ?? true;
-      useHLS = $settings.useHLS ?? true;
       clearMetadata = $settings.clearMetadata ?? false;
       dontShowInHistory = $settings.dontShowInHistory ?? false;
+      usePlaylistFolders = $settings.usePlaylistFolders ?? true;
       useAria2 = $settings.useAria2 ?? false;
       ignoreMixes = $settings.ignoreMixes ?? true;
       cookiesFromBrowser = $settings.cookiesFromBrowser ?? '';
       customCookies = $settings.customCookies ?? '';
+      sponsorBlock = $settings.sponsorBlock ?? false;
+      chapters = $settings.chapters ?? true;
+      embedSubtitles = $settings.embedSubtitles ?? false;
+      subtitleLanguages = $settings.subtitleLanguages ?? 'en,ru';
+      embedThumbnail = $settings.embedThumbnail ?? true;
+      downloadSpeedLimit = $settings.downloadSpeedLimit ?? 0;
       settingsInitialized = true;
+    }
+  });
+
+  $effect(() => {
+    if (settingsInitialized) {
+      if (!aria2Installed && useAria2) {
+        useAria2 = false;
+        saveSettings();
+      }
+      if (!ffmpegInstalled) {
+        let needsSave = false;
+        if (remux) {
+          remux = false;
+          needsSave = true;
+        }
+        if (convertToMp4) {
+          convertToMp4 = false;
+          needsSave = true;
+        }
+        if (needsSave) {
+          saveSettings();
+        }
+      }
     }
   });
 
@@ -170,13 +267,19 @@
       defaultAudioQuality: audioQuality,
       convertToMp4,
       remux,
-      useHLS,
       clearMetadata,
       dontShowInHistory,
+      usePlaylistFolders,
       useAria2,
       ignoreMixes,
       cookiesFromBrowser,
       customCookies,
+      sponsorBlock,
+      chapters,
+      embedSubtitles,
+      subtitleLanguages,
+      embedThumbnail,
+      downloadSpeedLimit,
     });
   }
 
@@ -186,6 +289,8 @@
   let cookiesModalOpen = $state(false);
   let customCookiesModalOpen = $state(false);
   let customCookiesInput = $state('');
+  let speedLimitModalOpen = $state(false);
+  let customSpeedInput = $state('');
 
   let createPresetModalOpen = $state(false);
   let newPresetName = $state('');
@@ -253,12 +358,15 @@
       audioQuality = customPreset.audioQuality;
       remux = customPreset.remux;
       convertToMp4 = customPreset.convertToMp4;
-      useHLS = customPreset.useHLS;
       clearMetadata = customPreset.clearMetadata;
       dontShowInHistory = customPreset.dontShowInHistory;
       useAria2 = customPreset.useAria2;
       ignoreMixes = customPreset.ignoreMixes;
       cookiesFromBrowser = customPreset.cookiesFromBrowser;
+      sponsorBlock = customPreset.sponsorBlock ?? false;
+      chapters = customPreset.chapters ?? true;
+      embedSubtitles = customPreset.embedSubtitles ?? false;
+      embedThumbnail = customPreset.embedThumbnail ?? true;
       saveSettings();
       return;
     }
@@ -268,16 +376,37 @@
         videoQuality = 'max';
         downloadMode = 'auto';
         audioQuality = 'best';
+        remux = true;
+        convertToMp4 = false;
+        clearMetadata = false;
+        sponsorBlock = false;
+        chapters = true;
+        embedSubtitles = false;
+        embedThumbnail = true;
         break;
       case 'small':
         videoQuality = '480p';
         downloadMode = 'auto';
         audioQuality = '192';
+        remux = true;
+        convertToMp4 = true;
+        clearMetadata = false;
+        sponsorBlock = false;
+        chapters = true;
+        embedSubtitles = false;
+        embedThumbnail = false;
         break;
       case 'music':
         videoQuality = 'max';
         downloadMode = 'audio';
         audioQuality = 'best';
+        remux = true;
+        convertToMp4 = false;
+        clearMetadata = false;
+        sponsorBlock = false;
+        chapters = false;
+        embedSubtitles = false;
+        embedThumbnail = true;
         break;
     }
     saveSettings();
@@ -298,12 +427,15 @@
       audioQuality,
       remux,
       convertToMp4,
-      useHLS,
       clearMetadata,
       dontShowInHistory,
       useAria2,
       ignoreMixes,
       cookiesFromBrowser,
+      sponsorBlock,
+      chapters,
+      embedSubtitles,
+      embedThumbnail,
     };
 
     const updatedPresets = [...($settings.customPresets ?? []), newPreset];
@@ -337,9 +469,6 @@
       case 'remux':
         remux = value;
         break;
-      case 'useHLS':
-        useHLS = value;
-        break;
       case 'clearMetadata':
         clearMetadata = value;
         break;
@@ -351,6 +480,18 @@
         break;
       case 'ignoreMixes':
         ignoreMixes = value;
+        break;
+      case 'sponsorBlock':
+        sponsorBlock = value;
+        break;
+      case 'chapters':
+        chapters = value;
+        break;
+      case 'embedSubtitles':
+        embedSubtitles = value;
+        break;
+      case 'embedThumbnail':
+        embedThumbnail = value;
         break;
     }
     selectedPreset = 'custom';
@@ -431,19 +572,24 @@
     if (!downloadUrl) return;
 
     logs.info('download', `Using custom tracks: ${selection.formatString}`);
+    
     const queueId = queue.add(downloadUrl, {
       videoQuality: selection.formatString,
       downloadMode: selection.downloadMode,
       audioQuality: 'best',
       convertToMp4,
       remux,
-      useHLS,
-      clearMetadata,
+      clearMetadata: selection.embedMetadata === false ? true : clearMetadata,
       dontShowInHistory,
       useAria2,
       ignoreMixes,
       cookiesFromBrowser,
       customCookies,
+      sponsorBlock: selection.sponsorblock && selection.sponsorblock.length > 0 ? true : sponsorBlock,
+      chapters: selection.embedChapters ?? chapters,
+      embedSubtitles: selection.embedSubs ?? embedSubtitles,
+      subtitleLanguages: selection.subLangs ?? subtitleLanguages,
+      embedThumbnail: selection.embedThumbnail ?? embedThumbnail,
       prefetchedInfo: {
         title: selection.title,
         author: selection.author,
@@ -471,13 +617,17 @@
       audioQuality,
       convertToMp4,
       remux,
-      useHLS,
       clearMetadata,
       dontShowInHistory,
       useAria2,
       ignoreMixes,
       cookiesFromBrowser,
       customCookies,
+      sponsorBlock,
+      chapters,
+      embedSubtitles,
+      subtitleLanguages,
+      embedThumbnail,
     };
 
     const queueEntries = selection.entries.map((e) => ({
@@ -487,6 +637,12 @@
       author: e.entry.uploader ?? undefined,
       duration: e.entry.duration ?? undefined,
       downloadMode: e.settings.downloadMode,
+      sponsorBlock: e.settings.skipSponsors,
+      chapters: e.settings.embedChapters,
+      embedSubtitles: e.settings.embedSubs,
+      subtitleLanguages: e.settings.subLangs,
+      embedThumbnail: e.settings.embedThumbnail,
+      clearMetadata: e.settings.embedMetadata === false,
     }));
 
     queue.addPlaylist(
@@ -529,13 +685,17 @@
       audioQuality,
       convertToMp4,
       remux,
-      useHLS,
       clearMetadata,
       dontShowInHistory,
       useAria2,
       ignoreMixes,
       cookiesFromBrowser,
       customCookies,
+      sponsorBlock,
+      chapters,
+      embedSubtitles,
+      subtitleLanguages,
+      embedThumbnail,
     };
 
     const queueEntries = selection.entries.map((e) => ({
@@ -545,6 +705,12 @@
       author: selection.channelInfo.name,
       duration: e.entry.duration ?? undefined,
       downloadMode: e.settings.downloadMode,
+      sponsorBlock: e.settings.skipSponsors,
+      chapters: e.settings.embedChapters,
+      embedSubtitles: e.settings.embedSubs,
+      subtitleLanguages: e.settings.subLangs,
+      embedThumbnail: e.settings.embedThumbnail,
+      clearMetadata: e.settings.embedMetadata === false,
     }));
 
     queue.addPlaylist(
@@ -580,7 +746,7 @@
     previewData?: { name?: string; thumbnail?: string }
   ) {
     navigation.openChannel(channelUrl, {
-      title: previewData?.name, // Channel name stored as title in MediaPreview
+      title: previewData?.name,
       thumbnail: previewData?.thumbnail,
     });
   }
@@ -626,13 +792,17 @@
       audioQuality,
       convertToMp4,
       remux,
-      useHLS,
       clearMetadata,
       dontShowInHistory,
       useAria2,
       ignoreMixes,
       cookiesFromBrowser,
       customCookies,
+      sponsorBlock,
+      chapters,
+      embedSubtitles,
+      subtitleLanguages,
+      embedThumbnail,
     });
 
     if (queueId) {
@@ -649,7 +819,7 @@
       navigation.openChannel(url.trim());
     } else if (isPlaylistUrl) {
       navigation.openPlaylist(url.trim());
-    } else if (isYouTubeUrl) {
+    } else if (isYouTubeUrl || isLuxUrl) {
       navigation.openVideo(url.trim());
     }
   }
@@ -661,7 +831,12 @@
       {#each views as view (view.id)}
         {#key view.id}
           {@const active = isActive(view.id)}
-          <div class="view-container" class:active>
+          <div 
+            class="view-container" 
+            class:active 
+            onscroll={handleViewScroll}
+            style={active ? scrollMaskStyle : ''}
+          >
             {#if view.type === 'home'}
               <!-- HOME VIEW -->
               <div class="page-header">
@@ -672,26 +847,28 @@
               <Divider my={20} />
 
               <div class="page-content">
-                <SetupBanner />
-
                 <!-- URL Input -->
                 <div class="url-input-wrapper">
-                  <Icon name="link" size={18} />
-                  {#if url.trim() && canDownload && (isYouTubeUrl || isPlaylistUrl || isChannelUrl)}
+                  {#if url.trim() && canDownload && (isVideoUrl || isPlaylistUrl || isChannelUrl)}
                     <button
                       class="input-badge"
                       class:playlist={isPlaylistUrl}
                       class:channel={isChannelUrl}
+                      class:lux={isLuxUrl && !isPlaylistUrl && !isChannelUrl}
                       onclick={openAdvancedView}
+                      title={isChannelUrl ? 'Channel' : isPlaylistUrl ? 'Playlist' : 'Video'}
                     >
-                      <Icon
-                        name={isChannelUrl ? 'user' : isPlaylistUrl ? 'playlist' : 'play'}
-                        size={12}
-                      />
-                      <span
-                        >{isChannelUrl ? 'Channel' : isPlaylistUrl ? 'Playlist' : 'YouTube'}</span
-                      >
+                      <Icon name={platformIcon} size={14} />
+                      {#if isPlaylistUrl || isChannelUrl}
+                        <Icon
+                          name={isChannelUrl ? 'user' : 'playlist'}
+                          size={10}
+                          class="type-indicator"
+                        />
+                      {/if}
                     </button>
+                  {:else}
+                    <Icon name="link" size={18} />
                   {/if}
                   <input
                     bind:value={url}
@@ -699,7 +876,7 @@
                     class="url-input"
                     disabled={!canDownload}
                   />
-                  {#if url.trim() && canDownload && (isYouTubeUrl || isPlaylistUrl || isChannelUrl)}
+                  {#if url.trim() && canDownload && (isVideoUrl || isPlaylistUrl || isChannelUrl)}
                     <button
                       class="customize-btn"
                       onclick={openAdvancedView}
@@ -717,54 +894,52 @@
                   </button>
                 </div>
 
-                <!-- Options Section -->
-                <div class="options-section">
-                  <button
-                    class="options-header"
-                    onclick={() => (optionsExpanded = !optionsExpanded)}
+                <SetupBanner />
+
+                <!-- Settings Blocks -->
+                <div class="settings-blocks">
+                  <!-- General Settings Block -->
+                  <CollapsibleBlock
+                    title={$t('download.blocks.general')}
+                    icon="settings"
+                    description={$t('download.blocks.generalDesc')}
+                    bind:expanded={generalExpanded}
                   >
-                    <span class="options-title">
-                      <Icon name="settings" size={18} />
-                      {$t('download.options.title')}
-                    </span>
-                    <Icon name={optionsExpanded ? 'chevron_up' : 'chevron_down'} size={20} />
-                  </button>
-
-                  {#if optionsExpanded}
-                    <div class="options-content">
-                      <!-- Presets -->
-                      <div class="options-group">
-                        <span class="group-label">{$t('download.options.presets')}</span>
-                        <div class="presets-row">
-                          {#each allPresets as preset}
-                            <Chip
-                              selected={selectedPreset === preset.id}
-                              icon={preset.icon}
-                              onclick={() => applyPreset(preset.id)}
-                            >
-                              {preset.label}
-                              {#if preset.id.startsWith('custom-')}
-                                <button
-                                  class="preset-delete"
-                                  onclick={(e) => {
-                                    e.stopPropagation();
-                                    deletePreset(preset.id);
-                                  }}
-                                  title={$t('common.delete')}
-                                >
-                                  <Icon name="close" size={12} />
-                                </button>
-                              {/if}
-                            </Chip>
-                          {/each}
-                          <Chip icon="add" onclick={() => (createPresetModalOpen = true)}
-                            >{$t('download.options.createNew')}</Chip
+                    <!-- Presets -->
+                    <div class="options-group">
+                      <span class="group-label">{$t('download.options.presets')}</span>
+                      <div class="options-row">
+                        {#each allPresets as preset}
+                          <Chip
+                            selected={selectedPreset === preset.id}
+                            icon={preset.icon}
+                            onclick={() => applyPreset(preset.id)}
                           >
-                        </div>
+                            {preset.label}
+                            {#if preset.id.startsWith('custom-')}
+                              <button
+                                class="preset-delete"
+                                onclick={(e) => {
+                                  e.stopPropagation();
+                                  deletePreset(preset.id);
+                                }}
+                                title={$t('common.delete')}
+                              >
+                                <Icon name="close" size={12} />
+                              </button>
+                            {/if}
+                          </Chip>
+                        {/each}
+                        <Chip icon="add" onclick={() => (createPresetModalOpen = true)}
+                          >{$t('download.options.createNew')}</Chip
+                        >
                       </div>
+                    </div>
 
-                      <!-- Settings Row -->
-                      <div class="settings-row">
+                    <!-- Quality Settings -->
+                    <div class="options-group">
+                      <span class="group-label">{$t('download.blocks.quality')}</span>
+                      <div class="options-row">
                         <SettingButton
                           label={$t('download.options.videoQuality')}
                           value={getLabel(videoQualityOptions, videoQuality)}
@@ -780,6 +955,56 @@
                           value={getLabel(audioQualityOptions, audioQuality)}
                           onclick={() => (audioQualityModalOpen = true)}
                         />
+                      </div>
+                    </div>
+
+                    <!-- Post-Processing -->
+                    <div class="options-group">
+                      <span class="group-label">{$t('download.options.postProcessing')}</span>
+                      <div class="checkbox-grid">
+                        <Checkbox
+                          checked={convertToMp4}
+                          label={$t('download.options.convertToMp4')}
+                          onchange={(val) => handleCheckboxChange('convertToMp4', val)}
+                          disabled={!ffmpegInstalled}
+                        />
+                        <Checkbox
+                          checked={remux}
+                          label={$t('download.options.remux')}
+                          onchange={(val) => handleCheckboxChange('remux', val)}
+                          disabled={!ffmpegInstalled}
+                        />
+                        <Checkbox
+                          checked={embedThumbnail}
+                          label={$t('download.blocks.embedThumbnail')}
+                          onchange={(val) => handleCheckboxChange('embedThumbnail', val)}
+                        />
+                        <Checkbox
+                          checked={clearMetadata}
+                          label={$t('download.options.clearMetadata')}
+                          onchange={(val) => handleCheckboxChange('clearMetadata', val)}
+                        />
+                      </div>
+                    </div>
+                  </CollapsibleBlock>
+
+                  <!-- yt-dlp Backend Block -->
+                  <CollapsibleBlock
+                    title="yt-dlp"
+                    icon="video"
+                    description={$t('download.blocks.ytdlpDesc')}
+                    badge={ytdlpInstalled
+                      ? $t('settings.deps.installed')
+                      : $t('settings.deps.notInstalled')}
+                    badgeType={ytdlpInstalled ? 'success' : 'error'}
+                    disabled={!ytdlpInstalled}
+                    disabledReason={!ytdlpInstalled ? $t('download.blocks.installFirst') : undefined}
+                    bind:expanded={ytdlpExpanded}
+                  >
+                    <!-- Cookies -->
+                    <div class="options-group">
+                      <span class="group-label">{$t('download.blocks.authentication')}</span>
+                      <div class="options-row">
                         <SettingButton
                           label={$t('download.options.cookies')}
                           value={cookiesFromBrowser
@@ -788,54 +1013,154 @@
                           onclick={() => (cookiesModalOpen = true)}
                         />
                       </div>
+                    </div>
 
-                      <!-- Checkboxes -->
-                      <div class="checkbox-groups">
-                        <div class="checkbox-group">
-                          <span class="group-label">{$t('download.options.postProcessing')}</span>
-                          <Checkbox
-                            checked={convertToMp4}
-                            label={$t('download.options.convertToMp4')}
-                            onchange={(val) => handleCheckboxChange('convertToMp4', val)}
-                          />
-                          <Checkbox
-                            checked={remux}
-                            label={$t('download.options.remux')}
-                            onchange={(val) => handleCheckboxChange('remux', val)}
+                    <!-- YouTube-specific options -->
+                    <div class="options-group">
+                      <span class="group-label">{$t('download.blocks.youtubeOptions')}</span>
+                      <div class="checkbox-grid">
+                        <Checkbox
+                          checked={ignoreMixes}
+                          label={$t('download.options.ignoreMixes')}
+                          onchange={(val) => handleCheckboxChange('ignoreMixes', val)}
+                        />
+                        <Checkbox
+                          checked={sponsorBlock}
+                          label={$t('download.blocks.sponsorBlock')}
+                          onchange={(val) => handleCheckboxChange('sponsorBlock', val)}
+                        />
+                        <Checkbox
+                          checked={chapters}
+                          label={$t('download.blocks.chapters')}
+                          onchange={(val) => handleCheckboxChange('chapters', val)}
+                        />
+                        <Checkbox
+                          checked={embedSubtitles}
+                          label={$t('download.blocks.embedSubtitles')}
+                          onchange={(val) => handleCheckboxChange('embedSubtitles', val)}
+                        />
+                      </div>
+                      {#if embedSubtitles}
+                        <div class="inline-input">
+                          <label for="subtitle-langs">{$t('download.blocks.subtitleLanguages')}</label>
+                          <input
+                            id="subtitle-langs"
+                            type="text"
+                            bind:value={subtitleLanguages}
+                            placeholder="en,ru,es"
+                            class="small-input"
+                            onchange={() => saveSettings()}
                           />
                         </div>
+                      {/if}
+                    </div>
 
-                        <div class="checkbox-group">
-                          <span class="group-label">{$t('download.options.other')}</span>
-                          <Checkbox
-                            checked={ignoreMixes}
-                            label={$t('download.options.ignoreMixes')}
-                            onchange={(val) => handleCheckboxChange('ignoreMixes', val)}
-                          />
-                          <Checkbox
-                            checked={useHLS}
-                            label={$t('download.options.useHLS')}
-                            onchange={(val) => handleCheckboxChange('useHLS', val)}
-                          />
-                          <Checkbox
-                            checked={clearMetadata}
-                            label={$t('download.options.clearMetadata')}
-                            onchange={(val) => handleCheckboxChange('clearMetadata', val)}
-                          />
-                          <Checkbox
-                            checked={dontShowInHistory}
-                            label={$t('download.options.dontShowInHistory')}
-                            onchange={(val) => handleCheckboxChange('dontShowInHistory', val)}
-                          />
-                          <Checkbox
-                            checked={useAria2}
-                            label={$t('download.options.useAria2')}
-                            onchange={(val) => handleCheckboxChange('useAria2', val)}
-                          />
-                        </div>
+                    <!-- Downloader options -->
+                    <div class="options-group">
+                      <span class="group-label">{$t('download.blocks.downloader')}</span>
+                      <div class="checkbox-grid">
+                        <Checkbox
+                          checked={useAria2}
+                          label={$t('download.options.useAria2')}
+                          onchange={(val) => handleCheckboxChange('useAria2', val)}
+                          disabled={!aria2Installed}
+                        />
+                      </div>
+                      {#if !aria2Installed}
+                        <p class="hint-text">{$t('download.blocks.aria2NotInstalled')}</p>
+                      {:else if useAria2}
+                        <p class="hint-text success-hint">
+                          <Icon name="check" size={14} />
+                          {$t('download.blocks.aria2Active')}
+                        </p>
+                      {/if}
+                    </div>
+                  </CollapsibleBlock>
+
+                  <!-- Lux Backend Block -->
+                  <CollapsibleBlock
+                    title="Lux"
+                    icon="globe"
+                    description={$t('download.blocks.luxDesc')}
+                    badge={luxInstalled
+                      ? $t('settings.deps.installed')
+                      : $t('settings.deps.notInstalled')}
+                    badgeType={luxInstalled ? 'success' : 'warning'}
+                    disabled={!luxInstalled}
+                    disabledReason={!luxInstalled ? $t('download.blocks.installFirst') : undefined}
+                    bind:expanded={luxExpanded}
+                  >
+                    <div class="lux-info">
+                      <p class="lux-description">{$t('download.blocks.luxInfo')}</p>
+                      <div class="supported-sites">
+                        <span class="site-tag">Bilibili</span>
+                        <span class="site-tag">Douyin</span>
+                        <span class="site-tag">iQIYI</span>
+                        <span class="site-tag">Youku</span>
+                        <span class="site-tag">Tencent Video</span>
+                        <span class="site-tag">+40 more</span>
                       </div>
                     </div>
-                  {/if}
+                  </CollapsibleBlock>
+
+                  <!-- Advanced Block -->
+                  <CollapsibleBlock
+                    title={$t('download.blocks.advanced')}
+                    icon="tuning2"
+                    description={$t('download.blocks.advancedDesc')}
+                    bind:expanded={advancedExpanded}
+                  >
+                    <!-- Speed Limit -->
+                    <div class="options-group">
+                      <span class="group-label">{$t('settings.downloads.downloadSpeedLimit')}</span>
+                      <div class="speed-chips">
+                        <Chip
+                          selected={downloadSpeedLimit === 0}
+                          onclick={() => { downloadSpeedLimit = 0; saveSettings(); }}
+                        >
+                          {$t('settings.downloads.unlimited')}
+                        </Chip>
+                        <Chip
+                          selected={downloadSpeedLimit === 5}
+                          onclick={() => { downloadSpeedLimit = 5; saveSettings(); }}
+                        >
+                          5 MB/s
+                        </Chip>
+                        <Chip
+                          selected={downloadSpeedLimit === 10}
+                          onclick={() => { downloadSpeedLimit = 10; saveSettings(); }}
+                        >
+                          10 MB/s
+                        </Chip>
+                        <Chip
+                          selected={downloadSpeedLimit === 25}
+                          onclick={() => { downloadSpeedLimit = 25; saveSettings(); }}
+                        >
+                          25 MB/s
+                        </Chip>
+                        <Chip
+                          selected={![0, 5, 10, 25].includes(downloadSpeedLimit)}
+                          onclick={() => (speedLimitModalOpen = true)}
+                        >
+                          {![0, 5, 10, 25].includes(downloadSpeedLimit) ? `${downloadSpeedLimit} MB/s` : $t('download.options.custom')}
+                        </Chip>
+                      </div>
+                    </div>
+
+                    <!-- Other Options -->
+                    <div class="checkbox-grid">
+                      <Checkbox
+                        checked={usePlaylistFolders}
+                        label={$t('download.options.usePlaylistFolders')}
+                        onchange={(val) => handleCheckboxChange('usePlaylistFolders', val)}
+                      />
+                      <Checkbox
+                        checked={dontShowInHistory}
+                        label={$t('download.options.dontShowInHistory')}
+                        onchange={(val) => handleCheckboxChange('dontShowInHistory', val)}
+                      />
+                    </div>
+                  </CollapsibleBlock>
                 </div>
 
                 {#if status}
@@ -848,6 +1173,14 @@
                 url={view.url ?? ''}
                 {cookiesFromBrowser}
                 {customCookies}
+                defaults={{
+                  sponsorBlock,
+                  chapters,
+                  embedSubtitles,
+                  subtitleLanguages,
+                  embedThumbnail,
+                  clearMetadata,
+                }}
                 showHeader={true}
                 onback={handleBack}
                 ondownload={handleVideoDownload}
@@ -862,6 +1195,14 @@
                 {cookiesFromBrowser}
                 {customCookies}
                 defaultDownloadMode={downloadMode}
+                defaults={{
+                  sponsorBlock,
+                  chapters,
+                  embedSubtitles,
+                  subtitleLanguages,
+                  embedThumbnail,
+                  clearMetadata,
+                }}
                 showHeader={true}
                 onback={handleBack}
                 ondownload={handlePlaylistDownload}
@@ -875,6 +1216,15 @@
                 url={view.url ?? ''}
                 {cookiesFromBrowser}
                 {customCookies}
+                defaults={{
+                  downloadMode,
+                  sponsorBlock,
+                  chapters,
+                  embedSubtitles,
+                  subtitleLanguages,
+                  embedThumbnail,
+                  clearMetadata,
+                }}
                 showHeader={true}
                 onback={handleBack}
                 ondownload={handleChannelDownload}
@@ -975,6 +1325,11 @@
       <span class="summary-item">{getLabel(audioQualityOptions, audioQuality)}</span>
       {#if remux}<span class="summary-item">Remux</span>{/if}
       {#if convertToMp4}<span class="summary-item">MP4</span>{/if}
+      {#if useAria2}<span class="summary-item">aria2</span>{/if}
+      {#if sponsorBlock}<span class="summary-item">SponsorBlock</span>{/if}
+      {#if chapters}<span class="summary-item">Chapters</span>{/if}
+      {#if embedSubtitles}<span class="summary-item">Subtitles</span>{/if}
+      {#if embedThumbnail}<span class="summary-item">Thumbnail</span>{/if}
     </div>
   </div>
 
@@ -994,6 +1349,46 @@
   {/snippet}
 </Modal>
 
+<!-- Custom Speed Limit Modal -->
+<Modal bind:open={speedLimitModalOpen} title={$t('settings.downloads.downloadSpeedLimit')}>
+  <p class="modal-desc">{$t('settings.downloads.downloadSpeedLimitDescription')}</p>
+  <div class="speed-input-wrapper">
+    <input
+      type="number"
+      class="speed-input"
+      bind:value={customSpeedInput}
+      placeholder="0"
+      min="0"
+      max="100"
+    />
+    <span class="speed-unit">MB/s</span>
+  </div>
+
+  {#snippet actions()}
+    <button
+      class="modal-btn"
+      onclick={() => {
+        speedLimitModalOpen = false;
+        customSpeedInput = '';
+      }}
+    >
+      {$t('common.cancel')}
+    </button>
+    <button
+      class="modal-btn primary"
+      onclick={() => {
+        const val = parseInt(customSpeedInput) || 0;
+        downloadSpeedLimit = Math.max(0, Math.min(100, val));
+        saveSettings();
+        speedLimitModalOpen = false;
+        customSpeedInput = '';
+      }}
+    >
+      {$t('common.apply')}
+    </button>
+  {/snippet}
+</Modal>
+
 <style>
   .page {
     padding: 0;
@@ -1004,34 +1399,31 @@
 
   .view-container {
     position: absolute;
-    inset: 0;
-    height: 100%;
-    width: 100%;
+    top: 0;
+    left: 0;
+    right: 4px;
+    bottom: 4px;
     visibility: hidden;
     opacity: 0;
     pointer-events: none;
     overflow-x: hidden;
     overflow-y: auto;
-    padding: 0 0 0 18px;
-    margin-right: 4px;
-    margin-bottom: 4px;
-    mask-image: linear-gradient(to bottom, black, black 0px, black calc(100% - 25px), transparent);
-    -webkit-mask-image: linear-gradient(
-      to bottom,
-      black,
-      black 0px,
-      black calc(100% - 25px),
-      transparent
-    );
+    padding: 0 6px 0 18px;
     &:not(.active) * {
       transition: none !important;
       animation: none !important;
     }
   }
 
+  @media (min-width: 481px) {
+    .view-container {
+      padding-bottom: 12px;
+    }
+  }
+
   @media (max-width: 480px) {
     .view-container {
-      padding: 0 0 0 0;
+      padding: 0 4px 120px 0;
     }
   }
 
@@ -1124,46 +1516,14 @@
     color: white;
   }
 
-  /* Options Section */
-  .options-section {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 12px;
-    overflow: hidden;
-  }
-
-  .options-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    width: 100%;
-    padding: 14px 16px;
-    background: transparent;
-    border: none;
-    color: rgba(255, 255, 255, 0.9);
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .options-header:hover {
-    background: rgba(255, 255, 255, 0.03);
-  }
-
-  .options-title {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 15px;
-    font-weight: 600;
-  }
-
-  .options-content {
-    padding: 0 16px 16px;
+  /* Settings Blocks Container */
+  .settings-blocks {
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 12px;
   }
 
+  /* Options group styling */
   .options-group {
     display: flex;
     flex-direction: column;
@@ -1171,35 +1531,163 @@
   }
 
   .group-label {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 500;
     color: rgba(255, 255, 255, 0.5);
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
 
-  .presets-row {
+  .options-row {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
   }
 
-  .settings-row {
+  .speed-chips {
     display: flex;
     flex-wrap: wrap;
-    gap: 10px;
+    gap: 8px;
   }
 
-  .checkbox-groups {
+  .speed-input-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .speed-input {
+    width: 100px;
+    padding: 10px 12px;
+    font-size: 14px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    color: white;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  .speed-input:focus {
+    border-color: var(--accent-alpha-hover, rgba(99, 102, 241, 0.5));
+  }
+
+  .speed-input::placeholder {
+    color: rgba(255, 255, 255, 0.4);
+  }
+
+  /* Hide number input spinners */
+  .speed-input::-webkit-inner-spin-button,
+  .speed-input::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    appearance: none;
+    margin: 0;
+  }
+  .speed-input[type=number] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
+  .speed-unit {
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.6);
+  }
+
+  .checkbox-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 24px;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 10px;
+    align-items: start;
   }
 
-  .checkbox-group {
+  @media (max-width: 600px) {
+    .checkbox-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .hint-text {
+    font-size: 12px;
+    color: rgba(251, 191, 36, 0.8);
+    margin: 0;
+    padding: 8px 12px;
+    background: rgba(251, 191, 36, 0.1);
+    border-radius: 6px;
+  }
+
+  .hint-text.success-hint {
+    color: rgba(74, 222, 128, 0.9);
+    background: rgba(74, 222, 128, 0.1);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* Inline input for subtitle languages etc */
+  .inline-input {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 8px;
+  }
+
+  .inline-input label {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.7);
+    white-space: nowrap;
+  }
+
+  .small-input {
+    flex: 1;
+    max-width: 200px;
+    padding: 6px 10px;
+    font-size: 13px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+    color: white;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  .small-input:focus {
+    border-color: var(--accent-alpha-hover, rgba(99, 102, 241, 0.5));
+  }
+
+  .small-input::placeholder {
+    color: rgba(255, 255, 255, 0.4);
+  }
+
+  /* Lux block specific */
+  .lux-info {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
+  }
+
+  .lux-description {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.7);
+    margin: 0;
+    line-height: 1.5;
+  }
+
+  .supported-sites {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .site-tag {
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 12px;
+    color: rgba(255, 255, 255, 0.7);
   }
 
   /* Status */
@@ -1268,11 +1756,9 @@
     background: var(--accent-alpha-hover, rgba(99, 102, 241, 0.3));
   }
 
-  @media (max-width: 600px) {
-    .checkbox-groups {
-      grid-template-columns: 1fr;
-      gap: 16px;
-    }
+  .modal-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   /* Preset delete button */
@@ -1327,24 +1813,20 @@
   }
 
   .input-badge {
+    position: relative;
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 4px 8px;
+    justify-content: center;
+    gap: 2px;
+    padding: 6px;
     background: rgba(255, 0, 0, 0.15);
     color: #ff6666;
     border: none;
-    border-radius: 6px;
-    font-size: 0.6875rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
+    border-radius: 8px;
     flex-shrink: 0;
-    white-space: nowrap;
     cursor: pointer;
-    max-width: 80px;
     overflow: hidden;
-    animation: badge-expand 0.25s ease-out forwards;
+    animation: badge-expand 0.2s ease-out forwards;
     transition:
       background 0.15s ease,
       transform 0.1s ease;
@@ -1352,18 +1834,25 @@
 
   .input-badge:hover {
     background: rgba(255, 0, 0, 0.25);
-    transform: scale(1.02);
+    transform: scale(1.05);
+  }
+
+  .input-badge :global(.type-indicator) {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    opacity: 0.9;
   }
 
   @keyframes badge-expand {
     from {
       max-width: 0;
-      padding: 4px 0;
+      padding: 6px 0;
       opacity: 0;
     }
     to {
-      max-width: 80px;
-      padding: 4px 8px;
+      max-width: 40px;
+      padding: 6px;
       opacity: 1;
     }
   }
@@ -1386,6 +1875,15 @@
     background: rgba(239, 68, 68, 0.25);
   }
 
+  .input-badge.lux {
+    background: rgba(0, 191, 255, 0.15);
+    color: #00bfff;
+  }
+
+  .input-badge.lux:hover {
+    background: rgba(0, 191, 255, 0.25);
+  }
+
   .customize-btn {
     width: 36px;
     height: 36px;
@@ -1404,45 +1902,6 @@
   .customize-btn:hover {
     background: var(--accent-alpha, rgba(99, 102, 241, 0.25));
     color: var(--accent, rgb(99, 102, 241));
-  }
-
-  .coming-soon {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 16px;
-    padding: 64px;
-    text-align: center;
-    color: rgba(255, 255, 255, 0.6);
-  }
-
-  .coming-soon h2 {
-    margin: 0;
-    color: rgba(255, 255, 255, 0.9);
-  }
-
-  .coming-soon p {
-    margin: 0;
-  }
-
-  .coming-soon .back-btn {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 16px;
-    padding: 10px 20px;
-    background: rgba(255, 255, 255, 0.06);
-    color: rgba(255, 255, 255, 0.9);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 8px;
-    font-size: 0.875rem;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .coming-soon .back-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
   }
 
   :global(.rotate-180) {

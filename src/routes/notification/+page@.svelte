@@ -3,6 +3,8 @@
   import { invoke, convertFileSrc } from '@tauri-apps/api/core';
   import { load } from '@tauri-apps/plugin-store';
   import type { BackgroundType } from '$lib/stores/settings';
+  import { rgbToRgba, type RGB } from '$lib/utils/color';
+  import Icon from '$lib/components/Icon.svelte';
 
   const WINDOW_ID =
     typeof window !== 'undefined'
@@ -23,16 +25,25 @@
   const dismissLabel = params.get('dm') || 'Dismiss';
   const isPlaylist = params.get('is_playlist') === '1';
   const isChannel = params.get('is_channel') === '1';
+  const isFile = params.get('is_file') === '1';
+  const fileInfoRaw = params.get('file_info');
+  const fileInfo = fileInfoRaw ? JSON.parse(fileInfoRaw) as { filename: string; size: number; mimeType: string } : null;
   const viewPlaylistLabel = 'View Playlist';
   const viewChannelLabel = 'View Channel';
 
+  import { detectBackendForUrl } from '$lib/utils/backend-detection';
+  import { isValidMediaUrl } from '$lib/utils/format';
+
   const isYouTube = /youtube\.com|youtu\.be/i.test(mediaUrl);
+  const isLux = detectBackendForUrl(mediaUrl) === 'lux';
+  const isVideoUrl = isValidMediaUrl(mediaUrl, []); // Any supported video URL (pass empty patterns to check against lux sites)
 
   let isReady = $state(false);
   let isHovered = $state(false);
   let isDownloading = $state(false);
   let isDismissing = $state(false);
   let autoCloseTimer: ReturnType<typeof setTimeout> | null = null;
+  let thumbnailError = $state(false);
 
   let fancyBackground = $state(false);
   let backgroundType = $state<BackgroundType>('solid');
@@ -41,6 +52,46 @@
   let backgroundVideo = $state('');
   let backgroundBlur = $state(20);
   let accentColor = $state('#6366F1');
+  let isRgbMode = $state(false);
+  let rgbHue = $state(0);
+  let rgbAnimationFrame: number | null = null;
+  let lastRgbUpdate = 0;
+
+  // Thumbnail theming
+  let thumbnailTheming = $state(false);
+  let thumbnailColor = $state<RGB | null>(null);
+  let thumbnailColorStyle = $derived(
+    thumbnailColor
+      ? `--thumb-color: ${rgbToRgba(thumbnailColor, 1)}; --thumb-color-alpha: ${rgbToRgba(thumbnailColor, 0.15)}; --thumb-color-glow: ${rgbToRgba(thumbnailColor, 0.3)};`
+      : ''
+  );
+
+  function hslToHex(h: number, s: number, l: number): string {
+    const hue2rgb = (p: number, q: number, t: number) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1/6) return p + (q - p) * 6 * t;
+      if (t < 1/2) return q;
+      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+      return p;
+    };
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    const r = Math.round(hue2rgb(p, q, h + 1/3) * 255);
+    const g = Math.round(hue2rgb(p, q, h) * 255);
+    const b = Math.round(hue2rgb(p, q, h - 1/3) * 255);
+    return `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
+  }
+
+  function rgbLoop(timestamp: number) {
+    if (!isRgbMode) return;
+    if (timestamp - lastRgbUpdate >= 100) {
+      rgbHue = (rgbHue + 3) % 360;
+      accentColor = hslToHex(rgbHue / 360, 0.75, 0.5);
+      lastRgbUpdate = timestamp;
+    }
+    rgbAnimationFrame = requestAnimationFrame(rgbLoop);
+  }
 
   let cornerDismiss = $state(false);
 
@@ -94,6 +145,8 @@
           downloadMode: mode,
           isPlaylist: isPlaylist,
           isChannel: isChannel,
+          isFile: isFile,
+          fileInfo: fileInfo,
         },
       });
     } catch (e) {
@@ -135,10 +188,19 @@
       try {
         const store = await load('settings.json', { autoSave: false, defaults: {} });
 
-        accentColor = (await store.get<string>('accentColor')) ?? '#6366F1';
+        const storedAccent = (await store.get<string>('accentColor')) ?? '#6366F1';
+        
+        if (storedAccent === 'rgb') {
+          isRgbMode = true;
+          accentColor = hslToHex(rgbHue / 360, 0.75, 0.5);
+          rgbAnimationFrame = requestAnimationFrame(rgbLoop);
+        } else {
+          accentColor = storedAccent;
+        }
 
         fancyBackground = (await store.get<boolean>('notificationFancyBackground')) ?? false;
         cornerDismiss = (await store.get<boolean>('notificationCornerDismiss')) ?? false;
+        thumbnailTheming = (await store.get<boolean>('notificationThumbnailTheming')) ?? true;
 
         if (fancyBackground) {
           backgroundType = (await store.get<BackgroundType>('backgroundType')) ?? 'solid';
@@ -146,6 +208,17 @@
           backgroundImage = (await store.get<string>('backgroundImage')) ?? '';
           backgroundVideo = (await store.get<string>('backgroundVideo')) ?? '';
           backgroundBlur = (await store.get<number>('backgroundBlur')) ?? 20;
+        }
+
+        if (thumbnailTheming && thumbnail) {
+          try {
+            const colorArr = await invoke<[number, number, number]>('extract_thumbnail_color', { url: thumbnail });
+            if (colorArr) {
+              thumbnailColor = { r: colorArr[0], g: colorArr[1], b: colorArr[2] };
+            }
+          } catch (e) {
+            console.error('Failed to extract thumbnail color:', e);
+          }
         }
       } catch (e) {
         console.error('Failed to load settings:', e);
@@ -167,6 +240,7 @@
 
     return () => {
       if (autoCloseTimer) clearTimeout(autoCloseTimer);
+      if (rgbAnimationFrame) cancelAnimationFrame(rgbAnimationFrame);
     };
   });
 </script>
@@ -202,7 +276,8 @@
   <div
     class="notification compact"
     class:fancy={fancyBackground}
-    style="--accent: {accentColor}; --accent-hover: {accentHover}; --accent-alpha: {accentAlpha};"
+    class:themed={thumbnailColor}
+    style="--accent: {accentColor}; --accent-hover: {accentHover}; --accent-alpha: {accentAlpha}; {thumbnailColorStyle}"
     role="alert"
     onmouseenter={() => (isHovered = true)}
     onmouseleave={() => {
@@ -223,8 +298,8 @@
       </svg>
     </button>
 
-    {#if thumbnail}
-      <img src={thumbnail} alt="" class="thumb-compact" />
+    {#if thumbnail && !thumbnailError}
+      <img src={thumbnail} alt="" class="thumb-compact" onerror={() => (thumbnailError = true)} />
     {:else}
       <div class="thumb-compact placeholder">
         <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
@@ -315,8 +390,49 @@
             </svg>
           {/if}
         </button>
-      {:else if isYouTube}
-        <!-- YouTube: Show Download and Track Builder buttons -->
+      {:else if isFile}
+        <!-- File: Single download button (no options) -->
+        <button
+          class="icon-btn download"
+          class:downloading={isDownloading}
+          onclick={() => handleDownload('auto')}
+          title={downloadLabel}
+          disabled={isDownloading}
+        >
+          {#if isDownloading}
+            <svg class="spinner" viewBox="0 0 24 24" width="18" height="18">
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="2"
+                fill="none"
+                stroke-dasharray="31.4 31.4"
+                stroke-linecap="round"
+              />
+            </svg>
+          {:else}
+            <svg class="download-icon" viewBox="0 0 24 24" fill="none" width="18" height="18">
+              <path
+                d="M12 3V16M12 16L16 11.625M12 16L8 11.625"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M3 15C3 17.828 3 19.243 3.879 20.121C4.757 21 6.172 21 9 21H15C17.828 21 19.243 21 20.121 20.121C21 19.243 21 17.828 21 15"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          {/if}
+        </button>
+      {:else if isVideoUrl}
+        <!-- YouTube/Bilibili/etc: Show Download and Track Builder buttons -->
         <button
           class="icon-btn download youtube"
           class:downloading={isDownloading}
@@ -359,17 +475,10 @@
         <button
           class="icon-btn track-builder"
           onclick={handleOpenTrackBuilder}
-          title="Track Builder"
+          title="Quality"
           disabled={isDownloading}
         >
-          <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
-            <path
-              d="M12 5V19M5 12H19"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-            />
-          </svg>
+          <Icon name="extensions" size={16} />
         </button>
       {:else}
         <!-- Normal: Single download button -->
@@ -420,7 +529,8 @@
   <div
     class="notification"
     class:fancy={fancyBackground}
-    style="--accent: {accentColor}; --accent-hover: {accentHover}; --accent-alpha: {accentAlpha};"
+    class:themed={thumbnailColor}
+    style="--accent: {accentColor}; --accent-hover: {accentHover}; --accent-alpha: {accentAlpha}; {thumbnailColorStyle}"
     role="alert"
     onmouseenter={() => (isHovered = true)}
     onmouseleave={() => {
@@ -431,8 +541,8 @@
     <button class="close-x" onclick={closeNotification} aria-label="Close">✕</button>
 
     <div class="content">
-      {#if thumbnail}
-        <img src={thumbnail} alt="" class="thumb" />
+      {#if thumbnail && !thumbnailError}
+        <img src={thumbnail} alt="" class="thumb" onerror={() => (thumbnailError = true)} />
       {:else}
         <div class="thumb placeholder">
           <svg viewBox="0 0 24 24" fill="none" width="20" height="20">
@@ -542,8 +652,38 @@
             {viewPlaylistLabel}
           {/if}
         </button>
-      {:else if isYouTube}
-        <!-- YouTube: Show Download and Track Builder buttons -->
+      {:else if isFile}
+        <!-- File: Download button only (no options) -->
+        <button
+          class="btn download"
+          class:downloading={isDownloading}
+          class:full-width={cornerDismiss}
+          onclick={() => handleDownload('auto')}
+          disabled={isDownloading}
+        >
+          {#if isDownloading}
+            <svg class="spinner" viewBox="0 0 24 24" width="14" height="14">
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="2"
+                fill="none"
+                stroke-dasharray="31.4 31.4"
+                stroke-linecap="round"
+              />
+            </svg>
+            Starting...
+          {:else}
+            {downloadLabel}
+          {/if}
+        </button>
+        {#if !cornerDismiss}
+          <button class="btn dismiss" onclick={closeNotification}>{dismissLabel}</button>
+        {/if}
+      {:else if isVideoUrl}
+        <!-- YouTube/Bilibili/etc: Show Download and Track Builder buttons -->
         <button
           class="btn download"
           class:downloading={isDownloading}
@@ -569,15 +709,8 @@
           {/if}
         </button>
         <button class="btn track-builder" onclick={handleOpenTrackBuilder} disabled={isDownloading}>
-          <svg viewBox="0 0 24 24" fill="none" width="14" height="14">
-            <path
-              d="M12 5V19M5 12H19"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-            />
-          </svg>
-          Options
+          <Icon name="extensions" size={14} />
+          Quality
         </button>
       {:else}
         <!-- Normal: Download button and optional dismiss button -->
@@ -638,6 +771,7 @@
     z-index: 0;
     overflow: hidden;
     pointer-events: none;
+    border-radius: 12px;
   }
 
   .bg-video {
@@ -672,21 +806,50 @@
 
   .notification {
     background: #1a1a1e;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    padding: 12px;
+    padding: 7px;
     display: flex;
     flex-direction: column;
     gap: 10px;
     position: relative;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
     z-index: 1;
+    border-radius: 12px;
+    height: calc(100vh - 4px);
+    box-sizing: border-box;
   }
 
   .notification.fancy {
-    background: rgba(26, 26, 30, 0.75);
+    background: rgba(26, 26, 30, 0.92);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+  }
+
+  .notification.themed {
+    background: #1a1a1e;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .notification.themed::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, var(--thumb-color-alpha, transparent) 0%, transparent 60%);
+    animation: gradient-breathe 3s ease-in-out infinite;
+    pointer-events: none;
+    border-radius: inherit;
+  }
+
+  @keyframes gradient-breathe {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.3;
+    }
+  }
+
+  .notification.themed.fancy {
+    background: rgba(26, 26, 30, 0.92);
   }
 
   .close-x {
@@ -744,7 +907,10 @@
     border-radius: 6px;
     object-fit: cover;
     flex-shrink: 0;
+    position: relative;
+    z-index: 1;
   }
+
   .thumb.placeholder {
     background: var(--accent-alpha, rgba(99, 102, 241, 0.2));
     display: flex;
@@ -829,9 +995,16 @@
     background: var(--accent, #6366f1);
     color: white;
   }
+  .themed .btn.download {
+    background: var(--thumb-color, var(--accent, #6366f1));
+  }
   .btn.download:hover:not(:disabled) {
     background: var(--accent-hover, #5558e3);
     transform: scale(1.02);
+  }
+  .themed .btn.download:hover:not(:disabled) {
+    filter: brightness(0.9);
+    background: var(--thumb-color, var(--accent-hover, #5558e3));
   }
   .btn.download:active:not(:disabled) {
     transform: scale(0.98);
@@ -882,8 +1055,8 @@
     align-items: center;
     gap: 10px;
     padding: 8px 10px;
-    padding-top: 6px; /* Slightly less top padding since X is absolute */
-    position: relative; /* Ensure X button positions relative to this */
+    padding-top: 6px; 
+    position: relative;
   }
 
   .thumb-compact {
@@ -892,7 +1065,10 @@
     border-radius: 6px;
     object-fit: cover;
     flex-shrink: 0;
+    position: relative;
+    z-index: 1;
   }
+
   .thumb-compact.placeholder {
     background: var(--accent-alpha, rgba(99, 102, 241, 0.2));
     display: flex;
@@ -946,9 +1122,16 @@
     background: var(--accent, #6366f1);
     color: white;
   }
+  .themed .icon-btn.download {
+    background: var(--thumb-color, var(--accent, #6366f1));
+  }
   .icon-btn.download:hover:not(:disabled) {
     background: var(--accent-hover, #5558e3);
     transform: scale(1.08);
+  }
+  .themed .icon-btn.download:hover:not(:disabled) {
+    filter: brightness(0.9);
+    background: var(--thumb-color, var(--accent-hover, #5558e3));
   }
   .icon-btn.download:active:not(:disabled) {
     transform: scale(0.95);
@@ -967,7 +1150,6 @@
     transition: transform 0.15s ease;
   }
 
-  /* Track builder button */
   .icon-btn.track-builder,
   .icon-btn.download.youtube {
     width: 28px;
@@ -982,13 +1164,11 @@
     transform: scale(1.08);
   }
 
-  /* Playlist button - slightly larger */
   .icon-btn.playlist {
     width: 32px;
     height: 32px;
   }
 
-  /* Channel button - red accent */
   .icon-btn.channel {
     width: 32px;
     height: 32px;

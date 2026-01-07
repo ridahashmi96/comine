@@ -176,10 +176,10 @@
     width: 100%;
     padding: 10px 14px;
     font-family: inherit;
-    font-size: 14px;
+    font-size: 13px;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 8px;
+    border-radius: 6px;
     color: white;
     cursor: pointer;
     outline: none;
@@ -230,8 +230,8 @@
     position: fixed;
     background: rgba(30, 30, 30, 0.98);
     border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 8px;
-    padding: 4px;
+    border-radius: 6px;
+    padding: 3px;
     z-index: 1100;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
     max-height: 240px;
@@ -240,12 +240,12 @@
 
   .select-option {
     width: 100%;
-    padding: 10px 12px;
+    padding: 11px 14px;
     font-family: inherit;
-    font-size: 14px;
+    font-size: 13px;
     background: transparent;
     border: none;
-    border-radius: 6px;
+    border-radius: 5px;
     color: rgba(255, 255, 255, 0.8);
     cursor: pointer;
     text-align: left;

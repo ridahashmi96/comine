@@ -40,7 +40,6 @@
 
 <style>
   .btn {
-    /* Add your Figma styles here */
     display: inline-flex;
     align-items: center;
     gap: 8px;
@@ -59,8 +58,40 @@
   }
 
   .primary {
-    background: var(--accent, #6366f1);
+    background: var(--accent-bg, var(--accent, #6366f1));
     color: white;
+  }
+
+  /* Gradient/glow style - subtle shimmer animation */
+  :global(.accent-gradient) .primary,
+  :global(.accent-glow) .primary {
+    background: var(--accent-gradient, var(--accent, #6366f1));
+    background-size: 200% 200%;
+    animation: gradient-shift 4s ease infinite;
+  }
+
+  @keyframes gradient-shift {
+    0%, 100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :global(.accent-gradient) .primary,
+    :global(.accent-glow) .primary {
+      animation: none;
+    }
+  }
+
+  .primary:hover:not(:disabled) {
+    background: var(--accent-bg-hover, var(--accent, #6366f1));
+    filter: brightness(1.1);
+  }
+
+  :global(.accent-gradient) .primary:hover:not(:disabled),
+  :global(.accent-glow) .primary:hover:not(:disabled) {
+    background: var(--accent-gradient, var(--accent, #6366f1));
+    background-size: 200% 200%;
+    animation: gradient-shift 2s ease infinite;
   }
 
   .secondary {

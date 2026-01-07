@@ -1,16 +1,97 @@
 <script lang="ts">
   import { settings } from '$lib/stores/settings';
   import { isAndroid } from '$lib/utils/android';
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
 
   let systemAccentColor = $state<string | null>(null);
   let onMobile = $state(false);
+  let rgbHue = $state(0);
+  let rgbAnimationFrame: number | null = null;
+  let lastRgbUpdate = 0;
+
+  let isRgbMode = $derived($settings.accentColor === 'rgb');
+
+  function hslToHex(h: number, s: number, l: number): string {
+    const hue2rgb = (p: number, q: number, t: number) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1/6) return p + (q - p) * 6 * t;
+      if (t < 1/2) return q;
+      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+      return p;
+    };
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    const r = Math.round(hue2rgb(p, q, h + 1/3) * 255);
+    const g = Math.round(hue2rgb(p, q, h) * 255);
+    const b = Math.round(hue2rgb(p, q, h - 1/3) * 255);
+    return `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
+  }
+
+  function rgbLoop(timestamp: number) {
+    if (!isRgbMode) return;
+    
+    if (timestamp - lastRgbUpdate >= 100) {
+      rgbHue = (rgbHue + 3) % 360; // 3 degrees per update = ~12 seconds full cycle
+      lastRgbUpdate = timestamp;
+    }
+    
+    rgbAnimationFrame = requestAnimationFrame(rgbLoop);
+  }
 
   let effectiveAccent = $derived.by(() => {
+    if (isRgbMode) {
+      return hslToHex(rgbHue / 360, 0.75, 0.5);
+    }
     if ($settings.useSystemAccent && systemAccentColor) {
       return systemAccentColor;
     }
     return $settings.accentColor || '#6366F1';
+  });
+
+  let accentStyle = $derived($settings.accentStyle || 'solid');
+
+  let accentSecondary = $derived.by(() => {
+    const hex = effectiveAccent.replace('#', '');
+    const r = parseInt(hex.substring(0, 2), 16);
+    const g = parseInt(hex.substring(2, 4), 16);
+    const b = parseInt(hex.substring(4, 6), 16);
+    
+    const max = Math.max(r, g, b) / 255;
+    const min = Math.min(r, g, b) / 255;
+    let h = 0, s = 0;
+    const l = (max + min) / 2;
+    
+    if (max !== min) {
+      const d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      switch (max) {
+        case r / 255: h = ((g / 255 - b / 255) / d + (g < b ? 6 : 0)) / 6; break;
+        case g / 255: h = ((b / 255 - r / 255) / d + 2) / 6; break;
+        case b / 255: h = ((r / 255 - g / 255) / d + 4) / 6; break;
+      }
+    }
+    
+    const h2 = (h + 0.083) % 1;
+    const s2 = Math.min(s * 1.1, 1);
+    const l2 = Math.min(l * 1.15, 0.85);
+    
+    const hue2rgb = (p: number, q: number, t: number) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1/6) return p + (q - p) * 6 * t;
+      if (t < 1/2) return q;
+      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+      return p;
+    };
+    
+    const q = l2 < 0.5 ? l2 * (1 + s2) : l2 + s2 - l2 * s2;
+    const p = 2 * l2 - q;
+    const r2 = Math.round(hue2rgb(p, q, h2 + 1/3) * 255);
+    const g2 = Math.round(hue2rgb(p, q, h2) * 255);
+    const b2 = Math.round(hue2rgb(p, q, h2 - 1/3) * 255);
+    
+    return `#${((1 << 24) | (r2 << 16) | (g2 << 8) | b2).toString(16).slice(1)}`;
   });
 
   let accentLight = $derived(adjustBrightness(effectiveAccent, 30));
@@ -18,9 +99,30 @@
   let accentAlpha = $derived(hexToRgba(effectiveAccent, 0.2));
   let accentAlphaHover = $derived(hexToRgba(effectiveAccent, 0.3));
 
+  let accentGradient = $derived(`linear-gradient(135deg, ${effectiveAccent} 0%, ${accentSecondary} 100%)`);
+  let accentGradientHover = $derived(`linear-gradient(135deg, ${accentLight} 0%, ${adjustBrightness(accentSecondary, 15)} 100%)`);
+
   onMount(() => {
     onMobile = isAndroid();
     fetchSystemAccent();
+  });
+
+  $effect(() => {
+    if (isRgbMode) {
+      lastRgbUpdate = 0;
+      rgbAnimationFrame = requestAnimationFrame(rgbLoop);
+    } else {
+      if (rgbAnimationFrame) {
+        cancelAnimationFrame(rgbAnimationFrame);
+        rgbAnimationFrame = null;
+      }
+    }
+  });
+
+  onDestroy(() => {
+    if (rgbAnimationFrame) {
+      cancelAnimationFrame(rgbAnimationFrame);
+    }
   });
 
   async function fetchSystemAccent() {
@@ -42,9 +144,9 @@
     secondary?: string;
   } | null> {
     return new Promise((resolve) => {
-      if (typeof window !== 'undefined' && (window as any).AndroidColors) {
+      if (typeof window !== 'undefined' && window.AndroidColors) {
         try {
-          const colors = (window as any).AndroidColors.getMaterialColors();
+          const colors = window.AndroidColors.getMaterialColors();
           if (colors) {
             const parsed = JSON.parse(colors);
             resolve(parsed);
@@ -78,10 +180,25 @@
   $effect(() => {
     if (typeof document !== 'undefined') {
       document.documentElement.style.setProperty('--accent', effectiveAccent);
+      document.documentElement.style.setProperty('--accent-secondary', accentSecondary);
       document.documentElement.style.setProperty('--accent-light', accentLight);
       document.documentElement.style.setProperty('--accent-dark', accentDark);
       document.documentElement.style.setProperty('--accent-alpha', accentAlpha);
       document.documentElement.style.setProperty('--accent-alpha-hover', accentAlphaHover);
+      document.documentElement.style.setProperty('--accent-gradient', accentGradient);
+      document.documentElement.style.setProperty('--accent-gradient-hover', accentGradientHover);
+      document.documentElement.style.setProperty('--accent-style', accentStyle);
+      
+      if (accentStyle === 'gradient') {
+        document.documentElement.style.setProperty('--accent-bg', accentGradient);
+        document.documentElement.style.setProperty('--accent-bg-hover', accentGradientHover);
+      } else {
+        document.documentElement.style.setProperty('--accent-bg', effectiveAccent);
+        document.documentElement.style.setProperty('--accent-bg-hover', accentLight);
+      }
+      
+      document.documentElement.classList.remove('accent-solid', 'accent-gradient', 'accent-glow');
+      document.documentElement.classList.add(`accent-${accentStyle}`);
     }
   });
 </script>

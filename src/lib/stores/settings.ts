@@ -1,5 +1,6 @@
 import { writable, get } from 'svelte/store';
 import { load, type Store } from '@tauri-apps/plugin-store';
+import { logs } from './logs';
 
 function checkIsAndroid(): boolean {
   return typeof window !== 'undefined' && 'AndroidYtDlp' in window;
@@ -19,12 +20,15 @@ export interface CustomPreset {
   audioQuality: AudioQuality;
   remux: boolean;
   convertToMp4: boolean;
-  useHLS: boolean;
   clearMetadata: boolean;
   dontShowInHistory: boolean;
   useAria2: boolean;
   ignoreMixes: boolean;
   cookiesFromBrowser: string;
+  sponsorBlock?: boolean;
+  chapters?: boolean;
+  embedSubtitles?: boolean;
+  embedThumbnail?: boolean;
 }
 
 export type CloseBehavior = 'close' | 'minimize' | 'tray';
@@ -44,6 +48,7 @@ export type ToastPosition =
   | 'top-center';
 export type NotificationMonitor = 'primary' | 'cursor';
 export type BackgroundType = 'acrylic' | 'animated' | 'solid' | 'image';
+export type AccentStyle = 'solid' | 'gradient' | 'glow';
 export type ProxyMode = 'none' | 'system' | 'custom';
 
 export interface AppSettings {
@@ -52,6 +57,7 @@ export interface AppSettings {
 
   language: string;
   startOnBoot: boolean;
+  startMinimized: boolean;
   watchClipboard: boolean;
   clipboardPatterns: string[];
   statusPopup: boolean;
@@ -61,6 +67,7 @@ export interface AppSettings {
   notificationMonitor: NotificationMonitor;
   compactNotifications: boolean;
   notificationFancyBackground: boolean;
+  notificationThumbnailTheming: boolean;
   notificationOffset: number;
   notificationCornerDismiss: boolean;
 
@@ -84,6 +91,7 @@ export interface AppSettings {
   backgroundOpacity: number;
 
   accentColor: string;
+  accentStyle: AccentStyle;
   useSystemAccent: boolean;
 
   sizeUnit: 'binary' | 'decimal';
@@ -104,7 +112,6 @@ export interface AppSettings {
   defaultDownloadMode: DownloadMode;
   defaultAudioQuality: AudioQuality;
   selectedPreset: string;
-  useHLS: boolean;
   clearMetadata: boolean;
   dontShowInHistory: boolean;
   useAria2: boolean;
@@ -114,13 +121,14 @@ export interface AppSettings {
   sponsorBlock: boolean;
   chapters: boolean;
   embedSubtitles: boolean;
-  writeThumbnails: boolean;
+  subtitleLanguages: string;
 
   thumbnailTheming: boolean;
 
   proxyMode: ProxyMode;
   customProxyUrl: string;
-  proxyFallback: boolean;
+  retryWithoutProxy: boolean;
+  bypassProxyForDownloads: boolean;
 
   dismissedUpdateVersion: string;
 
@@ -136,6 +144,8 @@ export interface AppSettings {
   downloadsViewMode: 'list' | 'grid';
   historyViewMode: 'list' | 'grid';
 
+  showMobileNavLabels: boolean;
+
   customPresets: CustomPreset[];
 }
 
@@ -145,6 +155,7 @@ export const defaultSettings: AppSettings = {
 
   language: 'en',
   startOnBoot: false,
+  startMinimized: true,
   watchClipboard: true,
   clipboardPatterns: [
     'youtube.com',
@@ -159,6 +170,22 @@ export const defaultSettings: AppSettings = {
     'twitch.tv',
     'soundcloud.com',
     'spotify.com',
+    // Chinese platforms (lux backend)
+    'bilibili.com',
+    'b23.tv',
+    'douyin.com',
+    'iqiyi.com',
+    'youku.com',
+    'qq.com',
+    'mgtv.com',
+    'le.com',
+    'weibo.com',
+    'kuaishou.com',
+    'xiaohongshu.com',
+    'xhslink.com',
+    'huya.com',
+    'douyu.com',
+    'acfun.cn',
   ],
   statusPopup: false,
 
@@ -167,6 +194,7 @@ export const defaultSettings: AppSettings = {
   notificationMonitor: 'primary',
   compactNotifications: false,
   notificationFancyBackground: false,
+  notificationThumbnailTheming: true,
   notificationOffset: 48,
   notificationCornerDismiss: false,
 
@@ -190,6 +218,7 @@ export const defaultSettings: AppSettings = {
   backgroundOpacity: 100,
 
   accentColor: '#6366F1',
+  accentStyle: 'solid',
   useSystemAccent: false,
 
   sizeUnit: 'binary',
@@ -209,28 +238,28 @@ export const defaultSettings: AppSettings = {
   defaultDownloadMode: 'auto',
   defaultAudioQuality: 'best',
   selectedPreset: 'custom',
-  useHLS: true,
   clearMetadata: false,
   dontShowInHistory: false,
-  useAria2: false,
+  useAria2: true,
   ignoreMixes: true,
   cookiesFromBrowser: '',
   customCookies: '',
   sponsorBlock: false,
   chapters: true,
   embedSubtitles: false,
-  writeThumbnails: false,
+  subtitleLanguages: 'en,ru',
 
   thumbnailTheming: true,
 
   proxyMode: 'system',
   customProxyUrl: '',
-  proxyFallback: true,
+  retryWithoutProxy: true,
+  bypassProxyForDownloads: true,
 
   dismissedUpdateVersion: '',
 
-  aria2Connections: 16,
-  aria2Splits: 16,
+  aria2Connections: 4,
+  aria2Splits: 4,
   aria2MinSplitSize: '1M',
 
   downloadSpeedLimit: 0,
@@ -240,6 +269,8 @@ export const defaultSettings: AppSettings = {
 
   downloadsViewMode: 'list',
   historyViewMode: 'list',
+
+  showMobileNavLabels: true,
 
   customPresets: [],
 };
@@ -298,7 +329,7 @@ export async function initSettings(): Promise<void> {
     settings.set(loaded);
     settingsReady.set(true);
   } catch (error) {
-    console.error('[Settings] Failed to load settings:', error);
+    logs.error('settings', `Failed to load settings: ${error}`);
     settingsReady.set(true);
   }
 }
@@ -308,7 +339,7 @@ export async function updateSetting<K extends keyof AppSettings>(
   value: AppSettings[K]
 ): Promise<void> {
   if (!store) {
-    console.warn('[Settings] Store not initialized');
+    logs.warn('settings', 'Store not initialized');
     return;
   }
 
@@ -318,13 +349,13 @@ export async function updateSetting<K extends keyof AppSettings>(
 
     settings.update((s) => ({ ...s, [key]: value }));
   } catch (error) {
-    console.error(`[Settings] Failed to update ${key}:`, error);
+    logs.error('settings', `Failed to update ${String(key)}: ${error}`);
   }
 }
 
 export async function updateSettings(updates: Partial<AppSettings>): Promise<void> {
   if (!store) {
-    console.warn('[Settings] Store not initialized');
+    logs.warn('settings', 'Store not initialized');
     return;
   }
 
@@ -334,13 +365,13 @@ export async function updateSettings(updates: Partial<AppSettings>): Promise<voi
 
     settings.update((s) => ({ ...s, ...updates }));
   } catch (error) {
-    console.error('[Settings] Failed to update settings:', error);
+    logs.error('settings', `Failed to update settings: ${error}`);
   }
 }
 
 export async function resetSettings(): Promise<void> {
   if (!store) {
-    console.warn('[Settings] Store not initialized');
+    logs.warn('settings', 'Store not initialized');
     return;
   }
 
@@ -353,7 +384,7 @@ export async function resetSettings(): Promise<void> {
 
     settings.set(defaultSettings);
   } catch (error) {
-    console.error('[Settings] Failed to reset settings:', error);
+    logs.error('settings', `Failed to reset settings: ${error}`);
   }
 }
 
@@ -364,7 +395,7 @@ export function getSettings(): AppSettings {
 export interface ProxyConfig {
   mode: ProxyMode;
   customUrl: string;
-  fallback: boolean;
+  retryWithoutProxy: boolean;
 }
 
 export function getProxyConfig(): ProxyConfig {
@@ -372,6 +403,6 @@ export function getProxyConfig(): ProxyConfig {
   return {
     mode: s.proxyMode,
     customUrl: s.customProxyUrl,
-    fallback: s.proxyFallback,
+    retryWithoutProxy: s.retryWithoutProxy,
   };
 }

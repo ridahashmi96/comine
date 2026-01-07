@@ -48,7 +48,7 @@ export interface PlaylistViewState {
   type: 'playlist';
   url: string;
   selectedIds: string[];
-  perItemSettings: Record<string, MediaItemSettings>;
+  perItemSettings: Record<string, Partial<MediaItemSettings>>;
   scrollTop: number;
   viewMode: 'list' | 'grid';
   searchQuery: string;
@@ -120,8 +120,8 @@ class ViewStateCache {
     }
   }
 
-  has(type: string, url: string): boolean {
-    return this.get(type as any, url) !== null;
+  has(type: ViewState['type'], url: string): boolean {
+    return this.get(type, url) !== null;
   }
 
   delete(type: string, url: string): void {

@@ -2,31 +2,50 @@ let tooltipEl: HTMLDivElement | null = null;
 let currentTarget: HTMLElement | null = null;
 let showTimeout: ReturnType<typeof setTimeout> | null = null;
 let hideTimeout: ReturnType<typeof setTimeout> | null = null;
+let styleInjected = false;
+
+function injectStyles() {
+  if (styleInjected) return;
+  const style = document.createElement('style');
+  style.textContent = `
+    .tooltip {
+      position: fixed;
+      z-index: 9999;
+      padding: 8px 14px;
+      background: rgba(25, 25, 30, 0.95);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+      color: rgba(255, 255, 255, 0.9);
+      font-size: 12px;
+      font-weight: 500;
+      font-family: 'Jost', sans-serif;
+      pointer-events: none;
+      opacity: 0;
+      transform: translateY(6px) scale(0.96);
+      transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+      white-space: normal;
+      word-wrap: break-word;
+      max-width: min(280px, calc(100vw - 32px));
+      text-align: center;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.2);
+      will-change: opacity, transform;
+    }
+    .tooltip.visible {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  `;
+  document.head.appendChild(style);
+  styleInjected = true;
+}
 
 function createTooltip() {
   if (tooltipEl) return;
+  injectStyles();
   tooltipEl = document.createElement('div');
   tooltipEl.className = 'tooltip';
-  tooltipEl.style.cssText = `
-    position: fixed;
-    z-index: 9999;
-    padding: 6px 10px;
-    background: rgba(30, 30, 30, 0.95);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 6px;
-    color: rgba(255, 255, 255, 0.9);
-    font-size: 12px;
-    font-family: 'Jost', sans-serif;
-    pointer-events: none;
-    opacity: 0;
-    transform: translateY(4px);
-    transition: opacity 0.15s, transform 0.15s;
-    white-space: normal;
-    word-wrap: break-word;
-    max-width: min(300px, calc(100vw - 32px));
-    text-align: center;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  `;
   document.body.appendChild(tooltipEl);
 }
 
@@ -47,6 +66,7 @@ function showTooltip(target: HTMLElement, text: string) {
 
   currentTarget = target;
   tooltipEl.textContent = text;
+  tooltipEl.classList.remove('visible');
 
   const rect = target.getBoundingClientRect();
 
@@ -55,8 +75,6 @@ function showTooltip(target: HTMLElement, text: string) {
     return;
   }
 
-  tooltipEl.style.visibility = 'hidden';
-  tooltipEl.style.opacity = '0';
   tooltipEl.style.top = '-9999px';
   tooltipEl.style.left = '-9999px';
 
@@ -77,17 +95,17 @@ function showTooltip(target: HTMLElement, text: string) {
     left = window.innerWidth - tooltipRect.width - 8;
   }
 
-  tooltipEl.style.visibility = 'visible';
   tooltipEl.style.top = `${top}px`;
   tooltipEl.style.left = `${left}px`;
-  tooltipEl.style.opacity = '1';
-  tooltipEl.style.transform = 'translateY(0)';
+  
+  requestAnimationFrame(() => {
+    tooltipEl?.classList.add('visible');
+  });
 }
 
 function hideTooltip() {
   if (!tooltipEl) return;
-  tooltipEl.style.opacity = '0';
-  tooltipEl.style.transform = 'translateY(4px)';
+  tooltipEl.classList.remove('visible');
   currentTarget = null;
 }
 

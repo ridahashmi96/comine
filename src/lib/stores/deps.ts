@@ -26,7 +26,7 @@ export interface ReleaseInfo {
   published_at: string;
 }
 
-export type DependencyName = 'ytdlp' | 'ffmpeg' | 'aria2' | 'deno' | 'quickjs';
+export type DependencyName = 'ytdlp' | 'ffmpeg' | 'aria2' | 'deno' | 'quickjs' | 'lux';
 
 export interface DepsState {
   ytdlp: DependencyStatus | null;
@@ -34,6 +34,7 @@ export interface DepsState {
   aria2: DependencyStatus | null;
   deno: DependencyStatus | null;
   quickjs: DependencyStatus | null;
+  lux: DependencyStatus | null;
   checking: DependencyName | null;
   installingDeps: Set<DependencyName>;
   installProgressMap: Map<DependencyName, InstallProgress>;
@@ -50,6 +51,7 @@ const initialState: DepsState = {
   aria2: null,
   deno: null,
   quickjs: null,
+  lux: null,
   checking: null,
   installingDeps: new Set(),
   installProgressMap: new Map(),
@@ -93,6 +95,12 @@ const DEP_CONFIG: Record<
     installCommand: 'install_quickjs',
     uninstallCommand: 'uninstall_quickjs',
     progressEvent: 'quickjs-install-progress',
+  },
+  lux: {
+    checkCommand: 'check_lux',
+    installCommand: 'install_lux',
+    uninstallCommand: 'uninstall_lux',
+    progressEvent: 'lux-install-progress',
   },
 };
 
@@ -312,6 +320,18 @@ function createDepsStore() {
       return uninstallDep('quickjs');
     },
 
+    async checkLux() {
+      return checkDep('lux');
+    },
+
+    async installLux() {
+      return installDep('lux');
+    },
+
+    async uninstallLux() {
+      return uninstallDep('lux');
+    },
+
     async checkAll(force: boolean = false) {
       const state = get({ subscribe });
       if (state.hasCheckedAll && !force) {
@@ -325,6 +345,7 @@ function createDepsStore() {
         checkDep('aria2'),
         checkDep('deno'),
         checkDep('quickjs'),
+        checkDep('lux'),
       ]);
       update((s) => ({ ...s, hasCheckedAll: true }));
       logs.debug('deps', 'All dependency checks complete');

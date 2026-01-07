@@ -1,8 +1,10 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { t } from '$lib/i18n';
-  import { getProxyConfig } from '$lib/stores/settings';
+  import { getProxyConfig, settings } from '$lib/stores/settings';
   import { logs } from '$lib/stores/logs';
+  import { deps } from '$lib/stores/deps';
   import { portal } from '$lib/actions/portal';
   import Icon from './Icon.svelte';
   import type { IconName } from './Icon.svelte';
@@ -10,6 +12,7 @@
   import Checkbox from './Checkbox.svelte';
   import Chip from './Chip.svelte';
   import { formatSize, formatDuration } from '$lib/utils/format';
+  import { detectBackendForUrl } from '$lib/utils/backend-detection';
   import { isAndroid, getVideoInfoOnAndroid, waitForAndroidYtDlp } from '$lib/utils/android';
   import {
     viewStateCache,
@@ -78,10 +81,20 @@
     duration?: number;
   }
 
+  export interface DefaultSettings {
+    sponsorBlock?: boolean;
+    chapters?: boolean;
+    embedSubtitles?: boolean;
+    subtitleLanguages?: string;
+    embedThumbnail?: boolean;
+    clearMetadata?: boolean;
+  }
+
   interface Props {
     url: string;
     cookiesFromBrowser?: string;
     customCookies?: string;
+    defaults?: DefaultSettings;
     ondownload?: (selection: TrackSelection) => void;
     onback?: () => void;
     onopenchannel?: (
@@ -97,6 +110,7 @@
     url,
     cookiesFromBrowser = '',
     customCookies = '',
+    defaults,
     ondownload,
     onback,
     onopenchannel,
@@ -203,8 +217,33 @@
 
   function makeVideoLabel(f: VideoFormat): string {
     const parts: string[] = [];
-    if (f.resolution) parts.push(f.resolution.split('x')[1] + 'p');
-    else parts.push('?');
+    
+    if (f.resolution) {
+      const resParts = f.resolution.split('x');
+      if (resParts.length >= 2 && resParts[1]) {
+        const height = parseInt(resParts[1]);
+        if (!isNaN(height) && height > 0) {
+          parts.push(height + 'p');
+        } else {
+          parts.push(f.resolution); // Use as-is if can't parse
+        }
+      } else if (resParts.length === 1 && resParts[0]) {
+        const clean = resParts[0].replace('p', '');
+        const height = parseInt(clean);
+        if (!isNaN(height) && height > 0) {
+          parts.push(height + 'p');
+        } else {
+          parts.push(f.resolution);
+        }
+      } else {
+        parts.push('?');
+      }
+    } else if (f.format_note) {
+      parts.push(f.format_note);
+    } else {
+      parts.push('?');
+    }
+    
     if (f.fps && f.fps > 30) parts.push(`${Math.round(f.fps)}fps`);
     const codec = getCodec(f.vcodec);
     if (codec) parts.push(codec);
@@ -231,57 +270,120 @@
   let lastLoadedUrl = $state(initialState.lastLoadedUrl);
 
   let destroyed = false;
+  let thumbnailError = $state(false);
 
   let selectedVideo = $state<string>(initialState.selectedVideo);
   let selectedAudio = $state<string>(initialState.selectedAudio);
 
   let showDescription = $state(false);
 
-  let embedSubs = $state(false);
-  let subLangs = $state('en');
+  const initialDefaults = untrack(() => ({
+    embedSubtitles: defaults?.embedSubtitles ?? false,
+    subtitleLanguages: defaults?.subtitleLanguages ?? 'en,ru',
+    sponsorBlock: defaults?.sponsorBlock ?? false,
+    chapters: defaults?.chapters ?? true,
+    embedThumbnail: defaults?.embedThumbnail ?? true,
+    clearMetadata: defaults?.clearMetadata ?? false,
+  }));
 
-  let skipSponsors = $state(true);
+  let embedSubs = $state(initialDefaults.embedSubtitles);
+  let subLangs = $state(initialDefaults.subtitleLanguages);
+
+  let skipSponsors = $state(initialDefaults.sponsorBlock);
   let skipIntros = $state(false);
   let skipSelfPromo = $state(false);
   let skipInteraction = $state(false);
 
-  let embedChapters = $state(true);
-  let embedThumbnail = $state(true);
-  let embedMetadata = $state(true);
+  let embedChapters = $state(initialDefaults.chapters);
+  let embedThumbnail = $state(initialDefaults.embedThumbnail);
+  let embedMetadata = $state(!initialDefaults.clearMetadata);
 
   let showMoreOptions = $state(false);
 
-  type PresetId = 'best' | '1080p' | '720p' | 'music' | 'custom';
+  type PresetId = 'best' | 'music' | 'custom' | string;
   let selectedPreset = $state<PresetId>('best');
   let isYouTubeMusic = $derived(url.includes('music.youtube.com'));
   let didInitialPreset = $state(false);
+  
+  let backend = $derived(detectBackendForUrl(url));
+  let platformName = $derived.by(() => {
+    if (url.includes('bilibili.com') || url.includes('b23.tv')) return 'Bilibili';
+    if (url.includes('douyin.com')) return 'Douyin';
+    if (url.includes('iqiyi.com')) return 'iQIYI';
+    if (url.includes('youku.com')) return 'Youku';
+    if (url.includes('qq.com')) return 'Tencent';
+    if (url.includes('mgtv.com')) return 'MGTV';
+    if (url.includes('weibo.com')) return 'Weibo';
+    if (url.includes('kuaishou.com')) return 'Kuaishou';
+    if (backend === 'lux') return 'Video';
+    return 'YouTube';
+  });
+  let isYtdlp = $derived(backend === 'ytdlp');
 
-  const presets: { id: PresetId; label: string; icon: IconName }[] = [
-    { id: 'best', label: $t('download.tracks.presetBest'), icon: 'video' },
-    { id: '1080p', label: '1080p', icon: 'video' },
-    { id: '720p', label: '720p', icon: 'video' },
-    { id: 'music', label: $t('download.tracks.presetMusic'), icon: 'music' },
-  ];
+  const presets = $derived.by(() => {
+    const available: { id: PresetId; label: string; icon: IconName }[] = [];
+    
+    available.push({ id: 'best', label: $t('download.tracks.presetBest'), icon: 'video' });
+    
+    const resolutionCounts = new Map<number, number>();
+    if (videoFormats.length > 0) {
+      videoFormats.forEach(f => {
+        let height = 0;
+        
+        if (f.resolution) {
+          const parts = f.resolution.split('x');
+          if (parts.length >= 2) {
+            height = parseInt(parts[1]);
+          } else if (parts.length === 1) {
+            height = parseInt(f.resolution.replace('p', ''));
+          }
+        }
+        
+        if (height === 0 && f.format_note) {
+          const match = f.format_note.match(/(\d+)p/);
+          if (match) {
+            height = parseInt(match[1]);
+          }
+        }
+        
+        if (height > 0) {
+          resolutionCounts.set(height, (resolutionCounts.get(height) || 0) + 1);
+        }
+      });
+    }
+    
+    const sortedResolutions = Array.from(resolutionCounts.keys())
+      .sort((a, b) => b - a)
+      .slice(0, 3);
+    
+    sortedResolutions.forEach(height => {
+      available.push({ 
+        id: `${height}p`, 
+        label: `${height}p`, 
+        icon: 'video' as IconName 
+      });
+    });
+    
+    if (audioFormats.length > 0 || videoFormats.some(f => f.has_audio)) {
+      available.push({ id: 'music', label: $t('download.tracks.presetMusic'), icon: 'music' });
+    }
+    
+    return available;
+  });
 
   function applyPreset(preset: PresetId) {
     selectedPreset = preset;
-    switch (preset) {
-      case 'best':
-        selectedVideo = 'best';
-        selectedAudio = 'best';
-        break;
-      case '1080p':
-        selectedVideo = findVideoByHeight(1080) || 'best';
-        selectedAudio = 'best';
-        break;
-      case '720p':
-        selectedVideo = findVideoByHeight(720) || 'best';
-        selectedAudio = 'best';
-        break;
-      case 'music':
-        selectedVideo = 'none';
-        selectedAudio = 'best';
-        break;
+    
+    if (preset === 'best') {
+      selectedVideo = 'best';
+      selectedAudio = 'best';
+    } else if (preset === 'music') {
+      selectedVideo = 'none';
+      selectedAudio = 'best';
+    } else if (preset.endsWith('p')) {
+      const height = parseInt(preset.slice(0, -1));
+      selectedVideo = findVideoByHeight(height) || 'best';
+      selectedAudio = 'best';
     }
   }
 
@@ -310,9 +412,19 @@
     }
   });
 
+  let hasSeparateStreams = $derived(
+    info?.formats?.some((f) => (f.has_video && !f.has_audio) || (f.has_audio && !f.has_video)) ?? false
+  );
+  
+  let hasMuxedFormats = $derived(
+    info?.formats?.some((f) => f.has_video && f.has_audio) ?? false
+  );
+
+  let useDualSelectors = $derived(hasSeparateStreams);
+
   let videoFormats = $derived(
     info?.formats
-      .filter((f) => f.has_video && !f.has_audio)
+      .filter((f) => f.has_video)
       .sort((a, b) => {
         const aH = parseInt(a.resolution?.split('x')[1] || '0') || 0;
         const bH = parseInt(b.resolution?.split('x')[1] || '0') || 0;
@@ -325,6 +437,29 @@
       .filter((f) => f.has_audio && !f.has_video)
       .sort((a, b) => (b.abr ?? 0) - (a.abr ?? 0)) ?? []
   );
+
+  let muxedFormats = $derived(
+    info?.formats
+      .filter((f) => f.has_video && f.has_audio)
+      .sort((a, b) => {
+        const aH = parseInt(a.resolution?.split('x')[1] || '0') || 0;
+        const bH = parseInt(b.resolution?.split('x')[1] || '0') || 0;
+        return bH - aH;
+      }) ?? []
+  );
+
+  let selectedVideoIsMuxed = $derived(
+    selectedVideo !== 'best' && selectedVideo !== 'none'
+      ? info?.formats.find(f => f.format_id === selectedVideo)?.has_audio ?? false
+      : false
+  );
+
+  let muxedOptions = $derived([
+    { value: 'best', label: $t('download.tracks.best') },
+    ...muxedFormats.map((f) => ({ value: f.format_id, label: makeVideoLabel(f) })),
+  ]);
+
+  let selectedMuxed = $state('best');
 
   function getBestAudioFormat(options?: { preferM4a?: boolean }) {
     if (audioFormats.length === 0) return null;
@@ -374,11 +509,16 @@
             label: bestAudioDetails()
               ? `${$t('download.tracks.bestQuality')} (${bestAudioDetails()})`
               : $t('download.tracks.bestQuality'),
+            disabled: selectedVideoIsMuxed,
           },
           ...(selectedVideo !== 'none'
-            ? [{ value: 'none', label: $t('download.tracks.noAudio') }]
+            ? [{ value: 'none', label: $t('download.tracks.noAudio'), disabled: selectedVideoIsMuxed }]
             : []),
-          ...audioFormats.map((f) => ({ value: f.format_id, label: makeAudioLabel(f) })),
+          ...audioFormats.map((f) => ({ 
+            value: f.format_id, 
+            label: makeAudioLabel(f),
+            disabled: selectedVideoIsMuxed 
+          })),
         ]
   );
 
@@ -456,7 +596,24 @@
     let formatString: string;
     let downloadMode: 'auto' | 'audio' | 'mute' = 'auto';
 
-    if (selectedVideo === 'none' && selectedAudio === 'none') {
+    if (!isYtdlp) {
+      if (!useDualSelectors) {
+        formatString = selectedMuxed === 'best' ? '' : selectedMuxed;
+      } else {
+        if (selectedVideo === 'none') {
+          downloadMode = 'audio';
+          formatString = selectedAudio === 'best' ? '' : selectedAudio;
+        } else if (selectedVideo === 'best') {
+          formatString = ''; // Let lux pick best
+        } else {
+          formatString = selectedVideo; // Use specific stream ID
+        }
+      }
+    }
+    else if (!useDualSelectors) {
+      formatString = selectedMuxed === 'best' ? 'best' : selectedMuxed;
+    }
+    else if (selectedVideo === 'none' && selectedAudio === 'none') {
       formatString = 'bestvideo+bestaudio/best';
     } else if (selectedVideo === 'best') {
       if (selectedAudio === 'best') {
@@ -477,7 +634,9 @@
         downloadMode = 'audio';
       }
     } else {
-      if (selectedAudio === 'best') {
+      if (selectedVideoIsMuxed) {
+        formatString = selectedVideo;
+      } else if (selectedAudio === 'best') {
         formatString = `${selectedVideo}+bestaudio`;
       } else if (selectedAudio === 'none') {
         formatString = selectedVideo;
@@ -488,10 +647,12 @@
     }
 
     const sponsorblockCategories: string[] = [];
-    if (skipSponsors) sponsorblockCategories.push('sponsor');
-    if (skipIntros) sponsorblockCategories.push('intro', 'outro');
-    if (skipSelfPromo) sponsorblockCategories.push('selfpromo');
-    if (skipInteraction) sponsorblockCategories.push('interaction');
+    if (isYtdlp) {
+      if (skipSponsors) sponsorblockCategories.push('sponsor');
+      if (skipIntros) sponsorblockCategories.push('intro', 'outro');
+      if (skipSelfPromo) sponsorblockCategories.push('selfpromo');
+      if (skipInteraction) sponsorblockCategories.push('interaction');
+    }
 
     return {
       formatString,
@@ -659,6 +820,8 @@
           like_count: (raw.like_count as number) || null,
           description: (raw.description as string) || null,
           upload_date: (raw.upload_date as string) || null,
+          channel_url: (raw.channel_url as string) || null,
+          channel_id: (raw.channel_id as string) || null,
           formats: rawFormats.map((f) => ({
             format_id: (f.format_id as string) || '',
             ext: (f.ext as string) || '',
@@ -678,7 +841,11 @@
           })),
         };
       } else {
-        loadedInfo = await invoke<VideoInfo>('get_video_formats', {
+        const backend = detectBackendForUrl(url);
+        const luxInstalled = backend === 'lux' && $deps.lux?.installed;
+        const command = luxInstalled ? 'lux_get_video_formats' : 'get_video_formats';
+        
+        loadedInfo = await invoke<VideoInfo>(command, {
           url,
           cookiesFromBrowser: cookiesFromBrowser || null,
           customCookies: customCookies || null,
@@ -719,7 +886,7 @@
       </button>
       <div class="header-badge">
         <Icon name="play" size={12} />
-        <span>YouTube</span>
+        <span>{platformName}</span>
       </div>
       <div class="header-spacer"></div>
       {#if estimatedSize()}
@@ -733,7 +900,7 @@
   {:else}
     <div class="yt-badge">
       <Icon name="play" size={14} />
-      <span>YouTube</span>
+      <span>{platformName}</span>
     </div>
   {/if}
 
@@ -752,8 +919,8 @@
           <div class="video-thumb-container">
             {#if loading}
               <div class="video-thumb skeleton"></div>
-            {:else if displayThumbnail}
-              <img src={displayThumbnail} alt="" class="video-thumb" />
+            {:else if displayThumbnail && !thumbnailError}
+              <img src={displayThumbnail} alt="" class="video-thumb" onerror={() => (thumbnailError = true)} />
               {#if info?.duration}
                 <span class="thumb-duration">{formatDuration(info.duration)}</span>
               {/if}
@@ -832,50 +999,77 @@
         <div class="quality-section">
           <span class="section-label">{$t('download.tracks.quality')}</span>
           <div class="presets-row">
-            {#each presets as preset}
-              <Chip
-                icon={preset.icon}
-                selected={selectedPreset === preset.id}
-                onclick={() => applyPreset(preset.id)}
-              >
-                {preset.label}
-              </Chip>
-            {/each}
+            {#if loading && presets.length <= 1}
+              <!-- Show skeleton chips while loading -->
+              <div class="preset-skel skeleton"></div>
+              <div class="preset-skel skeleton"></div>
+              <div class="preset-skel skeleton"></div>
+              <div class="preset-skel skeleton"></div>
+            {:else}
+              {#each presets as preset}
+                <Chip
+                  icon={preset.icon}
+                  selected={selectedPreset === preset.id}
+                  onclick={() => applyPreset(preset.id)}
+                >
+                  {preset.label}
+                </Chip>
+              {/each}
+            {/if}
           </div>
-          <div class="quality-row">
-            <div class="quality-select">
-              <span class="select-label">{$t('download.tracks.video')}</span>
-              <Select
-                bind:value={selectedVideo}
-                options={videoOptionsWithValidation}
-                disabled={loading}
-                onchange={markCustomPreset}
-              />
+          {#if useDualSelectors}
+            <div class="quality-row">
+              <div class="quality-select">
+                <span class="select-label">{$t('download.tracks.video')}</span>
+                <Select
+                  bind:value={selectedVideo}
+                  options={videoOptionsWithValidation}
+                  disabled={loading}
+                  onchange={markCustomPreset}
+                />
+              </div>
+              <div class="quality-select" class:disabled={selectedVideoIsMuxed}>
+                <span class="select-label">
+                  {$t('download.tracks.audio')}
+                  {#if selectedVideoIsMuxed}<span class="dimmed"> (included)</span>{/if}
+                </span>
+                <Select
+                  bind:value={selectedAudio}
+                  options={audioOptions}
+                  disabled={loading || selectedVideoIsMuxed}
+                  onchange={markCustomPreset}
+                />
+              </div>
             </div>
-            <div class="quality-select">
-              <span class="select-label">{$t('download.tracks.audio')}</span>
-              <Select
-                bind:value={selectedAudio}
-                options={audioOptions}
-                disabled={loading}
-                onchange={markCustomPreset}
-              />
+          {:else}
+            <div class="quality-row">
+              <div class="quality-select single">
+                <span class="select-label">{$t('download.tracks.quality')}</span>
+                <Select
+                  bind:value={selectedMuxed}
+                  options={muxedOptions}
+                  disabled={loading}
+                  onchange={markCustomPreset}
+                />
+              </div>
             </div>
-          </div>
+          {/if}
         </div>
         <div class="options-row">
-          <div class="option-group">
-            <span class="group-header">SponsorBlock <span class="tag">yt-dlp</span></span>
-            <div class="checks">
-              <Checkbox bind:checked={skipSponsors} label={$t('download.tracks.skipSponsors')} />
-              <Checkbox bind:checked={skipIntros} label={$t('download.tracks.skipIntros')} />
-              <Checkbox bind:checked={skipSelfPromo} label={$t('download.tracks.skipSelfPromo')} />
-              <Checkbox
-                bind:checked={skipInteraction}
-                label={$t('download.tracks.skipInteraction')}
-              />
+          {#if isYtdlp}
+            <div class="option-group">
+              <span class="group-header">SponsorBlock <span class="tag">yt-dlp</span></span>
+              <div class="checks">
+                <Checkbox bind:checked={skipSponsors} label={$t('download.tracks.skipSponsors')} />
+                <Checkbox bind:checked={skipIntros} label={$t('download.tracks.skipIntros')} />
+                <Checkbox bind:checked={skipSelfPromo} label={$t('download.tracks.skipSelfPromo')} />
+                <Checkbox
+                  bind:checked={skipInteraction}
+                  label={$t('download.tracks.skipInteraction')}
+                />
+              </div>
             </div>
-          </div>
+          {/if}
 
           <div class="option-group">
             <span class="group-header">{$t('download.tracks.embedOptions')}</span>
@@ -905,8 +1099,8 @@
         <div class="left">
           {#if loading}
             <div class="thumb skeleton"></div>
-          {:else if displayThumbnail}
-            <img src={displayThumbnail} alt="" class="thumb" />
+          {:else if displayThumbnail && !thumbnailError}
+            <img src={displayThumbnail} alt="" class="thumb" onerror={() => (thumbnailError = true)} />
           {:else}
             <div class="thumb empty"><Icon name="video" size={20} /></div>
           {/if}
@@ -1000,21 +1194,23 @@
 
       {#if showMoreOptions}
         <div class="more-options">
-          <div class="option-group">
-            <span class="group-label">
-              <span>SponsorBlock</span>
-              <span class="sponsor-tag">yt-dlp</span>
-            </span>
-            <div class="option-grid">
-              <Checkbox bind:checked={skipSponsors} label={$t('download.tracks.skipSponsors')} />
-              <Checkbox bind:checked={skipIntros} label={$t('download.tracks.skipIntros')} />
-              <Checkbox bind:checked={skipSelfPromo} label={$t('download.tracks.skipSelfPromo')} />
-              <Checkbox
-                bind:checked={skipInteraction}
-                label={$t('download.tracks.skipInteraction')}
-              />
+          {#if isYtdlp}
+            <div class="option-group">
+              <span class="group-label">
+                <span>SponsorBlock</span>
+                <span class="sponsor-tag">yt-dlp</span>
+              </span>
+              <div class="option-grid">
+                <Checkbox bind:checked={skipSponsors} label={$t('download.tracks.skipSponsors')} />
+                <Checkbox bind:checked={skipIntros} label={$t('download.tracks.skipIntros')} />
+                <Checkbox bind:checked={skipSelfPromo} label={$t('download.tracks.skipSelfPromo')} />
+                <Checkbox
+                  bind:checked={skipInteraction}
+                  label={$t('download.tracks.skipInteraction')}
+                />
+              </div>
             </div>
-          </div>
+          {/if}
 
           <div class="option-group">
             <span class="group-label">{$t('download.tracks.subtitles')}</span>
@@ -1098,6 +1294,13 @@
     height: 100%;
     display: flex;
     flex-direction: column;
+  }
+
+  @media (max-width: 480px) {
+    .track-builder.full-bleed {
+      height: auto;
+      min-height: 100%;
+    }
   }
 
   .track-builder.full-bleed .view-header {
@@ -1336,14 +1539,18 @@
 
   .video-meta .channel :global(.channel-arrow) {
     opacity: 0;
+    width: 0;
+    overflow: hidden;
     transition:
       opacity 0.15s ease,
+      width 0.15s ease,
       transform 0.15s ease;
     color: rgba(255, 255, 255, 0.5);
   }
 
   .video-meta .channel.clickable:hover :global(.channel-arrow) {
     opacity: 1;
+    width: 12px;
     transform: translateX(2px);
     color: var(--accent);
   }
@@ -1441,12 +1648,28 @@
     gap: 4px;
   }
 
+  .quality-select.single {
+    max-width: 400px;
+  }
+
+  .quality-select.disabled {
+    opacity: 0.5;
+    pointer-events: none;
+  }
+
   .quality-select .select-label {
     font-size: 11px;
     font-weight: 500;
     color: rgba(255, 255, 255, 0.5);
     text-transform: uppercase;
     letter-spacing: 0.5px;
+  }
+
+  .quality-select .select-label .dimmed {
+    font-size: 10px;
+    opacity: 0.6;
+    font-weight: 400;
+    text-transform: none;
   }
 
   /* Options Row */
@@ -1984,6 +2207,12 @@
     width: 100%;
     border-radius: 6px;
     margin-top: 8px;
+  }
+
+  .preset-skel {
+    height: 32px;
+    width: 80px;
+    border-radius: 16px;
   }
 
   /* Mobile / Android layout */

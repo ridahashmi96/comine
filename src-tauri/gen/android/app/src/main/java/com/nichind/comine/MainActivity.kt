@@ -5,15 +5,19 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.provider.DocumentsContract
 import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.NotificationCompat
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
@@ -46,7 +50,14 @@ class MainActivity : TauriActivity() {
   private var pendingUpdateApk: File? = null
   private var pendingUpdateCallback: String? = null
   
+  private var folderPickerCallback: String? = null
+  private lateinit var folderPickerLauncher: ActivityResultLauncher<Uri?>
+  
   override fun onCreate(savedInstanceState: Bundle?) {
+    folderPickerLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+      handleFolderPickerResult(uri)
+    }
+    
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
     createNotificationChannel()
@@ -66,6 +77,62 @@ class MainActivity : TauriActivity() {
     tryInstallPendingUpdate()
   }
   
+  private fun handleFolderPickerResult(uri: Uri?) {
+    val callbackName = folderPickerCallback ?: return
+    folderPickerCallback = null
+    
+    val resultJson = if (uri != null) {
+      try {
+        contentResolver.takePersistableUriPermission(
+          uri,
+          Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        )
+        
+        val path = getPathFromUri(uri)
+        Log.d(TAG, "Folder picker selected: uri=$uri, path=$path")
+        
+        JSONObject().apply {
+          put("success", true)
+          put("uri", uri.toString())
+          put("path", path ?: uri.toString())
+        }.toString()
+      } catch (e: Exception) {
+        Log.e(TAG, "Failed to process folder picker result", e)
+        JSONObject().apply {
+          put("success", false)
+          put("error", e.message ?: "Unknown error")
+        }.toString()
+      }
+    } else {
+      JSONObject().apply {
+        put("success", false)
+        put("cancelled", true)
+      }.toString()
+    }
+    
+    sendCallback(callbackName, resultJson)
+  }
+  
+  private fun getPathFromUri(uri: Uri): String? {
+    return try {
+      val docId = DocumentsContract.getTreeDocumentId(uri)
+      val parts = docId.split(":")
+      if (parts.size >= 2) {
+        val type = parts[0]
+        val relativePath = parts[1]
+        when (type) {
+          "primary" -> "/storage/emulated/0/$relativePath"
+          else -> "/storage/$type/$relativePath"
+        }
+      } else {
+        null
+      }
+    } catch (e: Exception) {
+      Log.w(TAG, "Could not extract path from URI", e)
+      null
+    }
+  }
+
   private fun tryInstallPendingUpdate() {
     val apkFile = pendingUpdateApk ?: return
     val callbackName = pendingUpdateCallback ?: return
@@ -388,6 +455,39 @@ class MainActivity : TauriActivity() {
     return null
   }
   
+  private fun sendCallback(callbackName: String, json: String) {
+    mainHandler.post {
+      try {
+        val base64Json = android.util.Base64.encodeToString(json.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
+        Log.d(TAG, "Sending callback $callbackName with ${json.length} bytes")
+        
+        val script = """
+          (function() {
+            try {
+              if (window.$callbackName) {
+                var binaryStr = atob('$base64Json');
+                var bytes = new Uint8Array(binaryStr.length);
+                for (var i = 0; i < binaryStr.length; i++) {
+                  bytes[i] = binaryStr.charCodeAt(i);
+                }
+                var decoded = new TextDecoder('utf-8').decode(bytes);
+                window.$callbackName(decoded);
+              } else {
+                console.warn('Callback not found: $callbackName');
+              }
+            } catch(e) {
+              console.error('Callback error for $callbackName:', e);
+            }
+          })();
+        """.trimIndent()
+        
+        evaluateJavascript(script)
+      } catch (e: Exception) {
+        Log.e(TAG, "Failed to send callback $callbackName", e)
+      }
+    }
+  }
+  
   override fun onWebViewCreate(webView: WebView) {
     super.onWebViewCreate(webView)
     
@@ -478,6 +578,24 @@ class MainActivity : TauriActivity() {
         pInfo.versionName ?: "unknown"
       } catch (e: Exception) {
         "unknown"
+      }
+    }
+    
+    @JavascriptInterface
+    fun pickFolder(callbackName: String) {
+      mainHandler.post {
+        try {
+          folderPickerCallback = callbackName
+          val initialUri = android.net.Uri.parse("content://com.android.externalstorage.documents/document/primary:Download")
+          folderPickerLauncher.launch(initialUri)
+        } catch (e: Exception) {
+          Log.e(TAG, "Failed to launch folder picker", e)
+          val errorResult = JSONObject().apply {
+            put("success", false)
+            put("error", e.message ?: "Failed to launch folder picker")
+          }.toString()
+          sendCallback(callbackName, errorResult)
+        }
       }
     }
     
@@ -1042,6 +1160,16 @@ class MainActivity : TauriActivity() {
     
     @JavascriptInterface
     fun download(url: String, format: String?, playlistFolder: String?, isAudioOnly: Boolean, callbackName: String) {
+      downloadWithSettings(url, format, playlistFolder, isAudioOnly, 16, 16, null, 0, null, callbackName)
+    }
+    
+    @JavascriptInterface
+    fun downloadWithPath(url: String, format: String?, playlistFolder: String?, isAudioOnly: Boolean, downloadPath: String?, callbackName: String) {
+      downloadWithSettings(url, format, playlistFolder, isAudioOnly, 16, 16, null, 0, downloadPath, callbackName)
+    }
+    
+    @JavascriptInterface
+    fun downloadWithSettings(url: String, format: String?, playlistFolder: String?, isAudioOnly: Boolean, aria2Connections: Int, aria2Splits: Int, aria2MinSplitSize: String?, speedLimit: Int, downloadPath: String?, callbackName: String) {
       downloadExecutor.execute {
         val notificationId = getNotificationIdForUrl(url)
         
@@ -1055,12 +1183,20 @@ class MainActivity : TauriActivity() {
           }
           
           sendLog("info", "Starting download: $url")
-          sendLog("debug", "Format: ${format ?: "best"}, PlaylistFolder: ${playlistFolder ?: "none"}, isAudioOnly: $isAudioOnly")
+          sendLog("debug", "Format: ${format ?: "best"}, PlaylistFolder: ${playlistFolder ?: "none"}, isAudioOnly: $isAudioOnly, downloadPath: ${downloadPath ?: "default"}")
           
-          val baseDir = File(
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-            "Comine"
-          )
+          val baseDir = if (!downloadPath.isNullOrBlank()) {
+            val customDir = File(downloadPath)
+            if (customDir.exists() || customDir.mkdirs()) {
+              sendLog("info", "Using custom download path: $downloadPath")
+              customDir
+            } else {
+              sendLog("warn", "Custom path not accessible, using default")
+              File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Comine")
+            }
+          } else {
+            File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Comine")
+          }
           
           val downloadDir = if (!playlistFolder.isNullOrBlank()) {
             val safeFolderName = playlistFolder
@@ -1101,8 +1237,16 @@ class MainActivity : TauriActivity() {
           
           if (aria2Available) {
             request.addOption("--downloader", "libaria2c.so")
-            request.addOption("--external-downloader-args", "aria2c:'-x 16 -s 16 -k 1M'")
-            sendLog("info", "Using aria2 for accelerated download")
+            val connections = aria2Connections.coerceIn(1, 16)
+            val splits = aria2Splits.coerceIn(1, 16)
+            val minSplit = if (aria2MinSplitSize.isNullOrBlank()) "1M" else aria2MinSplitSize
+            request.addOption("--external-downloader-args", "aria2c:'-x $connections -s $splits -k $minSplit'")
+            sendLog("info", "Using aria2 for accelerated download (connections: $connections, splits: $splits, min-split: $minSplit)")
+          }
+          
+          if (speedLimit > 0) {
+            request.addOption("--limit-rate", "${speedLimit}M")
+            sendLog("info", "Speed limit set to ${speedLimit}M")
           }
           
           if (!format.isNullOrEmpty() && format != "best") {
@@ -1258,39 +1402,6 @@ class MainActivity : TauriActivity() {
             put("error", e.message ?: "Unknown error")
           }.toString()
           sendCallback(callbackName, errorJson)
-        }
-      }
-    }
-    
-    private fun sendCallback(callbackName: String, json: String) {
-      mainHandler.post {
-        try {
-          val base64Json = android.util.Base64.encodeToString(json.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
-          Log.d(TAG, "Sending callback $callbackName with ${json.length} bytes")
-          
-          val script = """
-            (function() {
-              try {
-                if (window.$callbackName) {
-                  var binaryStr = atob('$base64Json');
-                  var bytes = new Uint8Array(binaryStr.length);
-                  for (var i = 0; i < binaryStr.length; i++) {
-                    bytes[i] = binaryStr.charCodeAt(i);
-                  }
-                  var decoded = new TextDecoder('utf-8').decode(bytes);
-                  window.$callbackName(decoded);
-                } else {
-                  console.warn('Callback not found: $callbackName');
-                }
-              } catch(e) {
-                console.error('Callback error for $callbackName:', e);
-              }
-            })();
-          """.trimIndent()
-          
-          evaluateJavascript(script)
-        } catch (e: Exception) {
-          Log.e(TAG, "Failed to send callback $callbackName", e)
         }
       }
     }

@@ -50,16 +50,14 @@
         isAtBottom = false;
       };
     }
+    return undefined;
   });
 
-  // @ts-ignore - defined by vite
-  const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0';
-  // @ts-ignore - defined by vite
-  const GIT_BRANCH = typeof __GIT_BRANCH__ !== 'undefined' ? __GIT_BRANCH__ : 'unknown';
-  // @ts-ignore - defined by vite
-  const COMMIT_HASH = typeof __COMMIT_HASH__ !== 'undefined' ? __COMMIT_HASH__ : 'unknown';
-  // @ts-ignore - defined by vite
-  const BUILD_DATE = typeof __BUILD_DATE__ !== 'undefined' ? __BUILD_DATE__ : 'unknown';
+  // Build-time constants defined in vite.config.js
+  const APP_VERSION = __APP_VERSION__;
+  const GIT_BRANCH = __GIT_BRANCH__;
+  const COMMIT_HASH = __COMMIT_HASH__;
+  const BUILD_DATE = __BUILD_DATE__;
 
   let versionCopied = $state(false);
 
@@ -255,7 +253,7 @@
   }
 
   button.setting-item.clickable:hover {
-    background: rgba(255, 255, 255, 0.06);
+    background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.06) 50%);
   }
 
   .setting-label {

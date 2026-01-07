@@ -1,14 +1,25 @@
+mod backends;
+mod cache;
 mod deps;
+mod logs;
+mod notifications;
 mod proxy;
+#[cfg(not(target_os = "android"))]
+mod tray;
+mod types;
+mod utils;
+
+use types::{PlaylistInfo, VideoFormats, VideoInfo};
+#[cfg(not(target_os = "android"))]
+use utils::lock_or_recover;
+
+#[cfg(not(target_os = "android"))]
+use backends::{Backend, InfoRequest, PlaylistRequest};
 
 #[cfg(not(target_os = "android"))]
 use image::{DynamicImage, GenericImageView};
 #[cfg(not(target_os = "android"))]
-use lru::LruCache;
-#[cfg(not(target_os = "android"))]
 use std::collections::HashMap;
-#[cfg(not(target_os = "android"))]
-use std::num::NonZeroUsize;
 #[cfg(not(target_os = "android"))]
 use std::process::Stdio;
 #[cfg(not(target_os = "android"))]
@@ -18,236 +29,20 @@ use tauri::AppHandle;
 use tauri::Emitter;
 #[cfg(not(target_os = "android"))]
 use tauri::Manager;
-#[cfg(not(target_os = "android"))]
-use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 #[cfg(not(target_os = "android"))]
 static ACTIVE_DOWNLOADS: std::sync::LazyLock<Mutex<HashMap<String, u32>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
-#[cfg(not(target_os = "android"))]
-static VIDEO_INFO_CACHE: std::sync::LazyLock<Mutex<LruCache<String, VideoInfo>>> =
-    std::sync::LazyLock::new(|| Mutex::new(LruCache::new(NonZeroUsize::new(10).unwrap())));
-
-#[cfg(not(target_os = "android"))]
-static PLAYLIST_INFO_CACHE: std::sync::LazyLock<Mutex<LruCache<String, PlaylistInfo>>> =
-    std::sync::LazyLock::new(|| Mutex::new(LruCache::new(NonZeroUsize::new(5).unwrap())));
-
-#[cfg(not(target_os = "android"))]
-static VIDEO_FORMATS_CACHE: std::sync::LazyLock<Mutex<LruCache<String, VideoFormats>>> =
-    std::sync::LazyLock::new(|| Mutex::new(LruCache::new(NonZeroUsize::new(10).unwrap())));
-
-/// Extension trait to hide console window on Windows
-#[cfg(target_os = "windows")]
-pub trait CommandExt {
-    fn hide_console(&mut self) -> &mut Self;
-}
-
-#[cfg(target_os = "windows")]
-impl CommandExt for tokio::process::Command {
-    #[allow(unused_imports)]
-    fn hide_console(&mut self) -> &mut Self {
-        use std::os::windows::process::CommandExt as WinCommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        self.creation_flags(CREATE_NO_WINDOW);
-        self
-    }
-}
 #[cfg(target_os = "android")]
 use log::info;
 #[cfg(not(target_os = "android"))]
 use log::{debug, error, info, warn};
 #[cfg(not(target_os = "android"))]
-use tauri::image::Image;
-#[cfg(not(target_os = "android"))]
-use tauri::menu::{MenuBuilder, MenuItemBuilder};
-#[cfg(not(target_os = "android"))]
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-#[cfg(not(target_os = "android"))]
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
-/// Get the command to run yt-dlp on the current platform
-/// On Android, downloads are handled via the JavaScript bridge to youtubedl-android
-#[cfg(not(target_os = "android"))]
-fn get_ytdlp_command(
-    app: &AppHandle,
-    proxy_url: Option<&str>,
-) -> Result<(String, Vec<String>, Vec<(String, String)>, Option<String>), String> {
-    let ytdlp_path = deps::get_ytdlp_path(app)?;
-    if !ytdlp_path.exists() {
-        return Err("yt-dlp is not installed. Please install it first.".to_string());
-    }
-
-    let quickjs_path = deps::get_quickjs_path(app)?;
-    let quickjs_option = if quickjs_path.exists() {
-        Some(quickjs_path.to_string_lossy().to_string())
-    } else {
-        None
-    };
-
-    let bin_dir = ytdlp_path
-        .parent()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
-
-    let mut env_vars = vec![];
-
-    if !bin_dir.is_empty() {
-        let current_path = std::env::var("PATH").unwrap_or_default();
-        #[cfg(target_os = "windows")]
-        let new_path = format!("{};{}", bin_dir, current_path);
-        #[cfg(not(target_os = "windows"))]
-        let new_path = format!("{}:{}", bin_dir, current_path);
-
-        env_vars.push(("PATH".to_string(), new_path));
-    }
-
-    if let Some(proxy) = proxy_url {
-        if !proxy.is_empty() {
-            info!("Setting proxy environment variables for yt-dlp: {}", proxy);
-            env_vars.push(("HTTP_PROXY".to_string(), proxy.to_string()));
-            env_vars.push(("HTTPS_PROXY".to_string(), proxy.to_string()));
-            env_vars.push(("http_proxy".to_string(), proxy.to_string()));
-            env_vars.push(("https_proxy".to_string(), proxy.to_string()));
-            env_vars.push(("ALL_PROXY".to_string(), proxy.to_string()));
-            env_vars.push(("all_proxy".to_string(), proxy.to_string()));
-        }
-    } else {
-        let proxy_vars = [
-            "HTTP_PROXY",
-            "http_proxy",
-            "HTTPS_PROXY",
-            "https_proxy",
-            "ALL_PROXY",
-            "all_proxy",
-            "NO_PROXY",
-            "no_proxy",
-        ];
-
-        #[allow(unused_variables, unused_mut)]
-        let mut found_proxy = false;
-        for var in proxy_vars {
-            if let Ok(value) = std::env::var(var) {
-                if !value.is_empty() {
-                    info!("Passing through proxy env var: {}={}", var, value);
-                    env_vars.push((var.to_string(), value));
-                    #[allow(unused_assignments)]
-                    {
-                        found_proxy = true;
-                    }
-                }
-            }
-        }
-
-        #[cfg(target_os = "linux")]
-        if !found_proxy {
-            if let Some(proxy_url) = detect_linux_system_proxy() {
-                info!("Detected Linux system proxy: {}", proxy_url);
-                env_vars.push(("http_proxy".to_string(), proxy_url.clone()));
-                env_vars.push(("https_proxy".to_string(), proxy_url.clone()));
-                env_vars.push(("HTTP_PROXY".to_string(), proxy_url.clone()));
-                env_vars.push(("HTTPS_PROXY".to_string(), proxy_url));
-            }
-        }
-    }
-
-    env_vars.push(("PYTHONIOENCODING".to_string(), "utf-8".to_string()));
-    env_vars.push(("PYTHONUTF8".to_string(), "1".to_string()));
-
-    Ok((
-        ytdlp_path.to_string_lossy().to_string(),
-        vec![],
-        env_vars,
-        quickjs_option,
-    ))
-}
-
-/// Detect system proxy on Linux
-#[cfg(target_os = "linux")]
-fn detect_linux_system_proxy() -> Option<String> {
-    if let Ok(output) = std::process::Command::new("gsettings")
-        .args(["get", "org.gnome.system.proxy", "mode"])
-        .output()
-    {
-        let mode = String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .trim_matches('\'')
-            .to_string();
-        if mode == "manual" {
-            if let (Ok(host_output), Ok(port_output)) = (
-                std::process::Command::new("gsettings")
-                    .args(["get", "org.gnome.system.proxy.http", "host"])
-                    .output(),
-                std::process::Command::new("gsettings")
-                    .args(["get", "org.gnome.system.proxy.http", "port"])
-                    .output(),
-            ) {
-                let host = String::from_utf8_lossy(&host_output.stdout)
-                    .trim()
-                    .trim_matches('\'')
-                    .to_string();
-                let port = String::from_utf8_lossy(&port_output.stdout)
-                    .trim()
-                    .to_string();
-                if !host.is_empty() && host != "''" && !port.is_empty() && port != "0" {
-                    return Some(format!("http://{}:{}", host, port));
-                }
-            }
-
-            if let (Ok(host_output), Ok(port_output)) = (
-                std::process::Command::new("gsettings")
-                    .args(["get", "org.gnome.system.proxy.socks", "host"])
-                    .output(),
-                std::process::Command::new("gsettings")
-                    .args(["get", "org.gnome.system.proxy.socks", "port"])
-                    .output(),
-            ) {
-                let host = String::from_utf8_lossy(&host_output.stdout)
-                    .trim()
-                    .trim_matches('\'')
-                    .to_string();
-                let port = String::from_utf8_lossy(&port_output.stdout)
-                    .trim()
-                    .to_string();
-                if !host.is_empty() && host != "''" && !port.is_empty() && port != "0" {
-                    return Some(format!("socks5://{}:{}", host, port));
-                }
-            }
-        }
-    }
-
-    let common_proxy_ports = [
-        (7890, "http"),
-        (8080, "http"),
-        (1080, "socks5"),
-        (10809, "http"),
-        (10808, "socks5"),
-        (2080, "http"),
-        (2081, "socks5"),
-    ];
-
-    for (port, scheme) in common_proxy_ports {
-        if check_port_open(port) {
-            info!("Found open proxy port: {} ({})", port, scheme);
-            return Some(format!("{}://127.0.0.1:{}", scheme, port));
-        }
-    }
-
-    None
-}
-
-/// Check if a port is open on localhost
-#[cfg(target_os = "linux")]
-fn check_port_open(port: u16) -> bool {
-    use std::net::TcpStream;
-    use std::time::Duration;
-
-    TcpStream::connect_timeout(
-        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
-        Duration::from_millis(100),
-    )
-    .is_ok()
-}
+#[cfg(target_os = "windows")]
+use utils::CommandHideConsole;
 
 #[tauri::command]
 #[allow(unused_variables)]
@@ -261,6 +56,9 @@ async fn download_video(
     remux: Option<bool>,
     clear_metadata: Option<bool>,
     use_aria2: Option<bool>,
+    aria2_connections: Option<u32>,
+    aria2_splits: Option<u32>,
+    aria2_min_split_size: Option<String>,
     no_playlist: Option<bool>,
     cookies_from_browser: Option<String>,
     custom_cookies: Option<String>,
@@ -272,6 +70,7 @@ async fn download_video(
     sponsor_block: Option<bool>,
     chapters: Option<bool>,
     embed_subtitles: Option<bool>,
+    subtitle_languages: Option<String>,
     download_speed_limit: Option<u64>,
     window: tauri::Window,
 ) -> Result<String, String> {
@@ -291,7 +90,7 @@ async fn download_video(
 
     #[cfg(not(target_os = "android"))]
     {
-        let resolved_proxy = proxy_config.as_ref().map(|c| proxy::resolve_proxy(c));
+        let resolved_proxy = proxy_config.as_ref().map(proxy::resolve_proxy);
         let proxy_url = resolved_proxy.as_ref().and_then(|r| {
             if r.url.is_empty() {
                 None
@@ -306,11 +105,11 @@ async fn download_video(
             }
         }
 
-        let (command, prefix_args, env_vars, quickjs_path) = get_ytdlp_command(&app, proxy_url)?;
+        let config = backends::get_command(&app, proxy_url)?;
 
         debug!(
             "Using command: {} with prefix args: {:?}",
-            command, prefix_args
+            config.ytdlp_path, config.prefix_args
         );
 
         let mut downloads_dir = if let Some(ref custom_path) = download_path {
@@ -349,11 +148,7 @@ async fn download_video(
         }
 
         let download_mode = download_mode.unwrap_or_else(|| "auto".to_string());
-        let ext = if download_mode == "audio" {
-            "%(ext)s"
-        } else {
-            "%(ext)s"
-        };
+        let ext = "%(ext)s";
 
         let output_template = downloads_dir
             .join(format!("%(title)s.{}", ext))
@@ -369,7 +164,7 @@ async fn download_video(
 
         let download_start_time = std::time::SystemTime::now();
 
-        let mut args: Vec<String> = prefix_args;
+        let mut args: Vec<String> = config.prefix_args;
         args.extend([
             "--encoding".to_string(),
             "utf-8".to_string(),
@@ -389,7 +184,7 @@ async fn download_video(
             info!("Using --proxy argument: {}", proxy);
         }
 
-        if let Some(ref qjs_path) = quickjs_path {
+        if let Some(ref qjs_path) = config.quickjs_path {
             args.extend(["--js-runtimes".to_string(), format!("quickjs:{}", qjs_path)]);
             info!("Using QuickJS runtime: {}", qjs_path);
         }
@@ -518,24 +313,25 @@ async fn download_video(
             .unwrap_or(false);
 
         if use_custom_cookies {
-            let cookies_text = custom_cookies.as_ref().unwrap();
-            let cache_dir = app
-                .path()
-                .app_cache_dir()
-                .map_err(|e| format!("Failed to get cache dir: {}", e))?;
-            let cookies_file = cache_dir.join("custom_cookies.txt");
+            if let Some(cookies_text) = custom_cookies.as_deref() {
+                                let cache_dir = app
+                    .path()
+                    .app_cache_dir()
+                    .map_err(|e| format!("Failed to get cache dir: {}", e))?;
+                let cookies_file = cache_dir.join("custom_cookies.txt");
 
-            tokio::fs::create_dir_all(&cache_dir)
-                .await
-                .map_err(|e| format!("Failed to create cache dir: {}", e))?;
+                tokio::fs::create_dir_all(&cache_dir)
+                    .await
+                    .map_err(|e| format!("Failed to create cache dir: {}", e))?;
 
-            tokio::fs::write(&cookies_file, cookies_text)
-                .await
-                .map_err(|e| format!("Failed to write cookies file: {}", e))?;
+                tokio::fs::write(&cookies_file, cookies_text)
+                    .await
+                    .map_err(|e| format!("Failed to write cookies file: {}", e))?;
 
-            args.push("--cookies".to_string());
-            args.push(cookies_file.to_string_lossy().to_string());
-            info!("Using custom cookies file: {:?}", cookies_file);
+                args.push("--cookies".to_string());
+                args.push(cookies_file.to_string_lossy().to_string());
+                info!("Using custom cookies file: {:?}", cookies_file);
+            }
         } else if let Some(ref browser) = cookies_from_browser {
             if !browser.is_empty() && browser != "custom" {
                 args.push("--cookies-from-browser".to_string());
@@ -564,12 +360,13 @@ async fn download_video(
         }
 
         if embed_subtitles.unwrap_or(false) {
+            let langs = subtitle_languages.as_deref().unwrap_or("en.*,ru.*");
             args.extend([
                 "--embed-subs".to_string(),
                 "--sub-langs".to_string(),
-                "en.*,ru.*".to_string(),
+                langs.to_string(),
             ]);
-            info!("Embedding subtitles (en, ru)");
+            info!("Embedding subtitles ({})", langs);
         }
 
         if let Some(limit) = download_speed_limit {
@@ -579,41 +376,38 @@ async fn download_video(
             }
         }
 
-        if use_aria2.unwrap_or(false) {
+        let should_use_aria2 = use_aria2.unwrap_or(true);
+        if should_use_aria2 {
             let aria2_path = deps::get_aria2_path(&app)?;
             if aria2_path.exists() {
-                let is_youtube = url.contains("youtube.com") || url.contains("youtu.be");
-
-                if is_youtube {
-                    info!("Skipping aria2 for YouTube (causes 403 errors)");
-                } else {
-                    info!("Using aria2 as external downloader: {:?}", aria2_path);
-                    args.extend([
-                        "--downloader".to_string(),
-                        aria2_path.to_string_lossy().to_string(),
-                        "--downloader-args".to_string(),
-                        "aria2c:-x 8 -s 8 -k 1M --file-allocation=none".to_string(),
-                    ]);
-                }
+                let connections = aria2_connections.unwrap_or(8).min(16).max(1);
+                let splits = aria2_splits.unwrap_or(8).min(16).max(1);
+                let min_split = aria2_min_split_size.as_deref().unwrap_or("1M");
+                info!("Using aria2 as external downloader: {:?} (connections: {}, splits: {}, min-split: {})", aria2_path, connections, splits, min_split);
+                args.extend([
+                    "--downloader".to_string(),
+                    aria2_path.to_string_lossy().to_string(),
+                    "--downloader-args".to_string(),
+                    format!("aria2c:-x {} -s {} -k {} --file-allocation=none", connections, splits, min_split),
+                ]);
             } else {
-                info!("aria2 not installed, falling back to default downloader");
+                info!("aria2 requested but not installed, using default downloader");
             }
+        } else {
+            info!("aria2 disabled by user, using yt-dlp's native downloader");
         }
 
         args.push(url.clone());
 
-        let mut cmd = tokio::process::Command::new(&command);
+        let mut cmd = tokio::process::Command::new(&config.ytdlp_path);
         cmd.args(&args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
         #[cfg(target_os = "windows")]
-        {
-            use crate::CommandExt;
-            cmd.hide_console();
-        }
+        cmd.hide_console();
 
-        for (key, value) in &env_vars {
+        for (key, value) in &config.env_vars {
             cmd.env(key, value);
         }
 
@@ -624,14 +418,16 @@ async fn download_video(
 
         let pid = child.id().unwrap_or(0);
         {
-            let mut downloads = ACTIVE_DOWNLOADS.lock().unwrap();
+            let mut downloads = lock_or_recover(&ACTIVE_DOWNLOADS);
             downloads.insert(url.clone(), pid);
             info!("Registered download process {} for URL: {}", pid, url);
         }
 
         let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
         let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
-        let mut stdout_reader = BufReader::new(stdout).lines();
+        
+        let mut stdout_reader = BufReader::new(stdout);
+        let mut stdout_buffer = Vec::new();
         let mut stderr_reader = BufReader::new(stderr).lines();
 
         let mut final_file_path: Option<String> = None;
@@ -645,37 +441,53 @@ async fn download_video(
 
         while !stdout_done || !stderr_done {
             tokio::select! {
-                result = stdout_reader.next_line(), if !stdout_done => {
+                result = stdout_reader.read_u8(), if !stdout_done => {
                     match result {
-                        Ok(Some(line)) => {
-                            debug!("yt-dlp stdout: {}", line);
+                        Ok(byte) => {
+                            if byte == b'\n' || byte == b'\r' {
+                                if !stdout_buffer.is_empty() {
+                                    if let Ok(line) = String::from_utf8(stdout_buffer.clone()) {
+                                        let line = line.trim().to_string();
+                                        stdout_buffer.clear();
+                                        
+                                        if line.is_empty() {
+                                            continue;
+                                        }
+                                        
+                                        debug!("yt-dlp stdout: {}", line);
 
-                            if line.starts_with(">>>FILEPATH:") {
-                                let path = line.trim_start_matches(">>>FILEPATH:");
-                                let path_lower = path.to_lowercase();
-                                let is_image = path_lower.ends_with(".png") ||
-                                               path_lower.ends_with(".jpg") ||
-                                               path_lower.ends_with(".jpeg") ||
-                                               path_lower.ends_with(".webp");
-                                if !is_image {
-                                    final_file_path = Some(path.to_string());
-                                    info!("Captured file path from --print: {:?}", final_file_path);
-                                } else {
-                                    debug!("Skipping image file path from --print: {}", path);
+                                        if line.starts_with(">>>FILEPATH:") {
+                                            let path = line.trim_start_matches(">>>FILEPATH:");
+                                            let path_lower = path.to_lowercase();
+                                            let is_image = path_lower.ends_with(".png") ||
+                                                           path_lower.ends_with(".jpg") ||
+                                                           path_lower.ends_with(".jpeg") ||
+                                                           path_lower.ends_with(".webp");
+                                            if !is_image {
+                                                final_file_path = Some(path.to_string());
+                                                info!("Captured file path from --print: {:?}", final_file_path);
+                                            } else {
+                                                debug!("Skipping image file path from --print: {}", path);
+                                            }
+                                            continue;
+                                        }
+
+                                        let now = std::time::Instant::now();
+                                        if now.duration_since(last_progress_emit).as_millis() >= PROGRESS_THROTTLE_MS as u128 {
+                                            last_progress_emit = now;
+                                            let _ = window.emit("download-progress", DownloadProgress {
+                                                url: url.clone(),
+                                                message: line,
+                                            });
+                                        }
+                                    } else {
+                                        stdout_buffer.clear();
+                                    }
                                 }
-                                continue;
-                            }
-
-                            let now = std::time::Instant::now();
-                            if now.duration_since(last_progress_emit).as_millis() >= PROGRESS_THROTTLE_MS as u128 {
-                                last_progress_emit = now;
-                                let _ = window.emit("download-progress", DownloadProgress {
-                                    url: url.clone(),
-                                    message: line,
-                                });
+                            } else {
+                                stdout_buffer.push(byte);
                             }
                         }
-                        Ok(None) => stdout_done = true,
                         Err(_) => stdout_done = true,
                     }
                 }
@@ -753,9 +565,12 @@ async fn download_video(
             info!("Download completed successfully for: {}", url);
             info!("Captured file path: {:?}", final_file_path);
 
-            if final_file_path.is_none()
-                || !std::path::Path::new(final_file_path.as_ref().unwrap()).exists()
-            {
+            let needs_scan = final_file_path
+                .as_ref()
+                .map(|p| !std::path::Path::new(p).exists())
+                .unwrap_or(true);
+
+            if needs_scan {
                 info!("Scanning downloads folder for newly created file...");
                 if let Ok(entries) = std::fs::read_dir(&downloads_dir) {
                     let mut newest: Option<(std::path::PathBuf, std::time::SystemTime)> = None;
@@ -782,7 +597,11 @@ async fn download_video(
                         if let Ok(metadata) = entry.metadata() {
                             if let Ok(created) = metadata.created() {
                                 if created >= download_start_time {
-                                    if newest.is_none() || created > newest.as_ref().unwrap().1 {
+                                    let is_newer = newest
+                                        .as_ref()
+                                        .map(|(_, t)| created > *t)
+                                        .unwrap_or(true);
+                                    if is_newer {
                                         newest = Some((path, created));
                                     }
                                 }
@@ -799,7 +618,7 @@ async fn download_video(
 
             info!("Removing from active downloads map...");
             {
-                let mut downloads = ACTIVE_DOWNLOADS.lock().unwrap();
+                let mut downloads = lock_or_recover(&ACTIVE_DOWNLOADS);
                 downloads.remove(&url);
             }
 
@@ -821,12 +640,13 @@ async fn download_video(
                     && url.to_lowercase().contains("music.youtube.com")
                     && download_mode == "audio"
                 {
-                    let thumb_url = thumbnail_url_for_embed.as_ref().unwrap();
-                    info!("Embedding YTM thumbnail from URL into: {}", path);
-                    if let Err(e) = embed_thumbnail_from_url(&app, path, thumb_url).await {
-                        warn!("Failed to embed thumbnail from URL: {}", e);
-                    } else {
-                        info!("Successfully embedded thumbnail from URL");
+                    if let Some(thumb_url) = thumbnail_url_for_embed.as_ref() {
+                        info!("Embedding YTM thumbnail from URL into: {}", path);
+                        if let Err(e) = embed_thumbnail_from_url(&app, path, thumb_url).await {
+                            warn!("Failed to embed thumbnail from URL: {}", e);
+                        } else {
+                            info!("Successfully embedded thumbnail from URL");
+                        }
                     }
                 }
             }
@@ -862,7 +682,7 @@ async fn download_video(
                     );
 
                     {
-                        let mut downloads = ACTIVE_DOWNLOADS.lock().unwrap();
+                        let mut downloads = lock_or_recover(&ACTIVE_DOWNLOADS);
                         downloads.remove(&url);
                     }
 
@@ -886,7 +706,7 @@ async fn download_video(
             }
 
             {
-                let mut downloads = ACTIVE_DOWNLOADS.lock().unwrap();
+                let mut downloads = lock_or_recover(&ACTIVE_DOWNLOADS);
                 downloads.remove(&url);
             }
 
@@ -962,7 +782,7 @@ async fn cancel_download(url: String) -> Result<(), String> {
     #[cfg(not(target_os = "android"))]
     {
         let pid = {
-            let downloads = ACTIVE_DOWNLOADS.lock().unwrap();
+            let downloads = lock_or_recover(&ACTIVE_DOWNLOADS);
             downloads.get(&url).copied()
         };
 
@@ -971,8 +791,10 @@ async fn cancel_download(url: String) -> Result<(), String> {
 
             #[cfg(target_os = "windows")]
             {
+                use crate::utils::StdCommandHideConsole;
                 let _ = std::process::Command::new("taskkill")
                     .args(["/F", "/T", "/PID", &pid.to_string()])
+                    .hide_console()
                     .output();
             }
 
@@ -984,7 +806,7 @@ async fn cancel_download(url: String) -> Result<(), String> {
             }
 
             {
-                let mut downloads = ACTIVE_DOWNLOADS.lock().unwrap();
+                let mut downloads = lock_or_recover(&ACTIVE_DOWNLOADS);
                 downloads.remove(&url);
             }
 
@@ -995,45 +817,6 @@ async fn cancel_download(url: String) -> Result<(), String> {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-struct VideoInfo {
-    title: String,
-    uploader: Option<String>,
-    channel: Option<String>,
-    creator: Option<String>, // Some extractors use 'creator' instead of 'uploader'
-    uploader_id: Option<String>, // @username for social media platforms
-    thumbnail: Option<String>,
-    duration: Option<f64>,
-    filesize: Option<u64>,
-    ext: Option<String>,
-}
-
-/// Single entry in a playlist
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-struct PlaylistEntry {
-    id: String,
-    url: String,
-    title: String,
-    duration: Option<f64>,
-    thumbnail: Option<String>,
-    uploader: Option<String>,
-    is_music: bool,
-}
-
-/// Playlist information with paginated entries
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-struct PlaylistInfo {
-    is_playlist: bool,
-    id: Option<String>,
-    title: String,
-    uploader: Option<String>,
-    thumbnail: Option<String>,
-    total_count: usize,
-    entries: Vec<PlaylistEntry>,
-    has_more: bool,
-}
-
-/// Get playlist information with paginated entries
 #[tauri::command]
 #[allow(unused_variables)]
 async fn get_playlist_info(
@@ -1062,347 +845,20 @@ async fn get_playlist_info(
 
     #[cfg(not(target_os = "android"))]
     {
-        {
-            let mut cache = PLAYLIST_INFO_CACHE.lock().unwrap();
-            if let Some(cached) = cache.get(&url) {
-                info!(
-                    "Playlist info cache hit for URL: {} (offset={}, limit={})",
-                    url, offset, limit
-                );
-                info!(
-                    "Cache contains {} entries, total_count={}",
-                    cached.entries.len(),
-                    cached.total_count
-                );
-                let paginated_entries: Vec<PlaylistEntry> = cached
-                    .entries
-                    .iter()
-                    .skip(offset)
-                    .take(limit)
-                    .cloned()
-                    .collect();
-                let has_more = offset + paginated_entries.len() < cached.total_count;
-                info!(
-                    "Returning {} entries from cache, has_more={}",
-                    paginated_entries.len(),
-                    has_more
-                );
-
-                return Ok(PlaylistInfo {
-                    is_playlist: cached.is_playlist,
-                    id: cached.id.clone(),
-                    title: cached.title.clone(),
-                    uploader: cached.uploader.clone(),
-                    thumbnail: cached.thumbnail.clone(),
-                    total_count: cached.total_count,
-                    entries: paginated_entries,
-                    has_more,
-                });
-            }
-        }
-
-        let resolved_proxy = proxy_config.as_ref().map(|c| proxy::resolve_proxy(c));
-        let proxy_url = resolved_proxy.as_ref().and_then(|p| {
-            if p.url.is_empty() {
-                None
-            } else {
-                Some(p.url.as_str())
-            }
-        });
-
-        let (command, prefix_args, env_vars, quickjs_path) = get_ytdlp_command(&app, proxy_url)?;
-
-        let mut args: Vec<String> = prefix_args;
-        args.extend([
-            "--encoding".to_string(),
-            "utf-8".to_string(),
-            "--dump-json".to_string(),
-            "--flat-playlist".to_string(),
-            "--no-download".to_string(),
-        ]);
-
-        if let Some(proxy) = proxy_url {
-            args.extend(["--proxy".to_string(), proxy.to_string()]);
-            info!("Using --proxy argument for playlist info: {}", proxy);
-        }
-
-        if let Some(ref qjs_path) = quickjs_path {
-            args.extend(["--js-runtimes".to_string(), format!("quickjs:{}", qjs_path)]);
-        }
-
-        let use_custom_cookies = custom_cookies
-            .as_ref()
-            .map(|s| !s.is_empty())
-            .unwrap_or(false);
-
-        if use_custom_cookies {
-            let cookies_text = custom_cookies.as_ref().unwrap();
-            let cache_dir = app
-                .path()
-                .app_cache_dir()
-                .map_err(|e| format!("Failed to get cache dir: {}", e))?;
-            let cookies_file = cache_dir.join("custom_cookies.txt");
-
-            tokio::fs::create_dir_all(&cache_dir)
-                .await
-                .map_err(|e| format!("Failed to create cache dir: {}", e))?;
-
-            tokio::fs::write(&cookies_file, cookies_text)
-                .await
-                .map_err(|e| format!("Failed to write cookies file: {}", e))?;
-
-            args.push("--cookies".to_string());
-            args.push(cookies_file.to_string_lossy().to_string());
-        } else if let Some(ref browser) = cookies_from_browser {
-            if !browser.is_empty() && browser != "custom" {
-                args.push("--cookies-from-browser".to_string());
-                args.push(browser.clone());
-            }
-        }
-
-        let is_youtube = url.contains("youtube.com") || url.contains("youtu.be");
-        if is_youtube {
-            args.extend([
-                "--extractor-args".to_string(),
-                "youtube:player_client=android_sdkless".to_string(),
-            ]);
-        }
-
-        args.push(url.clone());
-
-        let mut cmd = tokio::process::Command::new(&command);
-        cmd.args(&args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        #[cfg(target_os = "windows")]
-        {
-            use crate::CommandExt;
-            cmd.hide_console();
-        }
-
-        for (key, value) in &env_vars {
-            cmd.env(key, value);
-        }
-
-        let output = cmd.output().await.map_err(|e| {
-            error!("Failed to get playlist info: {}", e);
-            format!("Failed to get playlist info: {}", e)
-        })?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            error!("yt-dlp error: {}", stderr);
-            return Err(format!("Failed to get playlist info: {}", stderr));
-        }
-
-        let json_str = String::from_utf8_lossy(&output.stdout);
-
-        let parse_result: Result<serde_json::Value, _> = serde_json::from_str(&json_str);
-
-        let (json, entries_from_lines): (Option<serde_json::Value>, Vec<serde_json::Value>) =
-            match parse_result {
-                Ok(single_json) => (Some(single_json), vec![]),
-                Err(_) => {
-                    let entries: Vec<serde_json::Value> = json_str
-                        .lines()
-                        .filter(|line| !line.trim().is_empty())
-                        .filter_map(|line| serde_json::from_str(line).ok())
-                        .collect();
-
-                    if entries.is_empty() {
-                        return Err(format!(
-                            "Failed to parse playlist info: no valid JSON found"
-                        ));
-                    }
-
-                    (None, entries)
-                }
-            };
-
-        let (is_playlist, playlist_json, is_ndjson_format, all_entries) = if let Some(ref single) =
-            json
-        {
-            let is_pl = single.get("_type").and_then(|v| v.as_str()) == Some("playlist");
-            if is_pl {
-                let entries = single["entries"].as_array().cloned().unwrap_or_default();
-                (true, Some(single.clone()), false, entries)
-            } else {
-                (false, Some(single.clone()), false, vec![single.clone()])
-            }
-        } else {
-            let first = entries_from_lines.first();
-            let is_pl = entries_from_lines.len() > 1
-                || first.and_then(|f| f.get("_type")).and_then(|v| v.as_str()) == Some("playlist");
-            (is_pl, first.cloned(), true, entries_from_lines)
-        };
-
-        if !is_playlist && all_entries.len() == 1 {
-            let video = &all_entries[0];
-            let is_ytm = url.contains("music.youtube.com");
-            return Ok(PlaylistInfo {
-                is_playlist: false,
-                id: video["id"].as_str().map(|s| s.to_string()),
-                title: video["title"].as_str().unwrap_or("Unknown").to_string(),
-                uploader: video["uploader"]
-                    .as_str()
-                    .or(video["channel"].as_str())
-                    .map(|s| s.to_string()),
-                thumbnail: video["thumbnail"].as_str().map(|s| s.to_string()),
-                total_count: 1,
-                entries: vec![PlaylistEntry {
-                    id: video["id"].as_str().unwrap_or("").to_string(),
-                    url: url.clone(),
-                    title: video["title"].as_str().unwrap_or("Unknown").to_string(),
-                    duration: video["duration"].as_f64(),
-                    thumbnail: video["thumbnail"].as_str().map(|s| s.to_string()),
-                    uploader: video["uploader"].as_str().map(|s| s.to_string()),
-                    is_music: is_ytm,
-                }],
-                has_more: false,
-            });
-        }
-
-        let total_count = all_entries.len();
-        let is_ytm_playlist = url.contains("music.youtube.com");
-
-        let all_processed_entries: Vec<PlaylistEntry> = all_entries
-            .iter()
-            .filter_map(|entry| {
-                let id = entry["id"].as_str()?.to_string();
-                let title = entry["title"].as_str().unwrap_or("Unknown").to_string();
-
-                let duration = entry["duration"].as_f64();
-                let is_music = is_ytm_playlist || duration.map(|d| d < 600.0).unwrap_or(false);
-
-                let entry_url = if url.contains("youtube.com") || url.contains("youtu.be") {
-                    if is_ytm_playlist {
-                        format!("https://music.youtube.com/watch?v={}", id)
-                    } else {
-                        format!("https://www.youtube.com/watch?v={}", id)
-                    }
-                } else {
-                    entry["url"].as_str().unwrap_or("").to_string()
-                };
-
-                Some(PlaylistEntry {
-                    id,
-                    url: entry_url,
-                    title,
-                    duration,
-                    thumbnail: entry["thumbnail"]
-                        .as_str()
-                        .or(entry["thumbnails"]
-                            .as_array()
-                            .and_then(|t| t.first())
-                            .and_then(|t| t["url"].as_str()))
-                        .map(|s| s.to_string()),
-                    uploader: entry["uploader"]
-                        .as_str()
-                        .or(entry["channel"].as_str())
-                        .map(|s| s.to_string()),
-                    is_music,
-                })
-            })
-            .collect();
-
-        let paginated_entries: Vec<PlaylistEntry> = all_processed_entries
-            .iter()
-            .skip(offset)
-            .take(limit)
-            .cloned()
-            .collect();
-
-        let has_more = offset + paginated_entries.len() < total_count;
-
-        let playlist_title = if is_ndjson_format {
-            let first_entry = all_entries.first();
-            info!(
-                "Using NDJSON format, first entry playlist_title: {:?}, title: {:?}",
-                first_entry.and_then(|e| e["playlist_title"].as_str()),
-                first_entry.and_then(|e| e["title"].as_str())
-            );
-            first_entry
-                .and_then(|e| e["playlist_title"].as_str())
-                .map(|s| s.to_string())
-        } else if let Some(ref pj) = playlist_json {
-            info!(
-                "Using single JSON format, playlist_json title: {:?}",
-                pj["title"].as_str()
-            );
-            pj["title"].as_str().map(|s| s.to_string())
-        } else {
-            None
-        };
-
-        info!("Final playlist_title: {:?}", playlist_title);
-
-        let playlist_id = if is_ndjson_format {
-            all_entries
-                .first()
-                .and_then(|e| e["playlist_id"].as_str())
-                .map(|s| s.to_string())
-        } else if let Some(ref pj) = playlist_json {
-            pj["id"].as_str().map(|s| s.to_string())
-        } else {
-            None
-        };
-
-        let playlist_uploader = if is_ndjson_format {
-            all_entries
-                .first()
-                .and_then(|e| e["playlist_uploader"].as_str().or(e["channel"].as_str()))
-                .map(|s| s.to_string())
-        } else if let Some(ref pj) = playlist_json {
-            pj["uploader"]
-                .as_str()
-                .or(pj["channel"].as_str())
-                .map(|s| s.to_string())
-        } else {
-            None
-        };
-
-        info!(
-            "Returning PlaylistInfo: is_playlist=true, title={:?}, total_count={}",
-            playlist_title.as_ref().unwrap_or(&"Playlist".to_string()),
-            total_count
-        );
-
-        let result = PlaylistInfo {
-            is_playlist: true,
-            id: playlist_id,
-            title: playlist_title.unwrap_or_else(|| "Playlist".to_string()),
-            uploader: playlist_uploader,
-            thumbnail: playlist_json
-                .as_ref()
-                .and_then(|m| {
-                    m["thumbnail"].as_str().or(m["thumbnails"]
-                        .as_array()
-                        .and_then(|t| t.first())
-                        .and_then(|t| t["url"].as_str()))
-                })
-                .map(|s| s.to_string()),
-            total_count,
-            entries: paginated_entries,
-            has_more,
-        };
-
-        {
-            let mut cache = PLAYLIST_INFO_CACHE.lock().unwrap();
-            info!(
-                "Caching {} entries (total_count={})",
-                all_processed_entries.len(),
-                total_count
-            );
-            let cache_entry = PlaylistInfo {
-                entries: all_processed_entries,
-                has_more: false,
-                ..result.clone()
-            };
-            cache.put(url.clone(), cache_entry);
-        }
-
-        Ok(result)
+        let backend = backends::YtDlpBackend;
+        backend
+            .get_playlist_info(
+                &app,
+                PlaylistRequest {
+                    url,
+                    offset,
+                    limit,
+                    cookies_from_browser,
+                    custom_cookies,
+                    proxy_config,
+                },
+            )
+            .await
     }
 }
 
@@ -1426,220 +882,19 @@ async fn get_video_info(
 
     #[cfg(not(target_os = "android"))]
     {
-        {
-            let mut cache = VIDEO_INFO_CACHE.lock().unwrap();
-            if let Some(cached) = cache.get(&url) {
-                info!("Video info cache hit for URL: {}", url);
-                return Ok(cached.clone());
-            }
-        }
-
-        let resolved_proxy = proxy_config.as_ref().map(|c| proxy::resolve_proxy(c));
-        let proxy_url = resolved_proxy.as_ref().and_then(|p| {
-            if p.url.is_empty() {
-                None
-            } else {
-                Some(p.url.as_str())
-            }
-        });
-
-        let (command, prefix_args, env_vars, quickjs_path) = get_ytdlp_command(&app, proxy_url)?;
-
-        let mut args: Vec<String> = prefix_args;
-        args.extend([
-            "--encoding".to_string(),
-            "utf-8".to_string(),
-            "--print".to_string(),
-            "%(title)s".to_string(),
-            "--print".to_string(),
-            "%(uploader)s".to_string(),
-            "--print".to_string(),
-            "%(channel)s".to_string(),
-            "--print".to_string(),
-            "%(creator)s".to_string(),
-            "--print".to_string(),
-            "%(uploader_id)s".to_string(),
-            "--print".to_string(),
-            "%(thumbnail)s".to_string(),
-            "--print".to_string(),
-            "%(duration)s".to_string(),
-            "--no-download".to_string(),
-            "--no-playlist".to_string(),
-        ]);
-
-        if let Some(proxy) = proxy_url {
-            args.extend(["--proxy".to_string(), proxy.to_string()]);
-            info!("Using --proxy argument for video info: {}", proxy);
-        }
-
-        if let Some(ref qjs_path) = quickjs_path {
-            args.extend(["--js-runtimes".to_string(), format!("quickjs:{}", qjs_path)]);
-        }
-
-        let use_custom_cookies = custom_cookies
-            .as_ref()
-            .map(|s| !s.is_empty())
-            .unwrap_or(false);
-
-        if use_custom_cookies {
-            let cookies_text = custom_cookies.as_ref().unwrap();
-            let cache_dir = app
-                .path()
-                .app_cache_dir()
-                .map_err(|e| format!("Failed to get cache dir: {}", e))?;
-            let cookies_file = cache_dir.join("custom_cookies.txt");
-
-            tokio::fs::create_dir_all(&cache_dir)
-                .await
-                .map_err(|e| format!("Failed to create cache dir: {}", e))?;
-
-            tokio::fs::write(&cookies_file, cookies_text)
-                .await
-                .map_err(|e| format!("Failed to write cookies file: {}", e))?;
-
-            args.push("--cookies".to_string());
-            args.push(cookies_file.to_string_lossy().to_string());
-        } else if let Some(ref browser) = cookies_from_browser {
-            if !browser.is_empty() && browser != "custom" {
-                args.push("--cookies-from-browser".to_string());
-                args.push(browser.clone());
-            }
-        }
-
-        let is_youtube = url.contains("youtube.com") || url.contains("youtu.be");
-        if is_youtube {
-            args.extend([
-                "--extractor-args".to_string(),
-                "youtube:player_client=android_sdkless".to_string(),
-            ]);
-        }
-
-        args.push(url.clone());
-
-        let mut cmd = tokio::process::Command::new(&command);
-        cmd.args(&args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        #[cfg(target_os = "windows")]
-        {
-            use crate::CommandExt;
-            cmd.hide_console();
-        }
-
-        for (key, value) in &env_vars {
-            cmd.env(key, value);
-        }
-
-        let output = cmd.output().await.map_err(|e| {
-            error!("Failed to get video info: {}", e);
-            format!("Failed to get video info: {}", e)
-        })?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            error!("yt-dlp error: {}", stderr);
-            return Err(format!("Failed to get video info: {}", stderr));
-        }
-
-        let output_str = String::from_utf8_lossy(&output.stdout);
-        let lines: Vec<&str> = output_str.lines().collect();
-
-        let title = lines
-            .get(0)
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "Unknown".to_string());
-        let uploader = lines.get(1).and_then(|s| {
-            if s.is_empty() || *s == "NA" {
-                None
-            } else {
-                Some(s.to_string())
-            }
-        });
-        let channel = lines.get(2).and_then(|s| {
-            if s.is_empty() || *s == "NA" {
-                None
-            } else {
-                Some(s.to_string())
-            }
-        });
-        let creator = lines.get(3).and_then(|s| {
-            if s.is_empty() || *s == "NA" {
-                None
-            } else {
-                Some(s.to_string())
-            }
-        });
-        let uploader_id = lines.get(4).and_then(|s| {
-            if s.is_empty() || *s == "NA" {
-                None
-            } else {
-                Some(s.to_string())
-            }
-        });
-        let thumbnail = lines.get(5).and_then(|s| {
-            if s.is_empty() || *s == "NA" {
-                None
-            } else {
-                Some(s.to_string())
-            }
-        });
-        let duration = lines.get(6).and_then(|s| s.parse::<f64>().ok());
-
-        let info = VideoInfo {
-            title,
-            uploader,
-            channel,
-            creator,
-            uploader_id,
-            thumbnail,
-            duration,
-            filesize: None,
-            ext: None,
-        };
-
-        {
-            let mut cache = VIDEO_INFO_CACHE.lock().unwrap();
-            cache.put(url.clone(), info.clone());
-        }
-
-        Ok(info)
+        let backend = backends::YtDlpBackend;
+        backend
+            .get_video_info(
+                &app,
+                InfoRequest {
+                    url,
+                    cookies_from_browser,
+                    custom_cookies,
+                    proxy_config,
+                },
+            )
+            .await
     }
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-struct VideoFormat {
-    format_id: String,
-    ext: String,
-    resolution: Option<String>,
-    fps: Option<f64>,
-    vcodec: Option<String>,
-    acodec: Option<String>,
-    filesize: Option<u64>,
-    filesize_approx: Option<u64>,
-    tbr: Option<f64>, // Total bitrate
-    vbr: Option<f64>, // Video bitrate
-    abr: Option<f64>, // Audio bitrate
-    asr: Option<u32>, // Audio sample rate
-    format_note: Option<String>,
-    has_video: bool,
-    has_audio: bool,
-    quality: Option<f64>,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-struct VideoFormats {
-    title: String,
-    author: Option<String>,
-    thumbnail: Option<String>,
-    duration: Option<f64>,
-    formats: Vec<VideoFormat>,
-    view_count: Option<u64>,
-    like_count: Option<u64>,
-    description: Option<String>,
-    upload_date: Option<String>,
-    channel_url: Option<String>,
-    channel_id: Option<String>,
 }
 
 #[tauri::command]
@@ -1660,206 +915,197 @@ async fn get_video_formats(
 
     #[cfg(not(target_os = "android"))]
     {
-        {
-            let mut cache = VIDEO_FORMATS_CACHE.lock().unwrap();
-            if let Some(cached) = cache.get(&url) {
-                info!("Video formats cache hit for URL: {}", url);
-                return Ok(cached.clone());
-            }
-        }
+        let backend = backends::YtDlpBackend;
+        backend
+            .get_video_formats(
+                &app,
+                InfoRequest {
+                    url,
+                    cookies_from_browser,
+                    custom_cookies,
+                    proxy_config,
+                },
+            )
+            .await
+    }
+}
 
-        let resolved_proxy = proxy_config.as_ref().map(|c| proxy::resolve_proxy(c));
-        let proxy_url = resolved_proxy.as_ref().and_then(|p| {
-            if p.url.is_empty() {
-                None
+// ==================== Lux Backend Commands ====================
+
+/// Get video info using Lux backend
+#[tauri::command]
+#[allow(unused_variables)]
+async fn lux_get_video_info(
+    app: AppHandle,
+    url: String,
+    custom_cookies: Option<String>,
+    proxy_config: Option<proxy::ProxyConfig>,
+) -> Result<VideoInfo, String> {
+    info!("Getting video info via Lux for URL: {}", url);
+
+    #[cfg(target_os = "android")]
+    {
+        return Err("Lux is not supported on Android".to_string());
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        let backend = backends::LuxBackend;
+        backend
+            .get_video_info(
+                &app,
+                InfoRequest {
+                    url,
+                    cookies_from_browser: None,
+                    custom_cookies,
+                    proxy_config,
+                },
+            )
+            .await
+    }
+}
+
+/// Get video formats using Lux backend
+#[tauri::command]
+#[allow(unused_variables)]
+async fn lux_get_video_formats(
+    app: AppHandle,
+    url: String,
+    custom_cookies: Option<String>,
+    proxy_config: Option<proxy::ProxyConfig>,
+) -> Result<VideoFormats, String> {
+    info!("Getting video formats via Lux for URL: {}", url);
+
+    #[cfg(target_os = "android")]
+    {
+        return Err("Lux is not supported on Android".to_string());
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        let backend = backends::LuxBackend;
+        backend
+            .get_video_formats(
+                &app,
+                InfoRequest {
+                    url,
+                    cookies_from_browser: None,
+                    custom_cookies,
+                    proxy_config,
+                },
+            )
+            .await
+    }
+}
+
+/// Get playlist info using Lux backend
+#[tauri::command]
+#[allow(unused_variables)]
+async fn lux_get_playlist_info(
+    app: AppHandle,
+    url: String,
+    offset: Option<usize>,
+    limit: Option<usize>,
+    custom_cookies: Option<String>,
+    proxy_config: Option<proxy::ProxyConfig>,
+) -> Result<PlaylistInfo, String> {
+    let offset = offset.unwrap_or(0);
+    let limit = limit.unwrap_or(50);
+
+    info!(
+        "Getting playlist info via Lux for URL: {} (offset={}, limit={})",
+        url, offset, limit
+    );
+
+    #[cfg(target_os = "android")]
+    {
+        return Err("Lux is not supported on Android".to_string());
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        let backend = backends::LuxBackend;
+        backend
+            .get_playlist_info(
+                &app,
+                PlaylistRequest {
+                    url,
+                    offset,
+                    limit,
+                    cookies_from_browser: None,
+                    custom_cookies,
+                    proxy_config,
+                },
+            )
+            .await
+    }
+}
+
+/// Download video using Lux backend
+#[tauri::command]
+#[allow(unused_variables)]
+async fn lux_download_video(
+    app: AppHandle,
+    window: tauri::Window,
+    url: String,
+    format_id: Option<String>,
+    download_path: Option<String>,
+    custom_cookies: Option<String>,
+    proxy_config: Option<proxy::ProxyConfig>,
+    multi_thread: Option<bool>,
+    thread_count: Option<u32>,
+) -> Result<String, String> {
+    info!("Starting Lux download for URL: {}", url);
+
+    #[cfg(target_os = "android")]
+    {
+        return Err("Lux is not supported on Android".to_string());
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        let downloads_dir = if let Some(ref custom_path) = download_path {
+            if !custom_path.is_empty() {
+                std::path::PathBuf::from(custom_path)
             } else {
-                Some(p.url.as_str())
+                dirs::download_dir().ok_or("Could not find Downloads folder")?
             }
-        });
-
-        let (command, prefix_args, env_vars, quickjs_path) = get_ytdlp_command(&app, proxy_url)?;
-
-        let mut args: Vec<String> = prefix_args;
-        args.extend([
-            "--encoding".to_string(),
-            "utf-8".to_string(),
-            "--dump-json".to_string(),
-            "--no-download".to_string(),
-            "--no-playlist".to_string(),
-        ]);
-
-        if let Some(proxy) = proxy_url {
-            args.extend(["--proxy".to_string(), proxy.to_string()]);
-        }
-
-        if let Some(ref qjs_path) = quickjs_path {
-            args.extend(["--js-runtimes".to_string(), format!("quickjs:{}", qjs_path)]);
-        }
-
-        let use_custom_cookies = custom_cookies
-            .as_ref()
-            .map(|s| !s.is_empty())
-            .unwrap_or(false);
-
-        if use_custom_cookies {
-            let cookies_text = custom_cookies.as_ref().unwrap();
-            let cache_dir = app
-                .path()
-                .app_cache_dir()
-                .map_err(|e| format!("Failed to get cache dir: {}", e))?;
-            let cookies_file = cache_dir.join("custom_cookies.txt");
-
-            tokio::fs::create_dir_all(&cache_dir)
-                .await
-                .map_err(|e| format!("Failed to create cache dir: {}", e))?;
-
-            tokio::fs::write(&cookies_file, cookies_text)
-                .await
-                .map_err(|e| format!("Failed to write cookies file: {}", e))?;
-
-            args.push("--cookies".to_string());
-            args.push(cookies_file.to_string_lossy().to_string());
-        } else if let Some(ref browser) = cookies_from_browser {
-            if !browser.is_empty() && browser != "custom" {
-                args.push("--cookies-from-browser".to_string());
-                args.push(browser.clone());
-            }
-        }
-
-        let is_youtube = url.contains("youtube.com") || url.contains("youtu.be");
-        if is_youtube {
-            args.extend([
-                "--extractor-args".to_string(),
-                "youtube:player_client=android_sdkless".to_string(),
-            ]);
-        }
-
-        args.push(url.clone());
-
-        let mut cmd = tokio::process::Command::new(&command);
-        cmd.args(&args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        #[cfg(target_os = "windows")]
-        {
-            use crate::CommandExt;
-            cmd.hide_console();
-        }
-
-        for (key, value) in &env_vars {
-            cmd.env(key, value);
-        }
-
-        let output = cmd.output().await.map_err(|e| {
-            error!("Failed to get video formats: {}", e);
-            format!("Failed to get video formats: {}", e)
-        })?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            error!("yt-dlp error: {}", stderr);
-            return Err(format!("Failed to get video formats: {}", stderr));
-        }
-
-        let json_str = String::from_utf8_lossy(&output.stdout);
-        let json: serde_json::Value =
-            serde_json::from_str(&json_str).map_err(|e| format!("Failed to parse JSON: {}", e))?;
-
-        let title = json["title"].as_str().unwrap_or("Unknown").to_string();
-        let author = json["uploader"]
-            .as_str()
-            .or_else(|| json["channel"].as_str())
-            .or_else(|| json["artist"].as_str())
-            .map(|s| s.strip_suffix(" - Topic").unwrap_or(s).to_string());
-        let thumbnail = json["thumbnail"].as_str().map(|s| s.to_string());
-        let duration = json["duration"].as_f64();
-
-        let view_count = json["view_count"].as_u64();
-        let like_count = json["like_count"].as_u64();
-        let description = json["description"].as_str().map(|s| s.to_string());
-        let upload_date = json["upload_date"].as_str().map(|s| s.to_string());
-        let channel_url = json["channel_url"].as_str().map(|s| s.to_string());
-        let channel_id = json["channel_id"].as_str().map(|s| s.to_string());
-
-        let formats_json = json["formats"].as_array().ok_or("No formats found")?;
-
-        let formats: Vec<VideoFormat> = formats_json
-            .iter()
-            .filter_map(|f| {
-                let format_id = f["format_id"].as_str()?.to_string();
-                let ext = f["ext"].as_str().unwrap_or("unknown").to_string();
-
-                // Skip storyboard/mhtml formats
-                if ext == "mhtml" || format_id.contains("storyboard") {
-                    return None;
-                }
-
-                let vcodec = f["vcodec"].as_str().map(|s| s.to_string());
-                let acodec = f["acodec"].as_str().map(|s| s.to_string());
-
-                let has_video = vcodec.as_ref().map(|v| v != "none").unwrap_or(false);
-                let has_audio = acodec.as_ref().map(|a| a != "none").unwrap_or(false);
-
-                // Skip formats with neither video nor audio
-                if !has_video && !has_audio {
-                    return None;
-                }
-
-                let resolution = if has_video {
-                    let width = f["width"].as_u64();
-                    let height = f["height"].as_u64();
-                    match (width, height) {
-                        (Some(w), Some(h)) => Some(format!("{}x{}", w, h)),
-                        _ => f["resolution"].as_str().map(|s| s.to_string()),
-                    }
-                } else {
-                    Some("audio only".to_string())
-                };
-
-                Some(VideoFormat {
-                    format_id,
-                    ext,
-                    resolution,
-                    fps: f["fps"].as_f64(),
-                    vcodec: if has_video { vcodec } else { None },
-                    acodec: if has_audio { acodec } else { None },
-                    filesize: f["filesize"].as_u64(),
-                    filesize_approx: f["filesize_approx"].as_u64(),
-                    tbr: f["tbr"].as_f64(),
-                    vbr: f["vbr"].as_f64(),
-                    abr: f["abr"].as_f64(),
-                    asr: f["asr"].as_u64().map(|v| v as u32),
-                    format_note: f["format_note"].as_str().map(|s| s.to_string()),
-                    has_video,
-                    has_audio,
-                    quality: f["quality"].as_f64(),
-                })
-            })
-            .collect();
-
-        info!("Found {} formats for {}", formats.len(), url);
-
-        let result = VideoFormats {
-            title,
-            author,
-            thumbnail,
-            duration,
-            formats,
-            view_count,
-            like_count,
-            description,
-            upload_date,
-            channel_url,
-            channel_id,
+        } else {
+            dirs::download_dir().ok_or("Could not find Downloads folder")?
         };
 
-        {
-            let mut cache = VIDEO_FORMATS_CACHE.lock().unwrap();
-            cache.put(url.clone(), result.clone());
+        if !downloads_dir.exists() {
+            std::fs::create_dir_all(&downloads_dir)
+                .map_err(|e| format!("Failed to create download directory: {}", e))?;
         }
 
-        Ok(result)
+        let window_clone = window.clone();
+        let url_clone = url.clone();
+
+        let backend = backends::LuxBackend;
+        backend
+            .download(
+                &app,
+                backends::LuxDownloadRequest {
+                    url,
+                    format_id,
+                    output_dir: downloads_dir,
+                    custom_cookies,
+                    proxy_config,
+                    multi_thread: multi_thread.unwrap_or(false),
+                    thread_count,
+                },
+                move |progress| {
+                    let _ = window_clone.emit(
+                        "download-progress",
+                        types::DownloadProgress {
+                            url: url_clone.clone(),
+                            message: progress,
+                        },
+                    );
+                },
+            )
+            .await
     }
 }
 
@@ -1912,10 +1158,7 @@ async fn get_media_duration(app: AppHandle, file_path: String) -> Result<f64, St
         .stderr(Stdio::piped());
 
         #[cfg(target_os = "windows")]
-        {
-            use crate::CommandExt;
-            cmd.hide_console();
-        }
+        cmd.hide_console();
 
         let output = cmd
             .output()
@@ -1935,222 +1178,196 @@ async fn get_media_duration(app: AppHandle, file_path: String) -> Result<f64, St
     }
 }
 
-// ==================== Logs Management ====================
-
-/// Get the logs directory path
-#[cfg(not(target_os = "android"))]
-fn get_logs_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-
-    let logs_dir = app_data_dir.join("logs");
-
-    if !logs_dir.exists() {
-        std::fs::create_dir_all(&logs_dir)
-            .map_err(|e| format!("Failed to create logs dir: {}", e))?;
+#[tauri::command]
+#[allow(unused_variables)]
+async fn extract_video_thumbnail(app: AppHandle, file_path: String) -> Result<String, String> {
+    #[cfg(target_os = "android")]
+    {
+        return Err("Not supported on Android".to_string());
     }
 
-    Ok(logs_dir)
-}
+    #[cfg(not(target_os = "android"))]
+    {
+        use std::process::Stdio;
+        use std::path::Path;
 
-/// Get the path for the current session's log file
-#[tauri::command]
-#[cfg(not(target_os = "android"))]
-async fn get_log_file_path(app: AppHandle) -> Result<String, String> {
-    let logs_dir = get_logs_dir(&app)?;
-    let timestamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
-    let log_file = logs_dir.join(format!("comine_{}.log", timestamp));
-    Ok(log_file.to_string_lossy().to_string())
-}
-
-/// Append a log entry to the current session's log file
-#[tauri::command]
-#[cfg(not(target_os = "android"))]
-async fn append_log(_app: AppHandle, session_file: String, entry: String) -> Result<(), String> {
-    use std::io::Write;
-
-    let path = std::path::Path::new(&session_file);
-
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|e| format!("Failed to open log file: {}", e))?;
-
-    writeln!(file, "{}", entry).map_err(|e| format!("Failed to write to log file: {}", e))?;
-
-    Ok(())
-}
-
-/// Clean up old log files, keeping only the last N sessions
-#[tauri::command]
-#[cfg(not(target_os = "android"))]
-async fn cleanup_old_logs(app: AppHandle, keep_sessions: usize) -> Result<usize, String> {
-    let logs_dir = get_logs_dir(&app)?;
-
-    let mut log_files: Vec<_> = std::fs::read_dir(&logs_dir)
-        .map_err(|e| format!("Failed to read logs dir: {}", e))?
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| {
-            entry
-                .path()
-                .extension()
-                .map(|ext| ext == "log")
-                .unwrap_or(false)
-        })
-        .collect();
-
-    log_files.sort_by(|a, b| {
-        let time_a = a.metadata().and_then(|m| m.modified()).ok();
-        let time_b = b.metadata().and_then(|m| m.modified()).ok();
-        time_b.cmp(&time_a)
-    });
-
-    let mut deleted = 0;
-    for entry in log_files.into_iter().skip(keep_sessions) {
-        if std::fs::remove_file(entry.path()).is_ok() {
-            deleted += 1;
-            info!("Deleted old log file: {:?}", entry.path());
+        let path = Path::new(&file_path);
+        if !path.exists() {
+            return Err("File not found".to_string());
         }
-    }
 
-    Ok(deleted)
+        let ffmpeg_path = deps::get_ffmpeg_path(&app)?;
+        if !ffmpeg_path.exists() {
+            return Err("FFmpeg not installed".to_string());
+        }
+
+        let cache_dir = app
+            .path()
+            .app_cache_dir()
+            .map_err(|e| format!("Cache dir error: {}", e))?
+            .join("thumbs");
+
+        tokio::fs::create_dir_all(&cache_dir)
+            .await
+            .map_err(|e| format!("Failed to create cache dir: {}", e))?;
+
+        let file_stem = path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("thumb");
+        let thumb_path = cache_dir.join(format!("{}.jpg", file_stem));
+
+        if thumb_path.exists() {
+            return Ok(thumb_path.to_string_lossy().to_string());
+        }
+
+        let mut cmd = tokio::process::Command::new(&ffmpeg_path);
+        cmd.args([
+            "-i", &file_path,
+            "-ss", "1",
+            "-vframes", "1",
+            "-vf", "scale=320:-1",
+            "-q:v", "3",
+            "-y",
+            thumb_path.to_str().ok_or("Invalid path")?,
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+
+        #[cfg(target_os = "windows")]
+        cmd.hide_console();
+
+        let output = cmd
+            .output()
+            .await
+            .map_err(|e| format!("Failed to run ffmpeg: {}", e))?;
+
+        if !output.status.success() || !thumb_path.exists() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Thumbnail extraction failed: {}", stderr.lines().take(2).collect::<Vec<_>>().join(" ")));
+        }
+
+        Ok(thumb_path.to_string_lossy().to_string())
+    }
 }
 
-/// Open the logs folder in the system file explorer
 #[tauri::command]
-#[cfg(not(target_os = "android"))]
-async fn open_logs_folder(app: AppHandle) -> Result<(), String> {
-    let logs_dir = get_logs_dir(&app)?;
-
-    #[cfg(target_os = "windows")]
+#[allow(unused_variables)]
+async fn extract_thumbnail_color(url: String) -> Result<[u8; 3], String> {
+    #[cfg(target_os = "android")]
     {
-        std::process::Command::new("explorer")
-            .arg(&logs_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open folder: {}", e))?;
+        return Err("Not supported on Android".to_string());
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(not(target_os = "android"))]
     {
-        std::process::Command::new("open")
-            .arg(&logs_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open folder: {}", e))?;
+        use image::GenericImageView;
+
+        // Fetch the image
+        let response = reqwest::get(&url)
+            .await
+            .map_err(|e| format!("Failed to fetch image: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("HTTP error: {}", response.status()));
+        }
+
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|e| format!("Failed to read image bytes: {}", e))?;
+
+        // Decode the image
+        let img = image::load_from_memory(&bytes)
+            .map_err(|e| format!("Failed to decode image: {}", e))?;
+
+        // Resize for faster processing
+        let small = img.resize(50, 50, image::imageops::FilterType::Triangle);
+        let (width, height) = small.dimensions();
+
+        let mut best_color = [99u8, 102u8, 241u8]; // Default accent color
+        let mut best_score: f32 = 0.0;
+
+        for y in 0..height {
+            for x in 0..width {
+                if (x + y) % 4 != 0 {
+                    continue; // Sample every 4th pixel
+                }
+
+                let pixel = small.get_pixel(x, y);
+                let [r, g, b, a] = pixel.0;
+
+                if a < 128 {
+                    continue;
+                }
+
+                let max_c = r.max(g).max(b) as f32;
+                let min_c = r.min(g).min(b) as f32;
+                let lightness = (max_c + min_c) / 2.0 / 255.0;
+                let saturation = if max_c == min_c {
+                    0.0
+                } else {
+                    (max_c - min_c) / (1.0 - (2.0 * lightness - 1.0).abs()) / 255.0
+                };
+
+                let lightness_score = 1.0 - (lightness - 0.5).abs() * 2.0;
+                let score = saturation * lightness_score * (1.0 - (lightness - 0.4).abs());
+
+                if score > best_score && saturation > 0.2 {
+                    best_score = score;
+                    best_color = [r, g, b];
+                }
+            }
+        }
+
+        // Boost saturation slightly
+        let boost_factor = 1.2f32;
+        let r = best_color[0] as f32 / 255.0;
+        let g = best_color[1] as f32 / 255.0;
+        let b = best_color[2] as f32 / 255.0;
+
+        let max_c = r.max(g).max(b);
+        let min_c = r.min(g).min(b);
+        let l = (max_c + min_c) / 2.0;
+
+        if max_c != min_c {
+            let d = max_c - min_c;
+            let mut s = if l > 0.5 {
+                d / (2.0 - max_c - min_c)
+            } else {
+                d / (max_c + min_c)
+            };
+
+            let h = if max_c == r {
+                ((g - b) / d + if g < b { 6.0 } else { 0.0 }) / 6.0
+            } else if max_c == g {
+                ((b - r) / d + 2.0) / 6.0
+            } else {
+                ((r - g) / d + 4.0) / 6.0
+            };
+
+            s = (s * boost_factor).min(1.0);
+
+            let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
+            let p = 2.0 * l - q;
+
+            fn hue2rgb(p: f32, q: f32, mut t: f32) -> f32 {
+                if t < 0.0 { t += 1.0; }
+                if t > 1.0 { t -= 1.0; }
+                if t < 1.0 / 6.0 { return p + (q - p) * 6.0 * t; }
+                if t < 0.5 { return q; }
+                if t < 2.0 / 3.0 { return p + (q - p) * (2.0 / 3.0 - t) * 6.0; }
+                p
+            }
+
+            best_color = [
+                (hue2rgb(p, q, h + 1.0 / 3.0) * 255.0) as u8,
+                (hue2rgb(p, q, h) * 255.0) as u8,
+                (hue2rgb(p, q, h - 1.0 / 3.0) * 255.0) as u8,
+            ];
+        }
+
+        Ok(best_color)
     }
-
-    #[cfg(target_os = "linux")]
-    {
-        std::process::Command::new("xdg-open")
-            .arg(&logs_dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open folder: {}", e))?;
-    }
-
-    Ok(())
-}
-
-/// Get the logs directory path as a string
-#[tauri::command]
-#[cfg(not(target_os = "android"))]
-async fn get_logs_folder_path(app: AppHandle) -> Result<String, String> {
-    let logs_dir = get_logs_dir(&app)?;
-    Ok(logs_dir.to_string_lossy().to_string())
-}
-
-#[tauri::command]
-#[cfg(not(target_os = "android"))]
-async fn read_session_logs(
-    session_file: String,
-    offset: Option<usize>,
-    limit: Option<usize>,
-) -> Result<Vec<String>, String> {
-    use std::io::{BufRead, BufReader};
-
-    let path = std::path::Path::new(&session_file);
-    if !path.exists() {
-        return Ok(vec![]);
-    }
-
-    let file = std::fs::File::open(path).map_err(|e| format!("Failed to open log file: {}", e))?;
-
-    let reader = BufReader::new(file);
-    let offset = offset.unwrap_or(0);
-    let limit = limit.unwrap_or(usize::MAX);
-
-    let lines: Vec<String> = reader
-        .lines()
-        .skip(offset)
-        .take(limit)
-        .filter_map(|line| line.ok())
-        .collect();
-
-    Ok(lines)
-}
-
-#[tauri::command]
-#[cfg(not(target_os = "android"))]
-async fn get_session_log_count(session_file: String) -> Result<usize, String> {
-    use std::io::{BufRead, BufReader};
-
-    let path = std::path::Path::new(&session_file);
-    if !path.exists() {
-        return Ok(0);
-    }
-
-    let file = std::fs::File::open(path).map_err(|e| format!("Failed to open log file: {}", e))?;
-
-    let reader = BufReader::new(file);
-    Ok(reader.lines().count())
-}
-
-// Android stubs for log functions (logging handled differently on mobile)
-#[cfg(target_os = "android")]
-#[tauri::command]
-async fn get_log_file_path(_app: AppHandle) -> Result<String, String> {
-    Err("Log files not supported on Android".to_string())
-}
-
-#[cfg(target_os = "android")]
-#[tauri::command]
-async fn append_log(_app: AppHandle, _session_file: String, _entry: String) -> Result<(), String> {
-    Ok(()) // No-op on Android
-}
-
-#[cfg(target_os = "android")]
-#[tauri::command]
-async fn cleanup_old_logs(_app: AppHandle, _keep_sessions: usize) -> Result<usize, String> {
-    Ok(0)
-}
-
-#[cfg(target_os = "android")]
-#[tauri::command]
-async fn open_logs_folder(_app: AppHandle) -> Result<(), String> {
-    Err("Not supported on Android".to_string())
-}
-
-#[cfg(target_os = "android")]
-#[tauri::command]
-async fn get_logs_folder_path(_app: AppHandle) -> Result<String, String> {
-    Err("Not supported on Android".to_string())
-}
-
-#[cfg(target_os = "android")]
-#[tauri::command]
-async fn read_session_logs(
-    _session_file: String,
-    _offset: Option<usize>,
-    _limit: Option<usize>,
-) -> Result<Vec<String>, String> {
-    Ok(vec![])
-}
-
-#[cfg(target_os = "android")]
-#[tauri::command]
-async fn get_session_log_count(_session_file: String) -> Result<usize, String> {
-    Ok(0)
 }
 
 // ==================== YouTube Music Thumbnail Cropping ====================
@@ -2339,7 +1556,9 @@ async fn embed_thumbnail_jpeg_bytes(
         "-i",
         audio_path,
         "-i",
-        thumb_path.to_str().unwrap(),
+        thumb_path
+            .to_str()
+            .ok_or("Invalid thumbnail path encoding")?,
         "-map",
         "0:a",
         "-map",
@@ -2363,14 +1582,15 @@ async fn embed_thumbnail_jpeg_bytes(
         cmd.args(["-disposition:v:0", "attached_pic"]);
     }
 
-    cmd.arg(temp_output.to_str().unwrap());
+    cmd.arg(
+        temp_output
+            .to_str()
+            .ok_or("Invalid output path encoding")?,
+    );
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     #[cfg(target_os = "windows")]
-    {
-        use crate::CommandExt;
-        cmd.hide_console();
-    }
+    cmd.hide_console();
 
     let output = cmd
         .output()
@@ -2421,479 +1641,6 @@ async fn set_acrylic(app: AppHandle, enable: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// Data for creating an OS-level notification window
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
-pub struct NotificationData {
-    pub title: String,
-    pub body: String,
-    pub thumbnail: Option<String>,
-    pub url: Option<String>,
-    #[serde(default)]
-    pub compact: bool,
-    #[serde(default)]
-    pub is_playlist: bool,
-    #[serde(default)]
-    pub is_channel: bool,
-    #[serde(default = "default_download_label")]
-    pub download_label: String,
-    #[serde(default = "default_dismiss_label")]
-    pub dismiss_label: String,
-}
-
-fn default_download_label() -> String {
-    "Download".to_string()
-}
-fn default_dismiss_label() -> String {
-    "Dismiss".to_string()
-}
-
-/// Notification position options
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
-#[serde(rename_all = "kebab-case")]
-pub enum NotificationPosition {
-    TopLeft,
-    TopCenter,
-    TopRight,
-    BottomLeft,
-    BottomCenter,
-    #[default]
-    BottomRight,
-}
-
-/// Which monitor to show notification on
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum NotificationMonitor {
-    #[default]
-    Primary,
-    Cursor,
-}
-
-/// Info stored for each notification window
-#[cfg(not(target_os = "android"))]
-#[derive(Clone, Debug)]
-struct NotificationInfo {
-    slot: usize,
-    position: NotificationPosition,
-    width: u32,
-    height: u32,
-    offset: i32,
-    monitor_width: i32,
-    monitor_height: i32,
-    monitor_x: i32,
-    monitor_y: i32,
-}
-
-/// Notification position tracking for stacking
-#[cfg(not(target_os = "android"))]
-struct NotificationManager {
-    /// Map of window_id -> notification info
-    notifications: HashMap<String, NotificationInfo>,
-    /// Track which slots are occupied
-    occupied: Vec<bool>,
-    /// Debounce: track last creation time to prevent rapid creation issues
-    last_creation: std::time::Instant,
-}
-
-#[cfg(not(target_os = "android"))]
-impl NotificationManager {
-    fn new() -> Self {
-        Self {
-            notifications: HashMap::new(),
-            occupied: vec![false; 10],
-            last_creation: std::time::Instant::now(),
-        }
-    }
-
-    /// Get the next available slot (returns slot index)
-    fn allocate_slot(&mut self, window_id: &str, info: NotificationInfo) -> usize {
-        let slot = self.occupied.iter().position(|&x| !x).unwrap_or(0);
-        self.occupied[slot] = true;
-        let mut info = info;
-        info.slot = slot;
-        self.notifications.insert(window_id.to_string(), info);
-        self.last_creation = std::time::Instant::now();
-        slot
-    }
-
-    /// Check if we should debounce (returns true if we need to wait)
-    fn should_debounce(&self) -> bool {
-        self.last_creation.elapsed() < std::time::Duration::from_millis(100)
-    }
-
-    /// Free a slot and return windows that need repositioning with their info
-    fn free_slot(&mut self, window_id: &str) -> Vec<(String, NotificationInfo)> {
-        if let Some(freed_info) = self.notifications.remove(window_id) {
-            let freed_slot = freed_info.slot;
-            self.occupied[freed_slot] = false;
-
-            let mut to_reposition: Vec<(String, NotificationInfo)> = Vec::new();
-
-            for (id, info) in &self.notifications {
-                if info.slot > freed_slot {
-                    let mut new_info = info.clone();
-                    new_info.slot = info.slot - 1;
-                    to_reposition.push((id.clone(), new_info));
-                }
-            }
-
-            for (id, new_info) in &to_reposition {
-                if let Some(info) = self.notifications.get_mut(id) {
-                    self.occupied[info.slot] = false;
-                    info.slot = new_info.slot;
-                    self.occupied[new_info.slot] = true;
-                }
-            }
-
-            to_reposition
-        } else {
-            Vec::new()
-        }
-    }
-}
-
-#[cfg(not(target_os = "android"))]
-lazy_static::lazy_static! {
-    static ref NOTIFICATION_MANAGER: Mutex<NotificationManager> = Mutex::new(NotificationManager::new());
-}
-
-/// Calculate position for notification based on settings
-#[cfg(not(target_os = "android"))]
-fn calculate_notification_position(
-    monitor_width: i32,
-    monitor_height: i32,
-    monitor_x: i32,
-    monitor_y: i32,
-    width: u32,
-    height: u32,
-    margin: i32,
-    slot: usize,
-    position: &NotificationPosition,
-    offset: i32, // User-configurable offset (taskbar height)
-) -> (i32, i32) {
-    let slot_height = (height as i32) + 8; // notification height + gap between notifications
-
-    let x = match position {
-        NotificationPosition::TopLeft | NotificationPosition::BottomLeft => monitor_x + margin,
-        NotificationPosition::TopCenter | NotificationPosition::BottomCenter => {
-            monitor_x + (monitor_width / 2) - (width as i32 / 2)
-        }
-        NotificationPosition::TopRight | NotificationPosition::BottomRight => {
-            monitor_x + monitor_width - (width as i32) - margin
-        }
-    };
-
-    let y = match position {
-        NotificationPosition::TopLeft
-        | NotificationPosition::TopCenter
-        | NotificationPosition::TopRight => {
-            monitor_y + margin + offset + (slot as i32 * slot_height)
-        }
-        NotificationPosition::BottomLeft
-        | NotificationPosition::BottomCenter
-        | NotificationPosition::BottomRight => {
-            monitor_y + monitor_height
-                - (height as i32)
-                - margin
-                - offset
-                - (slot as i32 * slot_height)
-        }
-    };
-
-    (x, y)
-}
-
-/// Show an OS-level notification window (desktop only)
-#[tauri::command]
-#[allow(unused_variables)]
-async fn show_notification_window(
-    app: AppHandle,
-    data: NotificationData,
-    position: Option<NotificationPosition>,
-    monitor: Option<NotificationMonitor>,
-    offset: Option<i32>, // User-configurable offset (taskbar height)
-) -> Result<(), String> {
-    #[cfg(target_os = "android")]
-    {
-        return Err("Notification windows not supported on Android".to_string());
-    }
-
-    #[cfg(not(target_os = "android"))]
-    {
-        use std::sync::atomic::{AtomicU32, Ordering};
-        static NOTIFICATION_COUNTER: AtomicU32 = AtomicU32::new(0);
-
-        let should_wait = {
-            let manager = NOTIFICATION_MANAGER.lock().unwrap();
-            manager.should_debounce()
-        };
-
-        if should_wait {
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        }
-
-        let notification_id = NOTIFICATION_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let window_label = format!("notification-{}", notification_id);
-
-        info!(
-            "show_notification_window called with position: {:?}, monitor: {:?}, offset: {:?}",
-            position, monitor, offset
-        );
-
-        let position = position.unwrap_or_default();
-        let monitor_setting = monitor.unwrap_or_default();
-        let offset = offset.unwrap_or(48); // Default 48px taskbar offset
-
-        info!(
-            "Using position: {:?}, monitor: {:?}, offset: {}",
-            position, monitor_setting, offset
-        );
-
-        let monitors = app.available_monitors().map_err(|e| e.to_string())?;
-
-        let target_monitor = match monitor_setting {
-            NotificationMonitor::Primary => monitors.into_iter().next(),
-            NotificationMonitor::Cursor => {
-                if let Some(main_window) = app.get_webview_window("main") {
-                    if let Ok(cursor_pos) = main_window.cursor_position() {
-                        monitors
-                            .into_iter()
-                            .find(|m: &tauri::Monitor| {
-                                let pos = m.position();
-                                let size = m.size();
-                                let cx = cursor_pos.x as i32;
-                                let cy = cursor_pos.y as i32;
-                                cx >= pos.x
-                                    && cx < pos.x + size.width as i32
-                                    && cy >= pos.y
-                                    && cy < pos.y + size.height as i32
-                            })
-                            .or_else(|| app.available_monitors().ok()?.into_iter().next())
-                    } else {
-                        monitors.into_iter().next()
-                    }
-                } else {
-                    monitors.into_iter().next()
-                }
-            }
-        }
-        .ok_or("No monitor found")?;
-
-        let monitor_size = target_monitor.size();
-        let monitor_position = target_monitor.position();
-
-        let width: u32 = if data.compact { 280 } else { 320 };
-        let height: u32 = if data.compact { 48 } else { 100 };
-        let margin: i32 = 16;
-
-        let notif_info = NotificationInfo {
-            slot: 0, // Will be set by allocate_slot
-            position: position.clone(),
-            width,
-            height,
-            offset,
-            monitor_width: monitor_size.width as i32,
-            monitor_height: monitor_size.height as i32,
-            monitor_x: monitor_position.x,
-            monitor_y: monitor_position.y,
-        };
-
-        let slot = {
-            let mut manager = NOTIFICATION_MANAGER.lock().unwrap();
-            manager.allocate_slot(&window_label, notif_info)
-        };
-
-        let (x, y) = calculate_notification_position(
-            monitor_size.width as i32,
-            monitor_size.height as i32,
-            monitor_position.x,
-            monitor_position.y,
-            width,
-            height,
-            margin,
-            slot,
-            &position,
-            offset,
-        );
-
-        let title_encoded = urlencoding::encode(&data.title);
-        let body_encoded = urlencoding::encode(&data.body);
-        let thumbnail_encoded = data
-            .thumbnail
-            .as_ref()
-            .map(|t| urlencoding::encode(t).to_string())
-            .unwrap_or_default();
-        let url_encoded = data
-            .url
-            .as_ref()
-            .map(|u| urlencoding::encode(u).to_string())
-            .unwrap_or_default();
-        let compact = if data.compact { "1" } else { "0" };
-        let is_playlist = if data.is_playlist { "1" } else { "0" };
-        let is_channel = if data.is_channel { "1" } else { "0" };
-        let download_label = urlencoding::encode(&data.download_label);
-        let dismiss_label = urlencoding::encode(&data.dismiss_label);
-
-        let notification_url = format!(
-            "/notification?title={}&body={}&thumbnail={}&url={}&window_id={}&compact={}&dl={}&dm={}&is_playlist={}&is_channel={}",
-            title_encoded, body_encoded, thumbnail_encoded, url_encoded, window_label, compact, download_label, dismiss_label, is_playlist, is_channel
-        );
-
-        info!(
-            "Creating notification window at ({}, {}) slot {} position {:?}",
-            x, y, slot, position
-        );
-
-        let notification_window = WebviewWindowBuilder::new(
-            &app,
-            &window_label,
-            WebviewUrl::App(notification_url.into()),
-        )
-        .title("Comine Notification")
-        .inner_size(width as f64, height as f64)
-        .min_inner_size(width as f64, height as f64)
-        .max_inner_size(width as f64, height as f64)
-        .position(x as f64, y as f64)
-        .decorations(false)
-        .resizable(false)
-        .maximizable(false)
-        .minimizable(false)
-        .closable(false)
-        .skip_taskbar(true)
-        .always_on_top(true)
-        .focused(false)
-        .visible(false)
-        .build()
-        .map_err(|e| format!("Failed to create notification window: {}", e))?;
-
-        info!("Notification window created: {}", window_label);
-
-        Ok(())
-    }
-}
-
-/// Show a notification window (called when frontend is ready)
-#[tauri::command]
-#[allow(unused_variables)]
-async fn reveal_notification_window(app: AppHandle, window_id: String) -> Result<(), String> {
-    #[cfg(not(target_os = "android"))]
-    {
-        info!("Revealing notification window: {}", window_id);
-        if let Some(window) = app.get_webview_window(&window_id) {
-            let _ = window.show();
-            info!("Notification window revealed");
-        } else {
-            info!("Window not found for reveal: {}", window_id);
-        }
-    }
-    Ok(())
-}
-
-/// Close a notification window
-#[tauri::command]
-#[allow(unused_variables)]
-async fn close_notification_window(app: AppHandle, window_id: String) -> Result<(), String> {
-    #[cfg(not(target_os = "android"))]
-    {
-        info!("Closing notification: {}", window_id);
-
-        if let Some(window) = app.get_webview_window(&window_id) {
-            window.close().map_err(|e| e.to_string())?;
-        }
-
-        let to_reposition = {
-            let mut manager = NOTIFICATION_MANAGER.lock().unwrap();
-            manager.free_slot(&window_id)
-        };
-
-        let margin: i32 = 16;
-        for (id, info) in to_reposition {
-            if let Some(window) = app.get_webview_window(&id) {
-                let (new_x, new_y) = calculate_notification_position(
-                    info.monitor_width,
-                    info.monitor_height,
-                    info.monitor_x,
-                    info.monitor_y,
-                    info.width,
-                    info.height,
-                    margin,
-                    info.slot,
-                    &info.position,
-                    info.offset,
-                );
-                info!("Repositioning {} to slot {} (y={})", id, info.slot, new_y);
-                let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
-                    x: new_x,
-                    y: new_y,
-                }));
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Close all notification windows
-#[tauri::command]
-#[allow(unused_variables)]
-async fn close_all_notifications(app: AppHandle) -> Result<(), String> {
-    #[cfg(not(target_os = "android"))]
-    {
-        info!("Closing all notification windows");
-
-        let window_ids: Vec<String> = {
-            let manager = NOTIFICATION_MANAGER.lock().unwrap();
-            manager.notifications.keys().cloned().collect()
-        };
-
-        for window_id in window_ids {
-            if let Some(window) = app.get_webview_window(&window_id) {
-                let _ = window.close();
-            }
-            let mut manager = NOTIFICATION_MANAGER.lock().unwrap();
-            manager.free_slot(&window_id);
-        }
-    }
-    Ok(())
-}
-
-/// Handle notification action - start download immediately
-#[tauri::command]
-#[allow(unused_variables)]
-async fn notification_action(
-    app: AppHandle,
-    window_id: String,
-    url: Option<String>,
-    metadata: Option<serde_json::Value>,
-) -> Result<(), String> {
-    #[cfg(not(target_os = "android"))]
-    {
-        info!(
-            "Notification action triggered: window_id={}, url={:?}, has_metadata={}",
-            window_id,
-            url,
-            metadata.is_some()
-        );
-
-        if let Some(video_url) = &url {
-            let payload = serde_json::json!({
-                "url": video_url,
-                "metadata": metadata
-            });
-
-            if let Some(main_window) = app.get_webview_window("main") {
-                let _ = main_window.emit("notification-start-download", payload);
-                info!("Emitted notification-start-download to main window");
-            } else {
-                let _ = app.emit("notification-start-download", payload);
-                info!("Emitted notification-start-download globally (main window not found)");
-            }
-        }
-
-        close_notification_window(app, window_id).await?;
-    }
-    Ok(())
-}
-
 // ==================== Proxy Commands ====================
 
 /// Resolve proxy based on configuration from frontend
@@ -2901,8 +1648,8 @@ async fn notification_action(
 #[tauri::command]
 async fn resolve_proxy_config(config: proxy::ProxyConfig) -> Result<proxy::ResolvedProxy, String> {
     info!(
-        "Resolving proxy config: mode={}, custom_url={}, fallback={}",
-        config.mode, config.custom_url, config.fallback
+        "Resolving proxy config: mode={}, custom_url={}, retry_without_proxy={}",
+        config.mode, config.custom_url, config.retry_without_proxy
     );
     Ok(proxy::resolve_proxy(&config))
 }
@@ -2987,6 +1734,8 @@ async fn download_file(
     download_path: String,
     proxy_config: Option<proxy::ProxyConfig>,
     connections: Option<u32>,
+    splits: Option<u32>,
+    min_split_size: Option<String>,
     speed_limit: Option<u64>,
 ) -> Result<String, String> {
     info!("Starting file download: {} -> {}", url, filename);
@@ -3021,7 +1770,9 @@ async fn download_file(
     let use_aria2 = aria2_path.exists();
 
     if use_aria2 {
-        let connections = connections.unwrap_or(16).min(16).max(1);
+        let connections = connections.unwrap_or(4).clamp(1, 16);
+        let splits = splits.unwrap_or(connections).clamp(1, 16);
+        let min_split_size = min_split_size.unwrap_or_else(|| "1M".to_string());
 
         let mut cmd = tokio::process::Command::new(&aria2_path);
 
@@ -3036,13 +1787,14 @@ async fn download_file(
             .arg("-x")
             .arg(connections.to_string()) // max connections
             .arg("-s")
-            .arg(connections.to_string()) // splits
+            .arg(splits.to_string()) // splits
             .arg("-k")
-            .arg("1M") // min split size
+            .arg(&min_split_size) // min split size
             .arg("--continue=true") // resume support
             .arg("--auto-file-renaming=false")
             .arg("--allow-overwrite=true")
-            .arg("--console-log-level=warn");
+            .arg("--summary-interval=1") // Output progress every second
+            .arg("--console-log-level=notice");
 
         if let Some(limit) = speed_limit {
             if limit > 0 {
@@ -3059,18 +1811,88 @@ async fn download_file(
         }
 
         info!("Running aria2c with {} connections", connections);
+        debug!("aria2c path: {:?}", aria2_path);
+        debug!("aria2c dest: {:?}", dest_path);
 
-        let output = cmd
-            .stdout(Stdio::piped())
+        let mut child = cmd
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped()) // Capture stdout for progress
             .stderr(Stdio::piped())
-            .output()
-            .await
-            .map_err(|e| format!("Failed to run aria2c: {}", e))?;
+            .spawn()
+            .map_err(|e| format!("Failed to spawn aria2c: {}", e))?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            error!("aria2c failed: {}", stderr);
-            return Err(format!("Download failed: {}", stderr));
+        // Register the process for cancellation support
+        if let Some(pid) = child.id() {
+            let mut downloads = lock_or_recover(&ACTIVE_DOWNLOADS);
+            downloads.insert(url.clone(), pid);
+            info!("Registered aria2c process {} for URL: {}", pid, url);
+        }
+
+        info!("aria2c process spawned, reading stdout...");
+
+        let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
+        let mut stdout_reader = BufReader::new(stdout).lines();
+        
+        // Ensure stderr is also consumed to prevent blocking, though we primarily watch stdout
+        let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
+        tokio::spawn(async move {
+            let mut reader = BufReader::new(stderr).lines();
+            while let Ok(Some(_)) = reader.next_line().await {
+                // Consume stderr
+            }
+        });
+
+        let mut last_progress_emit = std::time::Instant::now() - std::time::Duration::from_millis(200);
+        const PROGRESS_THROTTLE_MS: u64 = 250;
+        let mut line_count = 0;
+
+        // Read stdout for progress
+        loop {
+            tokio::select! {
+                line = stdout_reader.next_line() => {
+                    match line {
+                        Ok(Some(line)) => {
+                            line_count += 1;
+                            if !line.is_empty() {
+                                debug!("aria2c: {}", line);
+                                
+                                let now = std::time::Instant::now();
+                                if now.duration_since(last_progress_emit).as_millis() >= PROGRESS_THROTTLE_MS as u128 {
+                                    last_progress_emit = now;
+                                    
+                                    let _ = window.emit("download-progress", serde_json::json!({
+                                        "url": url,
+                                        "message": line,
+                                    }));
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            info!("aria2c stdout closed after {} lines", line_count);
+                            break;
+                        }
+                        Err(e) => {
+                            warn!("aria2c stdout read error: {}", e);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        info!("Waiting for aria2c to exit...");
+        let status = child.wait().await.map_err(|e| format!("aria2c failed: {}", e))?;
+        info!("aria2c exited with status: {:?}", status);
+
+        // Remove from active downloads after completion
+        {
+            let mut downloads = lock_or_recover(&ACTIVE_DOWNLOADS);
+            downloads.remove(&url);
+        }
+
+        if !status.success() {
+            error!("aria2c exited with non-zero status");
+            return Err("Download failed".to_string());
         }
 
         info!("aria2c download complete: {:?}", dest_path);
@@ -3253,8 +2075,8 @@ fn extract_filename_from_headers(content_disposition: &str, url: &str) -> String
     if !content_disposition.is_empty() {
         if let Some(start) = content_disposition.find("filename=") {
             let rest = &content_disposition[start + 9..];
-            let filename = if rest.starts_with('"') {
-                rest[1..].split('"').next().unwrap_or("")
+            let filename = if let Some(stripped) = rest.strip_prefix('"') {
+                stripped.split('"').next().unwrap_or("")
             } else {
                 rest.split(';').next().unwrap_or("").trim()
             };
@@ -3265,11 +2087,11 @@ fn extract_filename_from_headers(content_disposition: &str, url: &str) -> String
     }
 
     if let Ok(parsed) = url::Url::parse(url) {
-        if let Some(segments) = parsed.path_segments() {
-            if let Some(last) = segments.last() {
+        if let Some(mut segments) = parsed.path_segments() {
+            if let Some(last) = segments.next_back() {
                 if !last.is_empty() && last.contains('.') {
                     return urlencoding::decode(last)
-                        .unwrap_or_else(|_| std::borrow::Cow::Borrowed(last))
+                        .unwrap_or(std::borrow::Cow::Borrowed(last))
                         .into_owned();
                 }
             }
@@ -3317,11 +2139,9 @@ async fn clear_cache(app: AppHandle) -> Result<u32, String> {
 
     for file in &files_to_clean {
         let path = cache_dir.join(file);
-        if path.exists() {
-            if tokio::fs::remove_file(&path).await.is_ok() {
-                deleted += 1;
-                info!("Deleted cache file: {:?}", path);
-            }
+        if path.exists() && tokio::fs::remove_file(&path).await.is_ok() {
+            deleted += 1;
+            info!("Deleted cache file: {:?}", path);
         }
     }
 
@@ -3338,15 +2158,15 @@ async fn clear_cache(_app: AppHandle) -> Result<u32, String> {
 #[tauri::command]
 async fn get_cache_stats() -> Result<CacheStats, String> {
     let (video_info_count, playlist_count, formats_count) = {
-        let vi = VIDEO_INFO_CACHE.lock().unwrap();
-        let pi = PLAYLIST_INFO_CACHE.lock().unwrap();
-        let vf = VIDEO_FORMATS_CACHE.lock().unwrap();
+        let vi = lock_or_recover(&cache::VIDEO_INFO_CACHE);
+        let pi = lock_or_recover(&cache::PLAYLIST_INFO_CACHE);
+        let vf = lock_or_recover(&cache::VIDEO_FORMATS_CACHE);
         (vi.len(), pi.len(), vf.len())
     };
 
     // Estimate playlist cache size (rough estimate)
     let playlist_entries_total: usize = {
-        let pi = PLAYLIST_INFO_CACHE.lock().unwrap();
+        let pi = lock_or_recover(&cache::PLAYLIST_INFO_CACHE);
         pi.iter().map(|(_, v)| v.entries.len()).sum()
     };
 
@@ -3382,15 +2202,15 @@ struct CacheStats {
 #[tauri::command]
 async fn clear_memory_caches() -> Result<(), String> {
     {
-        let mut vi = VIDEO_INFO_CACHE.lock().unwrap();
+        let mut vi = lock_or_recover(&cache::VIDEO_INFO_CACHE);
         vi.clear();
     }
     {
-        let mut pi = PLAYLIST_INFO_CACHE.lock().unwrap();
+        let mut pi = lock_or_recover(&cache::PLAYLIST_INFO_CACHE);
         pi.clear();
     }
     {
-        let mut vf = VIDEO_FORMATS_CACHE.lock().unwrap();
+        let mut vf = lock_or_recover(&cache::VIDEO_FORMATS_CACHE);
         vf.clear();
     }
     info!("Cleared all in-memory caches");
@@ -3401,6 +2221,51 @@ async fn clear_memory_caches() -> Result<(), String> {
 #[tauri::command]
 async fn clear_memory_caches() -> Result<(), String> {
     Ok(())
+}
+
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+async fn autostart_enable(app: AppHandle) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch()
+        .enable()
+        .map_err(|e| format!("Failed to enable autostart: {}", e))
+}
+
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+async fn autostart_disable(app: AppHandle) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch()
+        .disable()
+        .map_err(|e| format!("Failed to disable autostart: {}", e))
+}
+
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+async fn autostart_is_enabled(app: AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch()
+        .is_enabled()
+        .map_err(|e| format!("Failed to check autostart status: {}", e))
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn autostart_enable(_app: AppHandle) -> Result<(), String> {
+    Err("Autostart not supported on Android".to_string())
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn autostart_disable(_app: AppHandle) -> Result<(), String> {
+    Err("Autostart not supported on Android".to_string())
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn autostart_is_enabled(_app: AppHandle) -> Result<bool, String> {
+    Ok(false)
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
@@ -3653,7 +2518,16 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_process::init());
+
+    #[cfg(not(target_os = "android"))]
+    let builder = builder.plugin(
+        tauri_plugin_autostart::Builder::new()
+            .args(["--minimized"])
+            .build(),
+    );
+
+    let builder = builder
         .invoke_handler(tauri::generate_handler![
             download_video,
             cancel_download,
@@ -3661,19 +2535,25 @@ pub fn run() {
             get_video_formats,
             get_playlist_info,
             get_media_duration,
+            extract_video_thumbnail,
+            extract_thumbnail_color,
+            lux_get_video_info,
+            lux_get_video_formats,
+            lux_get_playlist_info,
+            lux_download_video,
             set_acrylic,
-            show_notification_window,
-            reveal_notification_window,
-            close_notification_window,
-            close_all_notifications,
-            notification_action,
-            get_log_file_path,
-            append_log,
-            cleanup_old_logs,
-            open_logs_folder,
-            get_logs_folder_path,
-            read_session_logs,
-            get_session_log_count,
+            notifications::show_notification_window,
+            notifications::reveal_notification_window,
+            notifications::close_notification_window,
+            notifications::close_all_notifications,
+            notifications::notification_action,
+            logs::get_log_file_path,
+            logs::append_log,
+            logs::cleanup_old_logs,
+            logs::open_logs_folder,
+            logs::get_logs_folder_path,
+            logs::read_session_logs,
+            logs::get_session_log_count,
             resolve_proxy_config,
             validate_proxy_url,
             detect_system_proxy,
@@ -3698,15 +2578,39 @@ pub fn run() {
             deps::check_quickjs,
             deps::install_quickjs,
             deps::uninstall_quickjs,
+            deps::check_lux,
+            deps::install_lux,
+            deps::uninstall_lux,
             clear_cache,
             get_cache_stats,
-            clear_memory_caches
+            clear_memory_caches,
+            autostart_enable,
+            autostart_disable,
+            autostart_is_enabled
         ]);
 
     #[cfg(not(target_os = "android"))]
     let builder = builder
         .setup(|app| {
-            setup_tray(app.handle())?;
+            tray::setup(app.handle())?;
+            
+            let start_minimized = std::env::args().any(|arg| arg == "--minimized");
+            if start_minimized {
+                if let Some(window) = app.get_webview_window("main") {
+                    use tauri_plugin_store::StoreExt;
+                    let should_minimize = app
+                        .store("settings.json")
+                        .ok()
+                        .and_then(|store| store.get("startMinimized"))
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true);
+                    
+                    if should_minimize {
+                        let _ = window.hide();
+                    }
+                }
+            }
+            
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -3736,72 +2640,33 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-#[cfg(not(target_os = "android"))]
-fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    let show = MenuItemBuilder::with_id("show", "Show Comine").build(app)?;
-    let download = MenuItemBuilder::with_id("download", "Download from clipboard").build(app)?;
-    let separator = tauri::menu::PredefinedMenuItem::separator(app)?;
-    let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
 
-    let menu = MenuBuilder::new(app)
-        .item(&show)
-        .item(&download)
-        .item(&separator)
-        .item(&quit)
-        .build()?;
+    #[test]
+    fn lock_or_recover_handles_poisoned_mutex() {
+        let mutex = Arc::new(Mutex::new(vec![1, 2, 3]));
+        let mutex_clone = Arc::clone(&mutex);
 
-    #[cfg(target_os = "windows")]
-    let icon = Image::from_path("icons/icon.ico")
-        .or_else(|_| Image::from_path("icons/32x32.png"))
-        .unwrap_or_else(|_| {
-            Image::from_bytes(include_bytes!("../icons/icon.ico"))
-                .expect("Failed to load embedded icon")
+        let handle = std::thread::spawn(move || {
+            let _guard = mutex_clone.lock().unwrap();
+            panic!("intentional panic to poison mutex");
         });
 
-    #[cfg(not(target_os = "windows"))]
-    let icon = Image::from_path("icons/icon.png")
-        .or_else(|_| Image::from_path("icons/32x32.png"))
-        .unwrap_or_else(|_| {
-            Image::from_bytes(include_bytes!("../icons/32x32.png"))
-                .expect("Failed to load embedded icon")
-        });
+        let _ = handle.join();
+        assert!(mutex.is_poisoned());
 
-    let _tray = TrayIconBuilder::new()
-        .icon(icon)
-        .tooltip("Comine")
-        .menu(&menu)
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "show" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                    let _ = window.emit("window-shown", ());
-                }
-            }
-            "download" => {
-                let _ = app.emit("tray-download-clipboard", ());
-            }
-            "quit" => {
-                app.exit(0);
-            }
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                if let Some(window) = tray.app_handle().get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                    let _ = window.emit("window-shown", ());
-                }
-            }
-        })
-        .build(app)?;
+        let guard = lock_or_recover(&mutex);
+        assert_eq!(*guard, vec![1, 2, 3]);
+    }
 
-    info!("System tray initialized");
-    Ok(())
+    #[test]
+    fn lock_or_recover_normal_case() {
+        let mutex = Mutex::new(42);
+        let guard = lock_or_recover(&mutex);
+        assert_eq!(*guard, 42);
+    }
 }
+

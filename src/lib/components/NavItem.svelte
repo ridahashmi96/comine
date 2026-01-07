@@ -20,7 +20,10 @@
     {href}
     target="_blank"
     rel="noopener noreferrer"
-    class="nav-item"
+    class="nav-item external"
+    class:telegram={icon === 'telegram'}
+    class:discord={icon === 'discord'}
+    class:github={icon === 'github'}
     use:spotlight
     use:tooltip={title}
     data-tauri-drag-region="false"
@@ -62,6 +65,21 @@
 
   .nav-item:hover {
     color: rgba(255, 255, 255, 0.8);
+  }
+
+  .nav-item.external.telegram:hover {
+    color: #26A5E4;
+    background: rgba(38, 165, 228, 0.15);
+  }
+
+  .nav-item.external.discord:hover {
+    color: #5865F2;
+    background: rgba(88, 101, 242, 0.15);
+  }
+
+  .nav-item.external.github:hover {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.12);
   }
 
   .nav-item.active {

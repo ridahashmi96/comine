@@ -14,8 +14,7 @@
   import Toast from '$lib/components/Toast.svelte';
   import BackgroundProvider from '$lib/components/BackgroundProvider.svelte';
   import AccentProvider from '$lib/components/AccentProvider.svelte';
-  import Onboarding from '$lib/components/Onboarding.svelte';
-  import { toast } from '$lib/components/Toast.svelte';
+  import { toast, updateToast, dismissToast } from '$lib/components/Toast.svelte';
   import { tooltip } from '$lib/actions/tooltip';
   import { t } from '$lib/i18n';
   import {
@@ -42,6 +41,7 @@
     getQuickThumbnail,
     isDirectFileUrl,
   } from '$lib/utils/format';
+  import { detectBackendForUrl } from '$lib/utils/backend-detection';
   import {
     isAndroid,
     onShareIntent,
@@ -58,6 +58,41 @@
 
   let { children }: { children: Snippet } = $props();
 
+  // Derived state for download speed display
+  let totalDownloadSpeed = $derived.by(() => {
+    const items = $queue.items.filter(i => i.status === 'downloading' && i.speed);
+    if (items.length === 0) return '';
+    
+    // Parse and sum all speeds (convert to bytes/s)
+    let totalBytesPerSec = 0;
+    for (const item of items) {
+      const speed = item.speed.toLowerCase();
+      const match = speed.match(/([\d.]+)\s*(k|m|g)?i?b?\/s?/i);
+      if (match) {
+        let value = parseFloat(match[1]);
+        const unit = (match[2] || '').toLowerCase();
+        if (unit === 'k') value *= 1024;
+        else if (unit === 'm') value *= 1024 * 1024;
+        else if (unit === 'g') value *= 1024 * 1024 * 1024;
+        totalBytesPerSec += value;
+      }
+    }
+    
+    if (totalBytesPerSec === 0) return '';
+    
+    // Format back to human readable
+    if (totalBytesPerSec >= 1024 * 1024 * 1024) {
+      return `${(totalBytesPerSec / (1024 * 1024 * 1024)).toFixed(1)} GB/s`;
+    } else if (totalBytesPerSec >= 1024 * 1024) {
+      return `${(totalBytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
+    } else if (totalBytesPerSec >= 1024) {
+      return `${(totalBytesPerSec / 1024).toFixed(1)} KB/s`;
+    }
+    return `${Math.round(totalBytesPerSec)} B/s`;
+  });
+
+  let isDownloading = $derived($activeDownloadsCount > 0 && totalDownloadSpeed !== '');
+
   let isNotificationWindow = $derived(
     browser && window.location.pathname.startsWith('/notification')
   );
@@ -71,6 +106,7 @@
 
   let hasShownTrayNotification = false;
   let isWindowHidden = $state(false);
+  let depsToastId: number | null = null;
 
   let unlistenClose: UnlistenFn | null = null;
   let unlistenTrayDownload: UnlistenFn | null = null;
@@ -80,7 +116,7 @@
   let detachLogger: (() => void) | null = null;
   let cleanupShareIntent: (() => void) | null = null;
 
-  let showOnboarding = $derived($settingsReady && !$settings.onboardingCompleted);
+
 
   interface VideoInfo {
     title: string;
@@ -187,6 +223,99 @@
     cleanupKeyboard = () => window.removeEventListener('keydown', handleKeyDown);
   }
 
+  // Auto-install missing dependencies with live toast progress
+  async function autoInstallDependencies() {
+    // Wait a bit for deps.checkAll to complete
+    await new Promise(r => setTimeout(r, 1000));
+
+    const state = $deps;
+    const missing: Array<{ name: string; key: 'ytdlp' | 'ffmpeg' | 'aria2' | 'quickjs' }> = [];
+
+    if (!state.ytdlp?.installed) missing.push({ name: 'yt-dlp', key: 'ytdlp' });
+    if (!state.ffmpeg?.installed) missing.push({ name: 'FFmpeg', key: 'ffmpeg' });
+    if (!state.aria2?.installed) missing.push({ name: 'aria2', key: 'aria2' });
+    if (!state.quickjs?.installed) missing.push({ name: 'QuickJS', key: 'quickjs' });
+
+    if (missing.length === 0) return;
+
+    logs.info('deps', `Auto-installing ${missing.length} missing dependencies...`);
+
+    // Create a progress toast
+    depsToastId = toast.progress(
+      $t('deps.installing') || 'Installing components...',
+      0,
+      `0/${missing.length} ${$t('deps.components') || 'components'}`
+    );
+
+    let installed = 0;
+
+    // Install aria2 first (other deps may need it)
+    const aria2Idx = missing.findIndex(d => d.key === 'aria2');
+    if (aria2Idx !== -1) {
+      const aria2 = missing.splice(aria2Idx, 1)[0];
+      updateToast(depsToastId, { 
+        message: `${$t('deps.installing') || 'Installing'} ${aria2.name}...`,
+        subMessage: `${installed}/${missing.length + 1} ${$t('deps.components') || 'components'}`
+      });
+      const success = await deps.installAria2();
+      if (success) installed++;
+      updateToast(depsToastId, { 
+        progress: (installed / (missing.length + 1)) * 100,
+        subMessage: `${installed}/${missing.length + 1} ${$t('deps.components') || 'components'}`
+      });
+    }
+
+    // Install rest in parallel
+    const results = await Promise.all(missing.map(async (dep, i) => {
+      updateToast(depsToastId!, { 
+        message: `${$t('deps.installing') || 'Installing'} ${dep.name}...`,
+      });
+
+      let success = false;
+      switch (dep.key) {
+        case 'ytdlp': success = await deps.installYtdlp(); break;
+        case 'ffmpeg': success = await deps.installFfmpeg(); break;
+        case 'quickjs': success = await deps.installQuickjs(); break;
+      }
+
+      if (success) {
+        installed++;
+        updateToast(depsToastId!, { 
+          progress: (installed / (missing.length + (aria2Idx !== -1 ? 1 : 0))) * 100,
+          subMessage: `${installed}/${missing.length + (aria2Idx !== -1 ? 1 : 0)} ${$t('deps.components') || 'components'}`
+        });
+      }
+
+      return success;
+    }));
+
+    // Finish up
+    if (depsToastId) {
+      const allSuccess = results.every(Boolean) && (aria2Idx === -1 || installed > 0);
+      if (allSuccess) {
+        updateToast(depsToastId, { 
+          type: 'success', 
+          message: $t('deps.ready') || 'Components ready!',
+          progress: 100 
+        });
+        setTimeout(() => {
+          if (depsToastId) dismissToast(depsToastId);
+          depsToastId = null;
+        }, 3000);
+      } else {
+        updateToast(depsToastId, { 
+          type: 'warning', 
+          message: $t('deps.someError') || 'Some components failed to install',
+          subMessage: $t('deps.checkSettings') || 'Check Settings → Dependencies' 
+        });
+        setTimeout(() => {
+          if (depsToastId) dismissToast(depsToastId);
+          depsToastId = null;
+        }, 5000);
+      }
+    }
+  }
+
   onMount(() => {
     if (window.location.pathname.startsWith('/notification')) {
       return;
@@ -195,12 +324,15 @@
     appWindow = getCurrentWindow();
 
     initSettings();
-    initHistory();
     queue.init();
 
-    mediaCache.load();
-
-    deps.checkAll();
+    setTimeout(async () => {
+      await deps.checkAll();
+      // Auto-install missing dependencies
+      if (!isAndroid()) {
+        autoInstallDependencies();
+      }
+    }, 1500);
 
     windowWidth = window.innerWidth;
     isMobile = windowWidth < MOBILE_BREAKPOINT;
@@ -471,10 +603,9 @@
           audioQuality: currentSettings.defaultAudioQuality ?? 'best',
           convertToMp4: currentSettings.convertToMp4 ?? false,
           remux: currentSettings.remux ?? true,
-          useHLS: currentSettings.useHLS ?? true,
           clearMetadata: currentSettings.clearMetadata ?? false,
           dontShowInHistory: currentSettings.dontShowInHistory ?? false,
-          useAria2: currentSettings.useAria2 ?? false,
+          useAria2: currentSettings.useAria2 ?? true,
           cookiesFromBrowser: currentSettings.cookiesFromBrowser ?? '',
           customCookies: currentSettings.customCookies ?? '',
           prefetchedInfo: metadata
@@ -859,8 +990,12 @@
           return;
         }
       }
-
-      const videoInfo: VideoInfo = await invoke('get_video_info', {
+      
+      const backend = detectBackendForUrl(url);
+      const luxInstalled = backend === 'lux' && $deps.lux?.installed;
+      const command = luxInstalled ? 'lux_get_video_info' : 'get_video_info';
+      
+      const videoInfo: VideoInfo = await invoke(command, {
         url,
         proxyConfig: getProxyConfig(),
       });
@@ -991,7 +1126,17 @@
     {#if !isMobile}
       <div class="titlebar" data-tauri-drag-region>
         <div class="titlebar-spacer"></div>
-        <div class="titlebar-text">comine</div>
+        <div class="titlebar-brand" data-tauri-drag-region>
+          {#if isDownloading}
+            <Icon name="download" size={13} />
+            <span class="titlebar-speed">{totalDownloadSpeed}</span>
+          {:else}
+            <svg class="titlebar-icon" viewBox="0 0 1024 1024" fill="currentColor">
+              <path fill-rule="evenodd" clip-rule="evenodd" d="M300.29 223.05L612.418 0L844 298.937L799.054 760.396L472.441 1024L158 592.095L300.29 223.05ZM754.854 722.285C700.283 629.788 671.5 524.355 671.5 416.959V323.5L464.5 633.5L754.854 722.285Z"/>
+            </svg>
+            <span class="titlebar-text">comine</span>
+          {/if}
+        </div>
         <div class="window-controls" data-tauri-drag-region="false">
           <button class="titlebar-btn" onclick={minimizeWindow} use:tooltip={$t('window.minimize')}>
             <Icon name="minimize" size={16} />
@@ -1046,22 +1191,33 @@
 
     <!-- Mobile bottom bar -->
     {#if isMobile}
-      <nav class="bottom-bar">
-        {#each allNavItems as item}
-          <a href={item.path} class="bottom-bar-item" class:active={currentPath === item.path}>
-            <Icon name={item.icon} size={24} />
-            {#if item.badge}
-              <span class="badge">{item.badge}</span>
-            {/if}
-          </a>
-        {/each}
+      <nav class="bottom-bar-container">
+        <div class="bottom-bar" class:show-labels={$settings.showMobileNavLabels}>
+          {#each allNavItems as item}
+            {@const isActive = currentPath === item.path}
+            <a 
+              href={item.path} 
+              class="bottom-bar-item" 
+              class:active={isActive}
+            >
+              <div class="bottom-bar-icon" class:active={isActive}>
+                <Icon name={item.icon} size={22} />
+                {#if item.badge}
+                  <span class="badge">{item.badge}</span>
+                {/if}
+              </div>
+              {#if $settings.showMobileNavLabels}
+                <span class="bottom-bar-label">{$t(item.labelKey)}</span>
+              {/if}
+            </a>
+          {/each}
+        </div>
       </nav>
     {/if}
   </div>
 
   <Toast />
   <NotificationPopup />
-  <Onboarding open={showOnboarding} />
 {/if}
 
 <style>
@@ -1193,7 +1349,7 @@
   }
 
   .titlebar {
-    height: 32px;
+    height: 30px;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -1208,20 +1364,86 @@
     width: 84px; /* Same width as window-controls to balance */
   }
 
-  .titlebar-text {
-    font-family: 'Funnel Display', 'Jost', sans-serif;
-    font-size: 13px;
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.7);
-    letter-spacing: 0.5px;
+  .titlebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     position: absolute;
     left: 50%;
     transform: translateX(-50%);
   }
 
+  @keyframes shimmer {
+    0%, 100% {
+      background-position: 200% center;
+    }
+    50% {
+      background-position: -200% center;
+    }
+  }
+
+  .titlebar-icon {
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+    fill: rgba(255, 255, 255, 0.7);
+    animation: icon-shimmer 3s ease-in-out infinite;
+  }
+
+  @keyframes icon-shimmer {
+    0%, 40%, 60%, 100% {
+      fill: rgba(255, 255, 255, 0.7);
+    }
+    50% {
+      fill: rgba(255, 255, 255, 1);
+    }
+  }
+
+  .titlebar-text {
+    font-family: 'Funnel Display', 'Jost', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    background: linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.7) 0%,
+      rgba(255, 255, 255, 0.7) 40%,
+      rgba(255, 255, 255, 1) 50%,
+      rgba(255, 255, 255, 0.7) 60%,
+      rgba(255, 255, 255, 0.7) 100%
+    );
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: shimmer 3s ease-in-out infinite;
+  }
+
+  .titlebar-speed {
+    font-family: 'Jost', sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.8);
+    letter-spacing: 0.3px;
+  }
+
+  .titlebar-brand :global(svg:first-child:not(.titlebar-icon)) {
+    color: var(--accent, #6366f1);
+    animation: download-pulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes download-pulse {
+    0%, 100% {
+      opacity: 0.7;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+
   .window-controls {
     display: flex;
-    padding-right: 2px;
+    padding-right: 1px;
     gap: 0;
   }
 
@@ -1291,17 +1513,43 @@
     overflow: hidden;
   }
 
-  /* Mobile bottom bar */
+  /* Mobile floating bottom bar */
+  .bottom-bar-container {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: center;
+    padding: 12px;
+    padding-bottom: max(12px, env(safe-area-inset-bottom, 12px));
+    z-index: 100;
+    pointer-events: none;
+  }
+
   .bottom-bar {
     display: flex;
-    justify-content: space-around;
+    justify-content: space-evenly;
     align-items: center;
+    width: 92%;
+    max-width: 420px;
     height: 64px;
-    background: rgba(0, 0, 0, 0.4);
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(20, 20, 24, 0.85);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 24px;
     padding: 0 8px;
-    padding-bottom: env(safe-area-inset-bottom, 0);
-    flex-shrink: 0;
+    box-shadow: 
+      0 8px 32px rgba(0, 0, 0, 0.4),
+      0 2px 8px rgba(0, 0, 0, 0.2),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    pointer-events: auto;
+  }
+
+  .bottom-bar.show-labels {
+    height: 68px;
+    padding: 0 4px;
   }
 
   .bottom-bar-item {
@@ -1309,12 +1557,20 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 8px 16px;
+    gap: 2px;
+    padding: 8px 12px;
     color: rgba(255, 255, 255, 0.5);
     text-decoration: none;
-    border-radius: 12px;
-    transition: all 0.15s ease;
+    border-radius: 16px;
+    transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
     position: relative;
+    min-width: 48px;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .bottom-bar-item:active {
+    transform: scale(0.92);
+    transition: transform 0.1s ease;
   }
 
   .bottom-bar-item:hover {
@@ -1323,24 +1579,57 @@
 
   .bottom-bar-item.active {
     color: #ffffff;
-    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .bottom-bar-icon {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 32px;
+    border-radius: 12px;
+    transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  .bottom-bar-icon.active {
+    background: var(--accent, #6366f1);
+    box-shadow: 
+      0 4px 12px color-mix(in srgb, var(--accent, #6366f1) 40%, transparent),
+      0 0 0 1px rgba(255, 255, 255, 0.1);
+    transform: scale(1.05);
+  }
+
+  .bottom-bar-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    opacity: 0.9;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 64px;
+    text-align: center;
+    transition: opacity 0.2s ease;
   }
 
   .bottom-bar-item .badge {
     position: absolute;
-    top: 4px;
-    right: 8px;
+    top: -2px;
+    right: -2px;
     background: var(--accent, #6366f1);
     color: white;
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 700;
     min-width: 16px;
     height: 16px;
-    border-radius: 50%;
+    border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 0 4px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+    border: 2px solid rgba(20, 20, 24, 0.9);
   }
 
   /* Mobile adjustments */
@@ -1357,12 +1646,13 @@
   .app.mobile .content-area {
     padding: 0 0 0 8px;
     padding-top: env(safe-area-inset-top, 24px);
-    padding-bottom: 0;
+    /* No padding-bottom here - ScrollArea handles it with its own padding */
   }
 
   /* Mobile page padding */
   .app.mobile :global(.page) {
     padding: 0 !important;
+    padding-bottom: 24px !important;
   }
 
   .app.mobile :global(.page h1) {

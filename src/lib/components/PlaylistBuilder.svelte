@@ -1,10 +1,13 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { t } from '$lib/i18n';
   import { tooltip } from '$lib/actions/tooltip';
   import { settings, type DownloadMode, getProxyConfig } from '$lib/stores/settings';
+  import { deps } from '$lib/stores/deps';
   import { isAndroid, getPlaylistInfoOnAndroid } from '$lib/utils/android';
   import { formatDuration, formatSize, getDisplayThumbnailUrl } from '$lib/utils/format';
+  import { detectBackendForUrl } from '$lib/utils/backend-detection';
   import Icon from './Icon.svelte';
   import Checkbox from './Checkbox.svelte';
   import Select from './Select.svelte';
@@ -89,11 +92,21 @@
     entryCount?: number;
   }
 
+  export interface DefaultSettings {
+    sponsorBlock?: boolean;
+    chapters?: boolean;
+    embedSubtitles?: boolean;
+    subtitleLanguages?: string;
+    embedThumbnail?: boolean;
+    clearMetadata?: boolean;
+  }
+
   interface Props {
     url: string;
     cookiesFromBrowser?: string;
     customCookies?: string;
     defaultDownloadMode?: DownloadMode;
+    defaults?: DefaultSettings;
     ondownload?: (selection: PlaylistSelection) => void;
     onback?: () => void;
     onopenitem?: (entry: PlaylistEntry) => void;
@@ -107,6 +120,7 @@
     cookiesFromBrowser = '',
     customCookies = '',
     defaultDownloadMode = 'auto',
+    defaults,
     ondownload,
     onback,
     onopenitem,
@@ -185,6 +199,7 @@
   let playlistInfoCached = $state<boolean>(initialState.fromCache);
 
   let destroyed = false;
+  let thumbnailError = $state(false);
 
   let selectedMode = $state<'all' | 'some'>(initialState.selectedMode);
   let selectedSomeIds = $state<Set<string>>(new Set(initialState.selectedIds));
@@ -269,13 +284,22 @@
     { value: '128', label: '128 kbps' },
   ];
 
-  let globalSkipSponsors = $state(true);
+  const initialDefaults = untrack(() => ({
+    sponsorBlock: defaults?.sponsorBlock ?? false,
+    chapters: defaults?.chapters ?? true,
+    embedThumbnail: defaults?.embedThumbnail ?? true,
+    clearMetadata: defaults?.clearMetadata ?? false,
+    embedSubtitles: defaults?.embedSubtitles ?? false,
+    subtitleLanguages: defaults?.subtitleLanguages ?? 'en,ru',
+  }));
+
+  let globalSkipSponsors = $state(initialDefaults.sponsorBlock);
   let globalSkipIntros = $state(false);
-  let globalEmbedChapters = $state(true);
-  let globalEmbedThumbnail = $state(true);
-  let globalEmbedMetadata = $state(true);
-  let globalEmbedSubs = $state(false);
-  let globalSubLangs = $state('en');
+  let globalEmbedChapters = $state(initialDefaults.chapters);
+  let globalEmbedThumbnail = $state(initialDefaults.embedThumbnail);
+  let globalEmbedMetadata = $state(!initialDefaults.clearMetadata);
+  let globalEmbedSubs = $state(initialDefaults.embedSubtitles);
+  let globalSubLangs = $state(initialDefaults.subtitleLanguages);
 
   let isYouTubeMusicUrl = $derived(url.toLowerCase().includes('music.youtube.com'));
   let bulkMode = $state<DownloadMode | null>(null);
@@ -417,7 +441,7 @@
           type: 'playlist',
           url,
           selectedIds: selectedMode === 'some' ? [...selectedSomeIds] : [],
-          perItemSettings: perItemSettingsObj as any,
+          perItemSettings: perItemSettingsObj,
           scrollTop: currentScrollTop,
           viewMode,
           searchQuery,
@@ -466,7 +490,10 @@
         info = (await getPlaylistInfoOnAndroid(url)) as BackendPlaylistInfo;
         if (destroyed) return;
       } else {
-        info = await invoke<BackendPlaylistInfo>('get_playlist_info', {
+        const backend = detectBackendForUrl(url);
+        const luxInstalled = backend === 'lux' && $deps.lux?.installed;
+        const command = luxInstalled ? 'lux_get_playlist_info' : 'get_playlist_info';
+        info = await invoke<BackendPlaylistInfo>(command, {
           url,
           offset: 0,
           limit: 100,
@@ -479,7 +506,10 @@
         const allEntries = info.entries;
         while (info.has_more && info.total_count > 0 && !destroyed) {
           const currentOffset = allEntries.length;
-          const moreInfo = await invoke<BackendPlaylistInfo>('get_playlist_info', {
+          const backend = detectBackendForUrl(url);
+          const luxInstalled = backend === 'lux' && $deps.lux?.installed;
+          const command = luxInstalled ? 'lux_get_playlist_info' : 'get_playlist_info';
+          const moreInfo = await invoke<BackendPlaylistInfo>(command, {
             url,
             offset: currentOffset,
             limit: 100,
@@ -617,7 +647,7 @@
       entries,
       playlistInfo: {
         id: playlistInfo?.id ?? '',
-        title: playlistInfo?.title ?? 'Playlist',
+        title: playlistInfo?.title ?? $t('common.playlist'),
         usePlaylistFolder,
       },
     };
@@ -635,7 +665,7 @@
       </button>
       <div class="header-badge playlist">
         <Icon name="playlist" size={12} />
-        <span>Playlist</span>
+        <span>{$t('common.playlist')}</span>
       </div>
       <div class="header-spacer"></div>
       {#if estimatedSize()}
@@ -653,7 +683,7 @@
   {:else}
     <div class="yt-badge">
       <Icon name="playlist" size={14} />
-      <span>YouTube Playlist</span>
+      <span>{$t('common.youtubePlaylist')}</span>
     </div>
   {/if}
 
@@ -669,8 +699,8 @@
     {:else}
       <div class="main-row">
         <div class="left">
-          {#if displayThumbnail}
-            <img src={displayThumbnail} alt="" class="thumb" />
+          {#if displayThumbnail && !thumbnailError}
+            <img src={displayThumbnail} alt="" class="thumb" onerror={() => (thumbnailError = true)} />
           {:else if loading && !hasPrefetchedInfo}
             <div class="thumb skeleton"></div>
           {:else}
@@ -679,7 +709,7 @@
           <div class="info">
             {#if displayTitle || playlistInfo}
               <span class="title-row">
-                <span class="title">{displayTitle || 'Playlist'}</span>
+                <span class="title">{displayTitle || $t('common.playlist')}</span>
                 <button
                   class="copy-link-btn"
                   onclick={() => {
@@ -965,6 +995,13 @@
     height: 100%;
     display: flex;
     flex-direction: column;
+  }
+
+  @media (max-width: 480px) {
+    .playlist-builder.full-bleed {
+      height: auto;
+      min-height: 100%;
+    }
   }
 
   .playlist-builder.full-bleed .view-header {

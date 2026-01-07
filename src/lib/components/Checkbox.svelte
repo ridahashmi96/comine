@@ -27,8 +27,8 @@
     <svg
       class="checkmark"
       class:visible={checked}
-      width="12"
-      height="12"
+      width="14"
+      height="14"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -36,7 +36,7 @@
       stroke-linecap="round"
       stroke-linejoin="round"
     >
-      <polyline points="20 6 9 17 4 12"></polyline>
+      <polyline class="check-path" points="20 6 9 17 4 12"></polyline>
     </svg>
   </span>
   {#if label}
@@ -47,7 +47,7 @@
 <style>
   .checkbox-wrapper {
     display: inline-flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 8px;
     cursor: pointer;
     user-select: none;
@@ -56,6 +56,7 @@
     padding: 0;
     font: inherit;
     color: inherit;
+    text-align: left;
   }
 
   .checkbox-wrapper.disabled {
@@ -64,7 +65,6 @@
   }
 
   .checkbox {
-    /* Add your Figma styles here */
     width: 20px;
     height: 20px;
     min-width: 20px;
@@ -93,8 +93,27 @@
     opacity: 1;
   }
 
+  .check-path {
+    stroke-dasharray: 24;
+    stroke-dashoffset: 24;
+    transition: stroke-dashoffset 0.2s ease-out;
+  }
+
+  .checkmark.visible .check-path {
+    stroke-dashoffset: 0;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .check-path {
+      transition: none;
+      stroke-dasharray: none;
+      stroke-dashoffset: 0;
+    }
+  }
+
   .label {
     color: rgba(255, 255, 255, 0.9);
     font-size: 14px;
+    line-height: 20px;
   }
 </style>

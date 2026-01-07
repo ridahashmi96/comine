@@ -24,7 +24,7 @@ const PROXY_CACHE_TTL: Duration = Duration::from_secs(300);
 pub struct ProxyConfig {
     pub mode: String,
     pub custom_url: String,
-    pub fallback: bool,
+    pub retry_without_proxy: bool,
 }
 
 #[derive(serde::Serialize, Clone, Debug)]
@@ -80,14 +80,14 @@ pub fn resolve_proxy(config: &ProxyConfig) -> ResolvedProxy {
         "custom" => {
             if config.custom_url.is_empty() {
                 warn!("Custom proxy mode but URL is empty, falling back to system");
-                if config.fallback {
+                if config.retry_without_proxy {
                     detect_system_proxy()
                 } else {
                     ResolvedProxy::default()
                 }
             } else if let Err(e) = validate_proxy_url(&config.custom_url) {
                 warn!("Invalid custom proxy URL: {}, falling back", e);
-                if config.fallback {
+                if config.retry_without_proxy {
                     detect_system_proxy()
                 } else {
                     ResolvedProxy::default()
@@ -101,7 +101,7 @@ pub fn resolve_proxy(config: &ProxyConfig) -> ResolvedProxy {
                 }
             }
         }
-        "system" | _ => {
+        _ => {
             info!("Proxy mode: system - detecting system proxy");
             detect_system_proxy()
         }
@@ -183,6 +183,7 @@ fn detect_env_proxy() -> Option<ResolvedProxy> {
 
 #[cfg(target_os = "windows")]
 fn detect_windows_proxy() -> Option<ResolvedProxy> {
+    use crate::utils::StdCommandHideConsole;
     use std::process::Command;
 
     let enable_output = Command::new("reg")
@@ -192,6 +193,7 @@ fn detect_windows_proxy() -> Option<ResolvedProxy> {
             "/v",
             "ProxyEnable",
         ])
+        .hide_console()
         .output();
 
     if let Ok(output) = enable_output {
@@ -210,6 +212,7 @@ fn detect_windows_proxy() -> Option<ResolvedProxy> {
             "/v",
             "ProxyServer",
         ])
+        .hide_console()
         .output();
 
     if let Ok(output) = server_output {
@@ -225,9 +228,7 @@ fn detect_windows_proxy() -> Option<ResolvedProxy> {
                             proxy_value
                                 .split(';')
                                 .find_map(|part| {
-                                    let mut iter = part.splitn(2, '=');
-                                    let protocol = iter.next()?;
-                                    let server = iter.next()?;
+                                    let (protocol, server) = part.split_once('=')?;
                                     if protocol == "https" || protocol == "http" {
                                         Some(format!("http://{}", server))
                                     } else {
@@ -483,7 +484,7 @@ pub fn proxy_strategies(config: &ProxyConfig) -> Vec<(&'static str, Option<Strin
         }
         "custom" => {
             if !resolved.url.is_empty() {
-                if config.fallback {
+                if config.retry_without_proxy {
                     let system_proxy = detect_system_proxy();
                     let mut strategies = vec![("custom proxy", Some(resolved.url.clone()))];
                     if !system_proxy.url.is_empty() && system_proxy.url != resolved.url {
@@ -494,20 +495,18 @@ pub fn proxy_strategies(config: &ProxyConfig) -> Vec<(&'static str, Option<Strin
                 } else {
                     vec![("custom proxy", Some(resolved.url))]
                 }
-            } else {
-                if config.fallback {
-                    let system_proxy = detect_system_proxy();
-                    if !system_proxy.url.is_empty() {
-                        vec![("system proxy", Some(system_proxy.url)), ("no proxy", None)]
-                    } else {
-                        vec![("no proxy", None)]
-                    }
+            } else if config.retry_without_proxy {
+                let system_proxy = detect_system_proxy();
+                if !system_proxy.url.is_empty() {
+                    vec![("system proxy", Some(system_proxy.url)), ("no proxy", None)]
                 } else {
                     vec![("no proxy", None)]
                 }
+            } else {
+                vec![("no proxy", None)]
             }
         }
-        "system" | _ => {
+        _ => {
             if !resolved.url.is_empty() {
                 vec![("system proxy", Some(resolved.url)), ("no proxy", None)]
             } else {

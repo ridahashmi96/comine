@@ -60,7 +60,6 @@
 
       const position = scrollContainer.scrollTop;
 
-      // Only report if position changed significantly (5px threshold)
       if (Math.abs(position - lastReportedPosition) > 5) {
         lastReportedPosition = position;
         onscroll?.(position);
@@ -83,10 +82,8 @@
       doRestore();
     }
 
-    // Also schedule for next frame in case content isn't rendered yet
     requestAnimationFrame(() => {
       doRestore();
-      // And one more frame for good measure (content might load async)
       requestAnimationFrame(doRestore);
     });
   }
@@ -106,12 +103,9 @@
   onMount(() => {
     let resizeObserver: ResizeObserver | null = null;
 
-    // Wait for next tick to ensure content is rendered, then set up
     tick().then(() => {
-      // Initial mask calculation
       setTimeout(updateScrollState, 50);
 
-      // Observe resize for mask updates
       resizeObserver = new ResizeObserver(() => {
         updateScrollState();
       });
@@ -119,7 +113,6 @@
         resizeObserver.observe(scrollContainer);
       }
 
-      // Restore initial scroll if provided
       if (typeof initialScrollTop === 'number' && initialScrollTop > 0) {
         restoreScroll(initialScrollTop);
       }
@@ -164,10 +157,10 @@
     contain: strict;
   }
 
-  /* Mobile: add padding so scrollbar doesn't touch content */
   @media (max-width: 480px) {
     .scroll-area {
       padding-right: 4px;
+      padding-bottom: 100px;
     }
   }
 </style>

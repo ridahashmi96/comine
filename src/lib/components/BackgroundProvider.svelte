@@ -14,6 +14,26 @@
     return type;
   });
 
+  let accentStyle = $derived($settings.accentStyle || 'solid');
+  
+  let secondaryColor = $derived.by(() => {
+    const hex = ($settings.backgroundColor || '#1a1a2e').replace('#', '');
+    const r = parseInt(hex.substring(0, 2), 16);
+    const g = parseInt(hex.substring(2, 4), 16);
+    const b = parseInt(hex.substring(4, 6), 16);
+    
+    const accentHex = ($settings.accentColor || '#6366F1').replace('#', '');
+    const ar = parseInt(accentHex.substring(0, 2), 16);
+    const ag = parseInt(accentHex.substring(2, 4), 16);
+    const ab = parseInt(accentHex.substring(4, 6), 16);
+    
+    const r2 = Math.round(r * 0.85 + ar * 0.15);
+    const g2 = Math.round(g * 0.85 + ag * 0.15);
+    const b2 = Math.round(b * 0.85 + ab * 0.15);
+    
+    return `#${((1 << 24) | (r2 << 16) | (g2 << 8) | b2).toString(16).slice(1)}`;
+  });
+
   let videoEl: HTMLVideoElement | null = $state(null);
 
   onMount(() => {
@@ -40,7 +60,7 @@
   }
 </script>
 
-<div class="background-provider" data-type={effectiveBackgroundType}>
+<div class="background-provider" data-type={effectiveBackgroundType} data-accent-style={accentStyle}>
   {#if effectiveBackgroundType === 'animated' && $settings.backgroundVideo}
     {@const videoSrc = $settings.backgroundVideo}
     {@const opacity = onDesktop ? $settings.backgroundOpacity / 100 : 1}
@@ -66,12 +86,26 @@
     <div class="image-overlay"></div>
   {:else if effectiveBackgroundType === 'solid'}
     {@const opacity = onDesktop ? $settings.backgroundOpacity / 100 : 1}
-    <div
-      class="background-solid"
-      style="background-color: {$settings.backgroundColor}; opacity: {opacity};"
-    ></div>
+    {@const bgColor = $settings.backgroundColor || '#1a1a2e'}
+    {#if accentStyle === 'gradient'}
+      <div
+        class="background-solid background-gradient"
+        style="--bg-primary: {bgColor}; --bg-secondary: {secondaryColor}; opacity: {opacity};"
+      ></div>
+    {:else if accentStyle === 'glow'}
+      <div
+        class="background-solid background-glow"
+        style="--bg-primary: {bgColor}; --accent: {$settings.accentColor}; opacity: {opacity};"
+      >
+        <div class="glow-orb"></div>
+      </div>
+    {:else}
+      <div
+        class="background-solid"
+        style="background-color: {bgColor}; opacity: {opacity};"
+      ></div>
+    {/if}
   {/if}
-  <!-- Acrylic type uses window transparency, no element needed -->
 </div>
 
 <style>
@@ -127,5 +161,33 @@
   .background-solid {
     position: absolute;
     inset: 0;
+  }
+
+  .background-gradient {
+    background: linear-gradient(
+      145deg,
+      var(--bg-primary) 0%,
+      var(--bg-secondary) 50%,
+      var(--bg-primary) 100%
+    );
+    background-size: 200% 200%;
+  }
+
+  .background-glow {
+    background: var(--bg-primary);
+    overflow: hidden;
+  }
+
+  .glow-orb {
+    position: absolute;
+    width: 50%;
+    height: 50%;
+    top: -10%;
+    right: -10%;
+    background: var(--accent);
+    border-radius: 50%;
+    filter: blur(120px);
+    opacity: 0.08;
+    pointer-events: none;
   }
 </style>
