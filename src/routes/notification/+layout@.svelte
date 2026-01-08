@@ -2,7 +2,6 @@
   let { children } = $props();
 </script>
 
-<!-- Minimal layout for notification windows - no sidebar, no navigation -->
 <div class="notification-root">
   {@render children()}
 </div>

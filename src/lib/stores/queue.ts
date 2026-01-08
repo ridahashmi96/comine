@@ -292,15 +292,15 @@ function createQueueStore() {
                                   message.includes('WARNING');
       
       if (!isImportantMessage && (now - lastUpdate) < PROGRESS_THROTTLE_MS) {
-        return; // Skip this update to reduce memory pressure
+        return;
       }
       
       progressThrottleMap.set(url, now);
       
-      if (progressThrottleMap.size > 100) {
-        const activeUrls = get({ subscribe }).items.map(i => i.url);
+      if (progressThrottleMap.size > 20) {
+        const activeUrls = new Set(get({ subscribe }).items.map(i => i.url));
         for (const [throttleUrl] of progressThrottleMap) {
-          if (!activeUrls.includes(throttleUrl)) {
+          if (!activeUrls.has(throttleUrl)) {
             progressThrottleMap.delete(throttleUrl);
           }
         }

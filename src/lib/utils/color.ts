@@ -10,11 +10,13 @@ export interface RGB {
   b: number;
 }
 
-const COLOR_CACHE_MAX_SIZE = 200;
+const COLOR_CACHE_MAX_SIZE = 100;
 const colorCache = new Map<string, RGB>();
 
 let sharedCanvas: HTMLCanvasElement | null = null;
 let sharedCtx: CanvasRenderingContext2D | null = null;
+let canvasIdleTimer: ReturnType<typeof setTimeout> | null = null;
+const CANVAS_IDLE_TIMEOUT = 30000;
 const SAMPLE_SIZE = 50;
 
 function normalizeThumbnailUrlForCache(url: string): string {
@@ -35,7 +37,23 @@ function normalizeThumbnailUrlForCache(url: string): string {
   }
 }
 
+function releaseCanvas(): void {
+  if (sharedCanvas) {
+    sharedCtx = null;
+    sharedCanvas.width = 0;
+    sharedCanvas.height = 0;
+    sharedCanvas = null;
+  }
+}
+
+function scheduleCanvasRelease(): void {
+  if (canvasIdleTimer) clearTimeout(canvasIdleTimer);
+  canvasIdleTimer = setTimeout(releaseCanvas, CANVAS_IDLE_TIMEOUT);
+}
+
 function getSharedCanvas(): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null {
+  if (canvasIdleTimer) clearTimeout(canvasIdleTimer);
+  
   if (!sharedCanvas) {
     sharedCanvas = document.createElement('canvas');
     sharedCanvas.width = SAMPLE_SIZE;
@@ -43,6 +61,8 @@ function getSharedCanvas(): { canvas: HTMLCanvasElement; ctx: CanvasRenderingCon
     sharedCtx = sharedCanvas.getContext('2d', { willReadFrequently: true });
   }
   if (!sharedCtx) return null;
+  
+  scheduleCanvasRelease();
   return { canvas: sharedCanvas, ctx: sharedCtx };
 }
 
@@ -287,6 +307,11 @@ export function generateColorVars(color: RGB): string {
 
 export function clearColorCache(): void {
   colorCache.clear();
+  if (canvasIdleTimer) {
+    clearTimeout(canvasIdleTimer);
+    canvasIdleTimer = null;
+  }
+  releaseCanvas();
 }
 
 export function removeFromColorCache(url: string): void {

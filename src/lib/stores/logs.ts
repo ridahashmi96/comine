@@ -30,6 +30,7 @@ interface LogsState {
 
 const LIVE_BUFFER_SIZE = 100;
 const ANDROID_BUFFER_SIZE = 500;
+const MAX_DISK_ENTRIES = 500;
 
 const initialState: LogsState = {
   liveBuffer: [],
@@ -181,6 +182,7 @@ function createLogsStore() {
         });
 
         const diskEntries = lines
+          .slice(-MAX_DISK_ENTRIES)
           .map((line, index) => parseLogLine(line, index))
           .filter((entry): entry is LogEntry => entry !== null)
           .reverse();

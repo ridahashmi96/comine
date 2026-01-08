@@ -6,9 +6,9 @@ use lru::LruCache;
 use std::num::NonZeroUsize;
 use std::sync::{LazyLock, Mutex};
 
-const VIDEO_INFO_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(10).unwrap();
-const PLAYLIST_INFO_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(5).unwrap();
-const VIDEO_FORMATS_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(10).unwrap();
+const VIDEO_INFO_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(5).unwrap();
+const PLAYLIST_INFO_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(3).unwrap();
+const VIDEO_FORMATS_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(5).unwrap();
 
 pub static VIDEO_INFO_CACHE: LazyLock<Mutex<LruCache<String, VideoInfo>>> =
     LazyLock::new(|| Mutex::new(LruCache::new(VIDEO_INFO_CACHE_SIZE)));

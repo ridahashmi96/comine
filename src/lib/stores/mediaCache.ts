@@ -3,8 +3,8 @@ import { load, type Store } from '@tauri-apps/plugin-store';
 
 const PERSISTENCE_CONFIG = {
   storeFile: 'media-cache.json',
-  flushDebounceMs: 2000,
-  maxDiskBytes: 10 * 1024 * 1024,
+  flushDebounceMs: 3000,
+  maxDiskBytes: 2 * 1024 * 1024,
 };
 
 let sharedStore: Store | null = null;
@@ -135,16 +135,16 @@ export interface CacheEntry {
 }
 
 const CONFIG = {
-  maxMetadataEntries: 50,
-  maxHeavyDataEntries: 5,
-  maxFormats: 15,
+  maxMetadataEntries: 30,
+  maxHeavyDataEntries: 3,
+  maxFormats: 10,
   ttl: {
-    preview: 60 * 60 * 1000,
-    videoInfo: 30 * 60 * 1000,
-    formats: 15 * 60 * 1000,
-    playlistInfo: 30 * 60 * 1000,
-    channelInfo: 30 * 60 * 1000,
-    uiState: 60 * 60 * 1000,
+    preview: 30 * 60 * 1000,
+    videoInfo: 20 * 60 * 1000,
+    formats: 10 * 60 * 1000,
+    playlistInfo: 15 * 60 * 1000,
+    channelInfo: 15 * 60 * 1000,
+    uiState: 30 * 60 * 1000,
   },
   debug: false,
 };
@@ -352,7 +352,7 @@ class UnifiedMediaCache {
     
     this.cleanupTimer = setInterval(() => {
       this.clearStale();
-    }, 5 * 60 * 1000);
+    }, 2 * 60 * 1000);
   }
 
   private scheduleDiskFlush(): void {

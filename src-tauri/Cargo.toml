@@ -20,7 +20,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset", "tray-icon", "image-ico", "image-png", "macos-private-api"] }
+tauri = { version = "2", features = ["macos-private-api", "protocol-asset", "tray-icon", "image-ico", "image-png"] }
 tauri-utils = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-store = "2"
@@ -44,10 +44,9 @@ log = "0.4.29"
 lazy_static = "1.5"
 chrono = "0.4"
 url = "2"
-image = "0.25"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 lru = "0.12"
 async-trait = "0.1"
-regex = "1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -55,4 +54,14 @@ libc = "0.2"
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 flate2 = "1.1"
 tar = "0.4"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = "z"
+strip = true
+panic = "abort"
+
+[profile.dev]
+opt-level = 1
 

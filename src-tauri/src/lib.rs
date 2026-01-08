@@ -35,8 +35,11 @@ static ACTIVE_DOWNLOADS: std::sync::LazyLock<Mutex<HashMap<String, u32>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[cfg(not(target_os = "android"))]
-static THUMBNAIL_COLOR_CACHE: std::sync::LazyLock<Mutex<HashMap<String, [u8; 3]>>> =
-    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+const THUMBNAIL_COLOR_CACHE_SIZE: std::num::NonZeroUsize = unsafe { std::num::NonZeroUsize::new_unchecked(50) };
+
+#[cfg(not(target_os = "android"))]
+static THUMBNAIL_COLOR_CACHE: std::sync::LazyLock<Mutex<lru::LruCache<String, [u8; 3]>>> =
+    std::sync::LazyLock::new(|| Mutex::new(lru::LruCache::new(THUMBNAIL_COLOR_CACHE_SIZE)));
 
 #[cfg(target_os = "android")]
 use log::info;
@@ -1254,6 +1257,25 @@ async fn extract_video_thumbnail(app: AppHandle, file_path: String) -> Result<St
     }
 }
 
+/// Extract YouTube video ID from thumbnail URL (e.g., i.ytimg.com/vi/VIDEO_ID/...)
+#[cfg(not(target_os = "android"))]
+fn extract_yt_video_id(url: &str) -> Option<&str> {
+    // Match patterns like: i.ytimg.com/vi/VIDEO_ID/ or i.ytimg.com/vi_webp/VIDEO_ID/
+    let markers = ["i.ytimg.com/vi/", "i.ytimg.com/vi_webp/"];
+    for marker in markers {
+        if let Some(start) = url.find(marker) {
+            let after_marker = &url[start + marker.len()..];
+            if let Some(end) = after_marker.find('/') {
+                let video_id = &after_marker[..end];
+                if !video_id.is_empty() {
+                    return Some(video_id);
+                }
+            }
+        }
+    }
+    None
+}
+
 #[tauri::command]
 #[allow(unused_variables)]
 async fn extract_thumbnail_color(url: String) -> Result<[u8; 3], String> {
@@ -1265,27 +1287,14 @@ async fn extract_thumbnail_color(url: String) -> Result<[u8; 3], String> {
     #[cfg(not(target_os = "android"))]
     {
         use image::GenericImageView;
-        use regex::Regex;
 
-        let cache_key = {
-            let yt_regex = Regex::new(r"i\.ytimg\.com/vi(?:_webp)?/([^/]+)/").ok();
-            if let Some(re) = yt_regex {
-                if let Some(caps) = re.captures(&url) {
-                    if let Some(video_id) = caps.get(1) {
-                        format!("yt:{}", video_id.as_str())
-                    } else {
-                        url.clone()
-                    }
-                } else {
-                    url.clone()
-                }
-            } else {
-                url.clone()
-            }
-        };
+        // Extract YouTube video ID from thumbnail URL without regex
+        let cache_key = extract_yt_video_id(&url)
+            .map(|id| format!("yt:{}", id))
+            .unwrap_or_else(|| url.clone());
 
         {
-            let cache = lock_or_recover(&THUMBNAIL_COLOR_CACHE);
+            let mut cache = lock_or_recover(&THUMBNAIL_COLOR_CACHE);
             if let Some(&color) = cache.get(&cache_key) {
                 debug!("Thumbnail color cache hit for: {}", cache_key);
                 return Ok(color);
@@ -1397,13 +1406,7 @@ async fn extract_thumbnail_color(url: String) -> Result<[u8; 3], String> {
 
         {
             let mut cache = lock_or_recover(&THUMBNAIL_COLOR_CACHE);
-            if cache.len() >= 500 {
-                let keys_to_remove: Vec<_> = cache.keys().take(250).cloned().collect();
-                for key in keys_to_remove {
-                    cache.remove(&key);
-                }
-            }
-            cache.insert(cache_key, best_color);
+            cache.put(cache_key, best_color);
         }
 
         Ok(best_color)
@@ -1420,26 +1423,12 @@ async fn get_cached_thumbnail_color(url: String) -> Result<Option<[u8; 3]>, Stri
 
     #[cfg(not(target_os = "android"))]
     {
-        use regex::Regex;
+        // Extract YouTube video ID from thumbnail URL without regex
+        let cache_key = extract_yt_video_id(&url)
+            .map(|id| format!("yt:{}", id))
+            .unwrap_or_else(|| url.clone());
 
-        let cache_key = {
-            let yt_regex = Regex::new(r"i\.ytimg\.com/vi(?:_webp)?/([^/]+)/").ok();
-            if let Some(re) = yt_regex {
-                if let Some(caps) = re.captures(&url) {
-                    if let Some(video_id) = caps.get(1) {
-                        format!("yt:{}", video_id.as_str())
-                    } else {
-                        url.clone()
-                    }
-                } else {
-                    url.clone()
-                }
-            } else {
-                url.clone()
-            }
-        };
-
-        let cache = lock_or_recover(&THUMBNAIL_COLOR_CACHE);
+        let mut cache = lock_or_recover(&THUMBNAIL_COLOR_CACHE);
         Ok(cache.get(&cache_key).copied())
     }
 }
@@ -2286,6 +2275,10 @@ async fn clear_memory_caches() -> Result<(), String> {
     {
         let mut vf = lock_or_recover(&cache::VIDEO_FORMATS_CACHE);
         vf.clear();
+    }
+    {
+        let mut tc = lock_or_recover(&THUMBNAIL_COLOR_CACHE);
+        tc.clear();
     }
     info!("Cleared all in-memory caches");
     Ok(())

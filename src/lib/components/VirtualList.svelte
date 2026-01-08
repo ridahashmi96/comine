@@ -30,6 +30,7 @@
 
   // Use a stable height cache keyed by item identity, not index
   const heightCache = new Map<string | number, number>();
+  const MAX_HEIGHT_CACHE_SIZE = 200;
   let lastItemCount = 0;
 
   function getItemKey(item: T, index: number): string | number {
@@ -181,8 +182,7 @@
     const currentCount = items.length;
     if (currentCount === 0) {
       heightCache.clear();
-    } else if (Math.abs(currentCount - lastItemCount) > 100) {
-      // Prune old entries if item count changed dramatically
+    } else if (heightCache.size > MAX_HEIGHT_CACHE_SIZE || Math.abs(currentCount - lastItemCount) > 50) {
       const currentKeys = new Set<string | number>();
       for (let i = 0; i < items.length; i++) {
         currentKeys.add(getItemKey(items[i], i));
