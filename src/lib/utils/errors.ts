@@ -20,35 +20,17 @@ export interface ErrorHandlerOptions {
   logContext?: string;
 }
 
-export function handleError(
-  error: unknown,
-  options: ErrorHandlerOptions = {}
-): AppError {
-  const {
-    showToast = true,
-    logError = true,
-    toastMessage,
-    logContext = 'app',
-  } = options;
+export function handleError(error: unknown, options: ErrorHandlerOptions = {}): AppError {
+  const { showToast = true, logError = true, toastMessage, logContext = 'app' } = options;
 
   let appError: AppError;
 
   if (error instanceof AppError) {
     appError = error;
   } else if (error instanceof Error) {
-    appError = new AppError(
-      error.message,
-      'UNKNOWN_ERROR',
-      undefined,
-      error
-    );
+    appError = new AppError(error.message, 'UNKNOWN_ERROR', undefined, error);
   } else {
-    appError = new AppError(
-      String(error),
-      'UNKNOWN_ERROR',
-      undefined,
-      error
-    );
+    appError = new AppError(String(error), 'UNKNOWN_ERROR', undefined, error);
   }
 
   if (logError) {
@@ -86,10 +68,7 @@ export function wrapAsync<T>(
   });
 }
 
-export function safeJsonParse<T>(
-  json: string,
-  fallback: T
-): T {
+export function safeJsonParse<T>(json: string, fallback: T): T {
   try {
     return JSON.parse(json) as T;
   } catch (error) {

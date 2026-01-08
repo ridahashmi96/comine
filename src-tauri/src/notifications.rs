@@ -254,7 +254,9 @@ pub async fn show_notification_window(
         let file_info_encoded = data
             .file_info
             .as_ref()
-            .map(|fi| urlencoding::encode(&serde_json::to_string(fi).unwrap_or_default()).to_string())
+            .map(|fi| {
+                urlencoding::encode(&serde_json::to_string(fi).unwrap_or_default()).to_string()
+            })
             .unwrap_or_default();
 
         let notification_url = format!(
@@ -267,25 +269,29 @@ pub async fn show_notification_window(
             x, y, slot, position
         );
 
-        WebviewWindowBuilder::new(&app, &window_label, WebviewUrl::App(notification_url.into()))
-            .title("Comine: Notification")
-            .inner_size(width as f64, height as f64)
-            .min_inner_size(width as f64, height as f64)
-            .max_inner_size(width as f64, height as f64)
-            .position(x as f64, y as f64)
-            .decorations(false)
-            .transparent(true)
-            .resizable(false)
-            .maximizable(false)
-            .minimizable(false)
-            .closable(false)
-            .skip_taskbar(true)
-            .always_on_top(true)
-            .focused(false)
-            .visible(false)
-            .shadow(false)
-            .build()
-            .map_err(|e| format!("Failed to create notification window: {}", e))?;
+        WebviewWindowBuilder::new(
+            &app,
+            &window_label,
+            WebviewUrl::App(notification_url.into()),
+        )
+        .title("Comine: Notification")
+        .inner_size(width as f64, height as f64)
+        .min_inner_size(width as f64, height as f64)
+        .max_inner_size(width as f64, height as f64)
+        .position(x as f64, y as f64)
+        .decorations(false)
+        .transparent(true)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        .closable(false)
+        .skip_taskbar(true)
+        .always_on_top(true)
+        .focused(false)
+        .visible(false)
+        .shadow(false)
+        .build()
+        .map_err(|e| format!("Failed to create notification window: {}", e))?;
 
         info!("Notification window created: {}", window_label);
         Ok(())

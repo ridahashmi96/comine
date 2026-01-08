@@ -19,7 +19,7 @@
     containerClass = '',
     onscroll,
     getKey,
-    children
+    children,
   }: Props = $props();
 
   let container: HTMLElement | null = $state(null);
@@ -107,7 +107,7 @@
     return items.slice(start, end).map((item, i) => ({
       item,
       index: start + i,
-      key: getItemKey(item, start + i)
+      key: getItemKey(item, start + i),
     }));
   });
 
@@ -139,10 +139,10 @@
     itemElements.forEach((el) => {
       const key = el.getAttribute('data-virtual-key');
       if (key === null) return;
-      
+
       const rect = el.getBoundingClientRect();
       const height = rect.height;
-      
+
       if (height > 0) {
         const existingHeight = heightCache.get(key);
         // Only update if height changed significantly (more than 1px)
@@ -182,7 +182,10 @@
     const currentCount = items.length;
     if (currentCount === 0) {
       heightCache.clear();
-    } else if (heightCache.size > MAX_HEIGHT_CACHE_SIZE || Math.abs(currentCount - lastItemCount) > 50) {
+    } else if (
+      heightCache.size > MAX_HEIGHT_CACHE_SIZE ||
+      Math.abs(currentCount - lastItemCount) > 50
+    ) {
       const currentKeys = new Set<string | number>();
       for (let i = 0; i < items.length; i++) {
         currentKeys.add(getItemKey(items[i], i));
@@ -246,9 +249,9 @@
 </script>
 
 <div class="virtual-list {containerClass}" bind:this={container} onscroll={handleScroll}>
-  <div 
-    class="virtual-list-inner" 
-    style="height: {totalHeight}px; padding-top: {topPadding}px;" 
+  <div
+    class="virtual-list-inner"
+    style="height: {totalHeight}px; padding-top: {topPadding}px;"
     bind:this={innerContainer}
   >
     {#each visibleItems as { item, index, key } (key)}

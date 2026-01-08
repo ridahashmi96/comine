@@ -29,7 +29,9 @@
   const isChannel = params.get('is_channel') === '1';
   const isFile = params.get('is_file') === '1';
   const fileInfoRaw = params.get('file_info');
-  const fileInfo = fileInfoRaw ? JSON.parse(fileInfoRaw) as { filename: string; size: number; mimeType: string } : null;
+  const fileInfo = fileInfoRaw
+    ? (JSON.parse(fileInfoRaw) as { filename: string; size: number; mimeType: string })
+    : null;
   const viewPlaylistLabel = 'View Playlist';
   const viewChannelLabel = 'View Channel';
 
@@ -72,16 +74,16 @@
     const hue2rgb = (p: number, q: number, t: number) => {
       if (t < 0) t += 1;
       if (t > 1) t -= 1;
-      if (t < 1/6) return p + (q - p) * 6 * t;
-      if (t < 1/2) return q;
-      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+      if (t < 1 / 6) return p + (q - p) * 6 * t;
+      if (t < 1 / 2) return q;
+      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
       return p;
     };
     const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
     const p = 2 * l - q;
-    const r = Math.round(hue2rgb(p, q, h + 1/3) * 255);
+    const r = Math.round(hue2rgb(p, q, h + 1 / 3) * 255);
     const g = Math.round(hue2rgb(p, q, h) * 255);
-    const b = Math.round(hue2rgb(p, q, h - 1/3) * 255);
+    const b = Math.round(hue2rgb(p, q, h - 1 / 3) * 255);
     return `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
   }
 
@@ -203,35 +205,43 @@
   }
 
   async function setupProgressListeners() {
-    unlistenProgress = await listen<{ url: string; message: string }>('download-progress', (event) => {
-      const { url, message } = event.payload;
-      if (url !== mediaUrl) return;
+    unlistenProgress = await listen<{ url: string; message: string }>(
+      'download-progress',
+      (event) => {
+        const { url, message } = event.payload;
+        if (url !== mediaUrl) return;
 
-      // Parse progress from message
-      if (message.includes('[Merger]') || message.includes('Merging')) {
-        downloadState = 'processing';
-      } else if (message.includes('[ffmpeg]') || message.includes('[ExtractAudio]')) {
-        downloadState = 'processing';
-      } else if (message.includes('%')) {
-        downloadState = 'downloading';
-        const match = message.match(/^\s*(\d+\.?\d*)%\s+(\S*)\s*(.*)/);
-        if (match) {
-          downloadProgress = parseFloat(match[1]);
-          downloadSpeed = match[2] || '';
-          downloadEta = match[3] || '';
-        } else {
-          // Try aria2 format
-          const aria2Match = message.match(/\[#\w+[^\]]*\](\d+\.?\d*)%\s+(\S+)\s*(.*)/);
-          if (aria2Match) {
-            downloadProgress = parseFloat(aria2Match[1]);
-            downloadSpeed = aria2Match[2] ? (aria2Match[2].replace(/^DL:/, '') + '/s') : '';
-            downloadEta = aria2Match[3] || '';
+        // Parse progress from message
+        if (message.includes('[Merger]') || message.includes('Merging')) {
+          downloadState = 'processing';
+        } else if (message.includes('[ffmpeg]') || message.includes('[ExtractAudio]')) {
+          downloadState = 'processing';
+        } else if (message.includes('%')) {
+          downloadState = 'downloading';
+          const match = message.match(/^\s*(\d+\.?\d*)%\s+(\S*)\s*(.*)/);
+          if (match) {
+            downloadProgress = parseFloat(match[1]);
+            downloadSpeed = match[2] || '';
+            downloadEta = match[3] || '';
+          } else {
+            // Try aria2 format
+            const aria2Match = message.match(/\[#\w+[^\]]*\](\d+\.?\d*)%\s+(\S+)\s*(.*)/);
+            if (aria2Match) {
+              downloadProgress = parseFloat(aria2Match[1]);
+              downloadSpeed = aria2Match[2] ? aria2Match[2].replace(/^DL:/, '') + '/s' : '';
+              downloadEta = aria2Match[3] || '';
+            }
           }
         }
       }
-    });
+    );
 
-    unlistenStatus = await listen<{ url: string; status: string; filePath?: string; error?: string }>('download-status-changed', (event) => {
+    unlistenStatus = await listen<{
+      url: string;
+      status: string;
+      filePath?: string;
+      error?: string;
+    }>('download-status-changed', (event) => {
       const { url, status, filePath, error } = event.payload;
       if (url !== mediaUrl) return;
 
@@ -289,7 +299,7 @@
   function scheduleAutoClose() {
     // Don't auto-close if download is in progress
     if (downloadState !== 'idle') return;
-    
+
     if (autoCloseTimer) clearTimeout(autoCloseTimer);
     autoCloseTimer = setTimeout(() => {
       if (downloadState !== 'idle') return; // Double check
@@ -311,7 +321,7 @@
         const store = await load('settings.json', { autoSave: false, defaults: {} });
 
         const storedAccent = (await store.get<string>('accentColor')) ?? '#6366F1';
-        
+
         if (storedAccent === 'rgb') {
           isRgbMode = true;
           accentColor = hslToHex(rgbHue / 360, 0.75, 0.5);
@@ -452,8 +462,21 @@
         <div class="progress-compact" in:fade={{ duration: 200 }}>
           <div class="progress-ring" style="--progress: {downloadProgress}">
             <svg viewBox="0 0 36 36" width="28" height="28">
-              <circle cx="18" cy="18" r="15" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="3"/>
-              <circle cx="18" cy="18" r="15" fill="none" stroke="var(--accent, #6366f1)" stroke-width="3"
+              <circle
+                cx="18"
+                cy="18"
+                r="15"
+                fill="none"
+                stroke="rgba(255,255,255,0.1)"
+                stroke-width="3"
+              />
+              <circle
+                cx="18"
+                cy="18"
+                r="15"
+                fill="none"
+                stroke="var(--accent, #6366f1)"
+                stroke-width="3"
                 stroke-dasharray="{downloadProgress * 0.942} 100"
                 stroke-linecap="round"
                 transform="rotate(-90 18 18)"
@@ -477,211 +500,216 @@
         <!-- Compact Failed View -->
         <div class="icon-btn error" title="Failed" in:fade={{ duration: 200 }}>
           <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
-            <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path
+              d="M18 6L6 18M6 6L18 18"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            />
           </svg>
         </div>
       {:else}
         <div class="compact-default" out:fade={{ duration: 150 }}>
-        {#if isChannel}
-        <!-- Channel: Single View Channel button -->
-        <button
-          class="icon-btn download channel"
-          class:downloading={isDownloading}
-          onclick={() => handleDownload('auto')}
-          title={viewChannelLabel}
-          disabled={isDownloading}
-        >
-          {#if isDownloading}
-            <svg class="spinner" viewBox="0 0 24 24" width="18" height="18">
-              <circle
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="2"
-                fill="none"
-                stroke-dasharray="31.4 31.4"
-                stroke-linecap="round"
-              />
-            </svg>
+          {#if isChannel}
+            <!-- Channel: Single View Channel button -->
+            <button
+              class="icon-btn download channel"
+              class:downloading={isDownloading}
+              onclick={() => handleDownload('auto')}
+              title={viewChannelLabel}
+              disabled={isDownloading}
+            >
+              {#if isDownloading}
+                <svg class="spinner" viewBox="0 0 24 24" width="18" height="18">
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    fill="none"
+                    stroke-dasharray="31.4 31.4"
+                    stroke-linecap="round"
+                  />
+                </svg>
+              {:else}
+                <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
+                  <circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2" />
+                  <path
+                    d="M4 20C4 16.6863 7.13401 14 11 14H13C16.866 14 20 16.6863 20 20"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                  />
+                </svg>
+              {/if}
+            </button>
+          {:else if isPlaylist}
+            <!-- Playlist: Single View Playlist button -->
+            <button
+              class="icon-btn download playlist"
+              class:downloading={isDownloading}
+              onclick={() => handleDownload('auto')}
+              title={viewPlaylistLabel}
+              disabled={isDownloading}
+            >
+              {#if isDownloading}
+                <svg class="spinner" viewBox="0 0 24 24" width="18" height="18">
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    fill="none"
+                    stroke-dasharray="31.4 31.4"
+                    stroke-linecap="round"
+                  />
+                </svg>
+              {:else}
+                <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
+                  <path
+                    d="M4 6H20M4 10H20M4 14H14M4 18H14"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                  />
+                  <circle cx="18" cy="16" r="3" stroke="currentColor" stroke-width="2" />
+                </svg>
+              {/if}
+            </button>
+          {:else if isFile}
+            <!-- File: Single download button (no options) -->
+            <button
+              class="icon-btn download"
+              class:downloading={isDownloading}
+              onclick={() => handleDownload('auto')}
+              title={downloadLabel}
+              disabled={isDownloading}
+            >
+              {#if isDownloading}
+                <svg class="spinner" viewBox="0 0 24 24" width="18" height="18">
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    fill="none"
+                    stroke-dasharray="31.4 31.4"
+                    stroke-linecap="round"
+                  />
+                </svg>
+              {:else}
+                <svg class="download-icon" viewBox="0 0 24 24" fill="none" width="18" height="18">
+                  <path
+                    d="M12 3V16M12 16L16 11.625M12 16L8 11.625"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                  <path
+                    d="M3 15C3 17.828 3 19.243 3.879 20.121C4.757 21 6.172 21 9 21H15C17.828 21 19.243 21 20.121 20.121C21 19.243 21 17.828 21 15"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              {/if}
+            </button>
+          {:else if isVideoUrl}
+            <!-- YouTube/Bilibili/etc: Show Download and Track Builder buttons -->
+            <button
+              class="icon-btn download youtube"
+              class:downloading={isDownloading}
+              onclick={() => handleDownload('auto')}
+              title="Download"
+              disabled={isDownloading}
+            >
+              {#if isDownloading}
+                <svg class="spinner" viewBox="0 0 24 24" width="16" height="16">
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    fill="none"
+                    stroke-dasharray="31.4 31.4"
+                    stroke-linecap="round"
+                  />
+                </svg>
+              {:else}
+                <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
+                  <path
+                    d="M12 3V16M12 16L16 11.625M12 16L8 11.625"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                  <path
+                    d="M3 15C3 17.828 3 19.243 3.879 20.121C4.757 21 6.172 21 9 21H15C17.828 21 19.243 21 20.121 20.121C21 19.243 21 17.828 21 15"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              {/if}
+            </button>
+            <button
+              class="icon-btn track-builder"
+              onclick={handleOpenTrackBuilder}
+              title="Quality"
+              disabled={isDownloading}
+            >
+              <Icon name="extensions" size={16} />
+            </button>
           {:else}
-            <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
-              <circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2" />
-              <path
-                d="M4 20C4 16.6863 7.13401 14 11 14H13C16.866 14 20 16.6863 20 20"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-              />
-            </svg>
+            <!-- Normal: Single download button -->
+            <button
+              class="icon-btn download"
+              class:downloading={isDownloading}
+              onclick={() => handleDownload('auto')}
+              title={downloadLabel}
+              disabled={isDownloading}
+            >
+              {#if isDownloading}
+                <svg class="spinner" viewBox="0 0 24 24" width="18" height="18">
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    fill="none"
+                    stroke-dasharray="31.4 31.4"
+                    stroke-linecap="round"
+                  />
+                </svg>
+              {:else}
+                <svg class="download-icon" viewBox="0 0 24 24" fill="none" width="18" height="18">
+                  <path
+                    d="M12 3V16M12 16L16 11.625M12 16L8 11.625"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                  <path
+                    d="M3 15C3 17.828 3 19.243 3.879 20.121C4.757 21 6.172 21 9 21H15C17.828 21 19.243 21 20.121 20.121C21 19.243 21 17.828 21 15"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              {/if}
+            </button>
           {/if}
-        </button>
-      {:else if isPlaylist}
-        <!-- Playlist: Single View Playlist button -->
-        <button
-          class="icon-btn download playlist"
-          class:downloading={isDownloading}
-          onclick={() => handleDownload('auto')}
-          title={viewPlaylistLabel}
-          disabled={isDownloading}
-        >
-          {#if isDownloading}
-            <svg class="spinner" viewBox="0 0 24 24" width="18" height="18">
-              <circle
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="2"
-                fill="none"
-                stroke-dasharray="31.4 31.4"
-                stroke-linecap="round"
-              />
-            </svg>
-          {:else}
-            <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
-              <path
-                d="M4 6H20M4 10H20M4 14H14M4 18H14"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-              />
-              <circle cx="18" cy="16" r="3" stroke="currentColor" stroke-width="2" />
-            </svg>
-          {/if}
-        </button>
-      {:else if isFile}
-        <!-- File: Single download button (no options) -->
-        <button
-          class="icon-btn download"
-          class:downloading={isDownloading}
-          onclick={() => handleDownload('auto')}
-          title={downloadLabel}
-          disabled={isDownloading}
-        >
-          {#if isDownloading}
-            <svg class="spinner" viewBox="0 0 24 24" width="18" height="18">
-              <circle
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="2"
-                fill="none"
-                stroke-dasharray="31.4 31.4"
-                stroke-linecap="round"
-              />
-            </svg>
-          {:else}
-            <svg class="download-icon" viewBox="0 0 24 24" fill="none" width="18" height="18">
-              <path
-                d="M12 3V16M12 16L16 11.625M12 16L8 11.625"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-              <path
-                d="M3 15C3 17.828 3 19.243 3.879 20.121C4.757 21 6.172 21 9 21H15C17.828 21 19.243 21 20.121 20.121C21 19.243 21 17.828 21 15"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
-          {/if}
-        </button>
-      {:else if isVideoUrl}
-        <!-- YouTube/Bilibili/etc: Show Download and Track Builder buttons -->
-        <button
-          class="icon-btn download youtube"
-          class:downloading={isDownloading}
-          onclick={() => handleDownload('auto')}
-          title="Download"
-          disabled={isDownloading}
-        >
-          {#if isDownloading}
-            <svg class="spinner" viewBox="0 0 24 24" width="16" height="16">
-              <circle
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="2"
-                fill="none"
-                stroke-dasharray="31.4 31.4"
-                stroke-linecap="round"
-              />
-            </svg>
-          {:else}
-            <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
-              <path
-                d="M12 3V16M12 16L16 11.625M12 16L8 11.625"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-              <path
-                d="M3 15C3 17.828 3 19.243 3.879 20.121C4.757 21 6.172 21 9 21H15C17.828 21 19.243 21 20.121 20.121C21 19.243 21 17.828 21 15"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
-          {/if}
-        </button>
-        <button
-          class="icon-btn track-builder"
-          onclick={handleOpenTrackBuilder}
-          title="Quality"
-          disabled={isDownloading}
-        >
-          <Icon name="extensions" size={16} />
-        </button>
-      {:else}
-        <!-- Normal: Single download button -->
-        <button
-          class="icon-btn download"
-          class:downloading={isDownloading}
-          onclick={() => handleDownload('auto')}
-          title={downloadLabel}
-          disabled={isDownloading}
-        >
-          {#if isDownloading}
-            <svg class="spinner" viewBox="0 0 24 24" width="18" height="18">
-              <circle
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="2"
-                fill="none"
-                stroke-dasharray="31.4 31.4"
-                stroke-linecap="round"
-              />
-            </svg>
-          {:else}
-            <svg class="download-icon" viewBox="0 0 24 24" fill="none" width="18" height="18">
-              <path
-                d="M12 3V16M12 16L16 11.625M12 16L8 11.625"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-              <path
-                d="M3 15C3 17.828 3 19.243 3.879 20.121C4.757 21 6.172 21 9 21H15C17.828 21 19.243 21 20.121 20.121C21 19.243 21 17.828 21 15"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
-          {/if}
-        </button>
-        {/if}
         </div>
       {/if}
     </div>
@@ -787,169 +815,173 @@
       {:else}
         <!-- Default buttons -->
         <div class="default-actions" out:fade={{ duration: 150 }}>
-        {#if isChannel}
-        <!-- Channel: Single View Channel button -->
-        <button
-          class="btn download channel"
-          class:downloading={isDownloading}
-          class:full-width={true}
-          onclick={() => handleDownload('auto')}
-          disabled={isDownloading}
-        >
-          {#if isDownloading}
-            <svg class="spinner" viewBox="0 0 24 24" width="14" height="14">
-              <circle
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="2"
-                fill="none"
-                stroke-dasharray="31.4 31.4"
-                stroke-linecap="round"
-              />
-            </svg>
-            Opening...
+          {#if isChannel}
+            <!-- Channel: Single View Channel button -->
+            <button
+              class="btn download channel"
+              class:downloading={isDownloading}
+              class:full-width={true}
+              onclick={() => handleDownload('auto')}
+              disabled={isDownloading}
+            >
+              {#if isDownloading}
+                <svg class="spinner" viewBox="0 0 24 24" width="14" height="14">
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    fill="none"
+                    stroke-dasharray="31.4 31.4"
+                    stroke-linecap="round"
+                  />
+                </svg>
+                Opening...
+              {:else}
+                <svg viewBox="0 0 24 24" fill="none" width="14" height="14">
+                  <circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2" />
+                  <path
+                    d="M4 20C4 16.6863 7.13401 14 11 14H13C16.866 14 20 16.6863 20 20"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                  />
+                </svg>
+                {viewChannelLabel}
+              {/if}
+            </button>
+          {:else if isPlaylist}
+            <!-- Playlist: Single View Playlist button -->
+            <button
+              class="btn download playlist"
+              class:downloading={isDownloading}
+              class:full-width={true}
+              onclick={() => handleDownload('auto')}
+              disabled={isDownloading}
+            >
+              {#if isDownloading}
+                <svg class="spinner" viewBox="0 0 24 24" width="14" height="14">
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    fill="none"
+                    stroke-dasharray="31.4 31.4"
+                    stroke-linecap="round"
+                  />
+                </svg>
+                Opening...
+              {:else}
+                <svg viewBox="0 0 24 24" fill="none" width="14" height="14">
+                  <path
+                    d="M4 6H20M4 10H20M4 14H14M4 18H14"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                  />
+                  <circle cx="18" cy="16" r="3" stroke="currentColor" stroke-width="2" />
+                </svg>
+                {viewPlaylistLabel}
+              {/if}
+            </button>
+          {:else if isFile}
+            <!-- File: Download button only (no options) -->
+            <button
+              class="btn download"
+              class:downloading={isDownloading}
+              class:full-width={cornerDismiss}
+              onclick={() => handleDownload('auto')}
+              disabled={isDownloading}
+            >
+              {#if isDownloading}
+                <svg class="spinner" viewBox="0 0 24 24" width="14" height="14">
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    fill="none"
+                    stroke-dasharray="31.4 31.4"
+                    stroke-linecap="round"
+                  />
+                </svg>
+                Starting...
+              {:else}
+                {downloadLabel}
+              {/if}
+            </button>
+            {#if !cornerDismiss}
+              <button class="btn dismiss" onclick={closeNotification}>{dismissLabel}</button>
+            {/if}
+          {:else if isVideoUrl}
+            <!-- YouTube/Bilibili/etc: Show Download and Track Builder buttons -->
+            <button
+              class="btn download"
+              class:downloading={isDownloading}
+              onclick={() => handleDownload('auto')}
+              disabled={isDownloading}
+            >
+              {#if isDownloading}
+                <svg class="spinner" viewBox="0 0 24 24" width="14" height="14">
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    fill="none"
+                    stroke-dasharray="31.4 31.4"
+                    stroke-linecap="round"
+                  />
+                </svg>
+                Starting...
+              {:else}
+                Download
+              {/if}
+            </button>
+            <button
+              class="btn track-builder"
+              onclick={handleOpenTrackBuilder}
+              disabled={isDownloading}
+            >
+              <Icon name="extensions" size={14} />
+              Quality
+            </button>
           {:else}
-            <svg viewBox="0 0 24 24" fill="none" width="14" height="14">
-              <circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2" />
-              <path
-                d="M4 20C4 16.6863 7.13401 14 11 14H13C16.866 14 20 16.6863 20 20"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-              />
-            </svg>
-            {viewChannelLabel}
+            <!-- Normal: Download button and optional dismiss button -->
+            <button
+              class="btn download"
+              class:downloading={isDownloading}
+              class:full-width={cornerDismiss}
+              onclick={() => handleDownload('auto')}
+              disabled={isDownloading}
+            >
+              {#if isDownloading}
+                <svg class="spinner" viewBox="0 0 24 24" width="14" height="14">
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    fill="none"
+                    stroke-dasharray="31.4 31.4"
+                    stroke-linecap="round"
+                  />
+                </svg>
+                Starting...
+              {:else}
+                {downloadLabel}
+              {/if}
+            </button>
+            {#if !cornerDismiss}
+              <button class="btn dismiss" onclick={closeNotification}>{dismissLabel}</button>
+            {/if}
           {/if}
-        </button>
-      {:else if isPlaylist}
-        <!-- Playlist: Single View Playlist button -->
-        <button
-          class="btn download playlist"
-          class:downloading={isDownloading}
-          class:full-width={true}
-          onclick={() => handleDownload('auto')}
-          disabled={isDownloading}
-        >
-          {#if isDownloading}
-            <svg class="spinner" viewBox="0 0 24 24" width="14" height="14">
-              <circle
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="2"
-                fill="none"
-                stroke-dasharray="31.4 31.4"
-                stroke-linecap="round"
-              />
-            </svg>
-            Opening...
-          {:else}
-            <svg viewBox="0 0 24 24" fill="none" width="14" height="14">
-              <path
-                d="M4 6H20M4 10H20M4 14H14M4 18H14"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-              />
-              <circle cx="18" cy="16" r="3" stroke="currentColor" stroke-width="2" />
-            </svg>
-            {viewPlaylistLabel}
-          {/if}
-        </button>
-      {:else if isFile}
-        <!-- File: Download button only (no options) -->
-        <button
-          class="btn download"
-          class:downloading={isDownloading}
-          class:full-width={cornerDismiss}
-          onclick={() => handleDownload('auto')}
-          disabled={isDownloading}
-        >
-          {#if isDownloading}
-            <svg class="spinner" viewBox="0 0 24 24" width="14" height="14">
-              <circle
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="2"
-                fill="none"
-                stroke-dasharray="31.4 31.4"
-                stroke-linecap="round"
-              />
-            </svg>
-            Starting...
-          {:else}
-            {downloadLabel}
-          {/if}
-        </button>
-        {#if !cornerDismiss}
-          <button class="btn dismiss" onclick={closeNotification}>{dismissLabel}</button>
-        {/if}
-      {:else if isVideoUrl}
-        <!-- YouTube/Bilibili/etc: Show Download and Track Builder buttons -->
-        <button
-          class="btn download"
-          class:downloading={isDownloading}
-          onclick={() => handleDownload('auto')}
-          disabled={isDownloading}
-        >
-          {#if isDownloading}
-            <svg class="spinner" viewBox="0 0 24 24" width="14" height="14">
-              <circle
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="2"
-                fill="none"
-                stroke-dasharray="31.4 31.4"
-                stroke-linecap="round"
-              />
-            </svg>
-            Starting...
-          {:else}
-            Download
-          {/if}
-        </button>
-        <button class="btn track-builder" onclick={handleOpenTrackBuilder} disabled={isDownloading}>
-          <Icon name="extensions" size={14} />
-          Quality
-        </button>
-      {:else}
-        <!-- Normal: Download button and optional dismiss button -->
-        <button
-          class="btn download"
-          class:downloading={isDownloading}
-          class:full-width={cornerDismiss}
-          onclick={() => handleDownload('auto')}
-          disabled={isDownloading}
-        >
-          {#if isDownloading}
-            <svg class="spinner" viewBox="0 0 24 24" width="14" height="14">
-              <circle
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="2"
-                fill="none"
-                stroke-dasharray="31.4 31.4"
-                stroke-linecap="round"
-              />
-            </svg>
-            Starting...
-          {:else}
-            {downloadLabel}
-          {/if}
-        </button>
-        {#if !cornerDismiss}
-          <button class="btn dismiss" onclick={closeNotification}>{dismissLabel}</button>
-        {/if}
-        {/if}
         </div>
       {/if}
     </div>
@@ -1059,7 +1091,8 @@
   }
 
   @keyframes gradient-breathe {
-    0%, 100% {
+    0%,
+    100% {
       opacity: 1;
     }
     50% {
@@ -1178,10 +1211,12 @@
   }
 
   @keyframes marquee {
-    0%, 5% {
+    0%,
+    5% {
       transform: translateX(0);
     }
-    95%, 100% {
+    95%,
+    100% {
       transform: translateX(calc(-50% - 1.5em));
     }
   }
@@ -1249,7 +1284,9 @@
   .btn.download {
     background: var(--accent, #6366f1);
     color: white;
-    transition: all 0.15s ease, background-color 0.4s ease;
+    transition:
+      all 0.15s ease,
+      background-color 0.4s ease;
   }
   .themed .btn.download {
     background: var(--thumb-color, var(--accent, #6366f1));
@@ -1342,8 +1379,12 @@
     animation: shimmer 1.5s infinite;
   }
   @keyframes shimmer {
-    0% { transform: translateX(-100%); }
-    100% { transform: translateX(100%); }
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(100%);
+    }
   }
   .themed .progress-bar {
     background: var(--thumb-color, var(--accent, #6366f1));
@@ -1420,7 +1461,7 @@
     align-items: center;
     gap: 10px;
     padding: 8px 10px;
-    padding-top: 6px; 
+    padding-top: 6px;
     position: relative;
   }
 
@@ -1504,7 +1545,9 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.15s ease, background-color 0.4s ease;
+    transition:
+      all 0.15s ease,
+      background-color 0.4s ease;
   }
   .icon-btn.download {
     background: var(--accent, #6366f1);

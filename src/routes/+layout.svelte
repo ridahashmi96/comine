@@ -60,9 +60,9 @@
 
   // Derived state for download speed display
   let totalDownloadSpeed = $derived.by(() => {
-    const items = $queue.items.filter(i => i.status === 'downloading' && i.speed);
+    const items = $queue.items.filter((i) => i.status === 'downloading' && i.speed);
     if (items.length === 0) return '';
-    
+
     // Parse and sum all speeds (convert to bytes/s)
     let totalBytesPerSec = 0;
     for (const item of items) {
@@ -77,9 +77,9 @@
         totalBytesPerSec += value;
       }
     }
-    
+
     if (totalBytesPerSec === 0) return '';
-    
+
     // Format back to human readable
     if (totalBytesPerSec >= 1024 * 1024 * 1024) {
       return `${(totalBytesPerSec / (1024 * 1024 * 1024)).toFixed(1)} GB/s`;
@@ -115,8 +115,6 @@
   let unlistenWindowShown: UnlistenFn | null = null;
   let detachLogger: (() => void) | null = null;
   let cleanupShareIntent: (() => void) | null = null;
-
-
 
   interface VideoInfo {
     title: string;
@@ -226,7 +224,7 @@
   // Auto-install missing dependencies with live toast progress
   async function autoInstallDependencies() {
     // Wait a bit for deps.checkAll to complete
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise((r) => setTimeout(r, 1000));
 
     const state = $deps;
     const missing: Array<{ name: string; key: 'ytdlp' | 'ffmpeg' | 'aria2' | 'quickjs' }> = [];
@@ -250,63 +248,71 @@
     let installed = 0;
 
     // Install aria2 first (other deps may need it)
-    const aria2Idx = missing.findIndex(d => d.key === 'aria2');
+    const aria2Idx = missing.findIndex((d) => d.key === 'aria2');
     if (aria2Idx !== -1) {
       const aria2 = missing.splice(aria2Idx, 1)[0];
-      updateToast(depsToastId, { 
+      updateToast(depsToastId, {
         message: `${$t('deps.installing') || 'Installing'} ${aria2.name}...`,
-        subMessage: `${installed}/${missing.length + 1} ${$t('deps.components') || 'components'}`
+        subMessage: `${installed}/${missing.length + 1} ${$t('deps.components') || 'components'}`,
       });
       const success = await deps.installAria2();
       if (success) installed++;
-      updateToast(depsToastId, { 
+      updateToast(depsToastId, {
         progress: (installed / (missing.length + 1)) * 100,
-        subMessage: `${installed}/${missing.length + 1} ${$t('deps.components') || 'components'}`
+        subMessage: `${installed}/${missing.length + 1} ${$t('deps.components') || 'components'}`,
       });
     }
 
     // Install rest in parallel
-    const results = await Promise.all(missing.map(async (dep, i) => {
-      updateToast(depsToastId!, { 
-        message: `${$t('deps.installing') || 'Installing'} ${dep.name}...`,
-      });
-
-      let success = false;
-      switch (dep.key) {
-        case 'ytdlp': success = await deps.installYtdlp(); break;
-        case 'ffmpeg': success = await deps.installFfmpeg(); break;
-        case 'quickjs': success = await deps.installQuickjs(); break;
-      }
-
-      if (success) {
-        installed++;
-        updateToast(depsToastId!, { 
-          progress: (installed / (missing.length + (aria2Idx !== -1 ? 1 : 0))) * 100,
-          subMessage: `${installed}/${missing.length + (aria2Idx !== -1 ? 1 : 0)} ${$t('deps.components') || 'components'}`
+    const results = await Promise.all(
+      missing.map(async (dep, i) => {
+        updateToast(depsToastId!, {
+          message: `${$t('deps.installing') || 'Installing'} ${dep.name}...`,
         });
-      }
 
-      return success;
-    }));
+        let success = false;
+        switch (dep.key) {
+          case 'ytdlp':
+            success = await deps.installYtdlp();
+            break;
+          case 'ffmpeg':
+            success = await deps.installFfmpeg();
+            break;
+          case 'quickjs':
+            success = await deps.installQuickjs();
+            break;
+        }
+
+        if (success) {
+          installed++;
+          updateToast(depsToastId!, {
+            progress: (installed / (missing.length + (aria2Idx !== -1 ? 1 : 0))) * 100,
+            subMessage: `${installed}/${missing.length + (aria2Idx !== -1 ? 1 : 0)} ${$t('deps.components') || 'components'}`,
+          });
+        }
+
+        return success;
+      })
+    );
 
     // Finish up
     if (depsToastId) {
       const allSuccess = results.every(Boolean) && (aria2Idx === -1 || installed > 0);
       if (allSuccess) {
-        updateToast(depsToastId, { 
-          type: 'success', 
+        updateToast(depsToastId, {
+          type: 'success',
           message: $t('deps.ready') || 'Components ready!',
-          progress: 100 
+          progress: 100,
         });
         setTimeout(() => {
           if (depsToastId) dismissToast(depsToastId);
           depsToastId = null;
         }, 3000);
       } else {
-        updateToast(depsToastId, { 
-          type: 'warning', 
+        updateToast(depsToastId, {
+          type: 'warning',
           message: $t('deps.someError') || 'Some components failed to install',
-          subMessage: $t('deps.checkSettings') || 'Check Settings → Dependencies' 
+          subMessage: $t('deps.checkSettings') || 'Check Settings → Dependencies',
         });
         setTimeout(() => {
           if (depsToastId) dismissToast(depsToastId);
@@ -599,7 +605,10 @@
         const queueId = queue.add(url, {
           ignoreMixes: currentSettings.ignoreMixes ?? true,
           videoQuality: currentSettings.defaultVideoQuality ?? 'max',
-          downloadMode: notificationDownloadMode === 'auto' ? undefined : (notificationDownloadMode ?? undefined),
+          downloadMode:
+            notificationDownloadMode === 'auto'
+              ? undefined
+              : (notificationDownloadMode ?? undefined),
           audioQuality: currentSettings.defaultAudioQuality ?? 'best',
           convertToMp4: currentSettings.convertToMp4 ?? false,
           remux: currentSettings.remux ?? true,
@@ -990,11 +999,11 @@
           return;
         }
       }
-      
+
       const backend = detectBackendForUrl(url);
       const luxInstalled = backend === 'lux' && $deps.lux?.installed;
       const command = luxInstalled ? 'lux_get_video_info' : 'get_video_info';
-      
+
       const videoInfo: VideoInfo = await invoke(command, {
         url,
         proxyConfig: getProxyConfig(),
@@ -1132,7 +1141,11 @@
             <span class="titlebar-speed">{totalDownloadSpeed}</span>
           {:else}
             <svg class="titlebar-icon" viewBox="0 0 1024 1024" fill="currentColor">
-              <path fill-rule="evenodd" clip-rule="evenodd" d="M300.29 223.05L612.418 0L844 298.937L799.054 760.396L472.441 1024L158 592.095L300.29 223.05ZM754.854 722.285C700.283 629.788 671.5 524.355 671.5 416.959V323.5L464.5 633.5L754.854 722.285Z"/>
+              <path
+                fill-rule="evenodd"
+                clip-rule="evenodd"
+                d="M300.29 223.05L612.418 0L844 298.937L799.054 760.396L472.441 1024L158 592.095L300.29 223.05ZM754.854 722.285C700.283 629.788 671.5 524.355 671.5 416.959V323.5L464.5 633.5L754.854 722.285Z"
+              />
             </svg>
             <span class="titlebar-text">comine</span>
           {/if}
@@ -1195,11 +1208,7 @@
         <div class="bottom-bar" class:show-labels={$settings.showMobileNavLabels}>
           {#each allNavItems as item}
             {@const isActive = currentPath === item.path}
-            <a 
-              href={item.path} 
-              class="bottom-bar-item" 
-              class:active={isActive}
-            >
+            <a href={item.path} class="bottom-bar-item" class:active={isActive}>
               <div class="bottom-bar-icon" class:active={isActive}>
                 <Icon name={item.icon} size={22} />
                 {#if item.badge}
@@ -1374,7 +1383,8 @@
   }
 
   @keyframes shimmer {
-    0%, 100% {
+    0%,
+    100% {
       background-position: 200% center;
     }
     50% {
@@ -1391,7 +1401,10 @@
   }
 
   @keyframes icon-shimmer {
-    0%, 40%, 60%, 100% {
+    0%,
+    40%,
+    60%,
+    100% {
       fill: rgba(255, 255, 255, 0.7);
     }
     50% {
@@ -1433,7 +1446,8 @@
   }
 
   @keyframes download-pulse {
-    0%, 100% {
+    0%,
+    100% {
       opacity: 0.7;
     }
     50% {
@@ -1540,7 +1554,7 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 24px;
     padding: 0 8px;
-    box-shadow: 
+    box-shadow:
       0 8px 32px rgba(0, 0, 0, 0.4),
       0 2px 8px rgba(0, 0, 0, 0.2),
       inset 0 1px 0 rgba(255, 255, 255, 0.05);
@@ -1594,7 +1608,7 @@
 
   .bottom-bar-icon.active {
     background: var(--accent, #6366f1);
-    box-shadow: 
+    box-shadow:
       0 4px 12px color-mix(in srgb, var(--accent, #6366f1) 40%, transparent),
       0 0 0 1px rgba(255, 255, 255, 0.1);
     transform: scale(1.05);

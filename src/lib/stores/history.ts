@@ -75,18 +75,18 @@ function createHistoryStore() {
     filter: 'all',
     sort: 'date',
   });
-  
+
   let initialized = false;
   let initPromise: Promise<void> | null = null;
 
   async function ensureInitialized() {
     if (initialized) return;
-    
+
     if (initPromise) {
       await initPromise;
       return;
     }
-    
+
     initPromise = (async () => {
       try {
         store = await load('history.json', { autoSave: false, defaults: {} });
@@ -99,7 +99,7 @@ function createHistoryStore() {
         initialized = true; // Mark as initialized even on error to prevent loops
       }
     })();
-    
+
     await initPromise;
   }
 
@@ -112,7 +112,7 @@ function createHistoryStore() {
 
     async add(item: Omit<HistoryItem, 'id' | 'downloadedAt'>) {
       await ensureInitialized();
-      
+
       const newItem: HistoryItem = {
         ...item,
         id: crypto.randomUUID(),
@@ -199,7 +199,7 @@ export const historyReady = writable(false);
 
 const dateRefreshTrigger = writable(0);
 export function refreshDateGroups() {
-  dateRefreshTrigger.update(n => n + 1);
+  dateRefreshTrigger.update((n) => n + 1);
 }
 
 export async function initHistory(): Promise<void> {
@@ -239,47 +239,50 @@ export const filteredHistory = derived(history, ($history) => {
   return items;
 });
 
-export const groupedHistory = derived([filteredHistory, locale, dateRefreshTrigger], ([$items, _locale, _refresh]) => {
-  const groups: { label: string; items: HistoryItem[] }[] = [];
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const yesterday = today - 86400000;
-  const thisWeek = today - 7 * 86400000;
-  const thisMonth = today - 30 * 86400000;
+export const groupedHistory = derived(
+  [filteredHistory, locale, dateRefreshTrigger],
+  ([$items, _locale, _refresh]) => {
+    const groups: { label: string; items: HistoryItem[] }[] = [];
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const yesterday = today - 86400000;
+    const thisWeek = today - 7 * 86400000;
+    const thisMonth = today - 30 * 86400000;
 
-  const todayItems: HistoryItem[] = [];
-  const yesterdayItems: HistoryItem[] = [];
-  const thisWeekItems: HistoryItem[] = [];
-  const thisMonthItems: HistoryItem[] = [];
-  const olderItems: HistoryItem[] = [];
+    const todayItems: HistoryItem[] = [];
+    const yesterdayItems: HistoryItem[] = [];
+    const thisWeekItems: HistoryItem[] = [];
+    const thisMonthItems: HistoryItem[] = [];
+    const olderItems: HistoryItem[] = [];
 
-  for (const item of $items) {
-    if (item.downloadedAt >= today) {
-      todayItems.push(item);
-    } else if (item.downloadedAt >= yesterday) {
-      yesterdayItems.push(item);
-    } else if (item.downloadedAt >= thisWeek) {
-      thisWeekItems.push(item);
-    } else if (item.downloadedAt >= thisMonth) {
-      thisMonthItems.push(item);
-    } else {
-      olderItems.push(item);
+    for (const item of $items) {
+      if (item.downloadedAt >= today) {
+        todayItems.push(item);
+      } else if (item.downloadedAt >= yesterday) {
+        yesterdayItems.push(item);
+      } else if (item.downloadedAt >= thisWeek) {
+        thisWeekItems.push(item);
+      } else if (item.downloadedAt >= thisMonth) {
+        thisMonthItems.push(item);
+      } else {
+        olderItems.push(item);
+      }
     }
+
+    if (todayItems.length)
+      groups.push({ label: translate('downloads.dateGroups.today'), items: todayItems });
+    if (yesterdayItems.length)
+      groups.push({ label: translate('downloads.dateGroups.yesterday'), items: yesterdayItems });
+    if (thisWeekItems.length)
+      groups.push({ label: translate('downloads.dateGroups.thisWeek'), items: thisWeekItems });
+    if (thisMonthItems.length)
+      groups.push({ label: translate('downloads.dateGroups.thisMonth'), items: thisMonthItems });
+    if (olderItems.length)
+      groups.push({ label: translate('downloads.dateGroups.older'), items: olderItems });
+
+    return groups;
   }
-
-  if (todayItems.length)
-    groups.push({ label: translate('downloads.dateGroups.today'), items: todayItems });
-  if (yesterdayItems.length)
-    groups.push({ label: translate('downloads.dateGroups.yesterday'), items: yesterdayItems });
-  if (thisWeekItems.length)
-    groups.push({ label: translate('downloads.dateGroups.thisWeek'), items: thisWeekItems });
-  if (thisMonthItems.length)
-    groups.push({ label: translate('downloads.dateGroups.thisMonth'), items: thisMonthItems });
-  if (olderItems.length)
-    groups.push({ label: translate('downloads.dateGroups.older'), items: olderItems });
-
-  return groups;
-});
+);
 
 export interface HistoryPlaylistGroup {
   playlistId: string;

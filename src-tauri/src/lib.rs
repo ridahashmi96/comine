@@ -35,7 +35,8 @@ static ACTIVE_DOWNLOADS: std::sync::LazyLock<Mutex<HashMap<String, u32>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[cfg(not(target_os = "android"))]
-const THUMBNAIL_COLOR_CACHE_SIZE: std::num::NonZeroUsize = unsafe { std::num::NonZeroUsize::new_unchecked(50) };
+const THUMBNAIL_COLOR_CACHE_SIZE: std::num::NonZeroUsize =
+    unsafe { std::num::NonZeroUsize::new_unchecked(50) };
 
 #[cfg(not(target_os = "android"))]
 static THUMBNAIL_COLOR_CACHE: std::sync::LazyLock<Mutex<lru::LruCache<String, [u8; 3]>>> =
@@ -321,7 +322,7 @@ async fn download_video(
 
         if use_custom_cookies {
             if let Some(cookies_text) = custom_cookies.as_deref() {
-                                let cache_dir = app
+                let cache_dir = app
                     .path()
                     .app_cache_dir()
                     .map_err(|e| format!("Failed to get cache dir: {}", e))?;
@@ -395,7 +396,10 @@ async fn download_video(
                     "--downloader".to_string(),
                     aria2_path.to_string_lossy().to_string(),
                     "--downloader-args".to_string(),
-                    format!("aria2c:-x {} -s {} -k {} --file-allocation=none", connections, splits, min_split),
+                    format!(
+                        "aria2c:-x {} -s {} -k {} --file-allocation=none",
+                        connections, splits, min_split
+                    ),
                 ]);
             } else {
                 info!("aria2 requested but not installed, using default downloader");
@@ -432,7 +436,7 @@ async fn download_video(
 
         let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
         let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
-        
+
         let mut stdout_reader = BufReader::new(stdout);
         let mut stdout_buffer = Vec::new();
         let mut stderr_reader = BufReader::new(stderr).lines();
@@ -456,11 +460,11 @@ async fn download_video(
                                     if let Ok(line) = String::from_utf8(stdout_buffer.clone()) {
                                         let line = line.trim().to_string();
                                         stdout_buffer.clear();
-                                        
+
                                         if line.is_empty() {
                                             continue;
                                         }
-                                        
+
                                         debug!("yt-dlp stdout: {}", line);
 
                                         if line.starts_with(">>>FILEPATH:") {
@@ -604,10 +608,8 @@ async fn download_video(
                         if let Ok(metadata) = entry.metadata() {
                             if let Ok(created) = metadata.created() {
                                 if created >= download_start_time {
-                                    let is_newer = newest
-                                        .as_ref()
-                                        .map(|(_, t)| created > *t)
-                                        .unwrap_or(true);
+                                    let is_newer =
+                                        newest.as_ref().map(|(_, t)| created > *t).unwrap_or(true);
                                     if is_newer {
                                         newest = Some((path, created));
                                     }
@@ -1195,8 +1197,8 @@ async fn extract_video_thumbnail(app: AppHandle, file_path: String) -> Result<St
 
     #[cfg(not(target_os = "android"))]
     {
-        use std::process::Stdio;
         use std::path::Path;
+        use std::process::Stdio;
 
         let path = Path::new(&file_path);
         if !path.exists() {
@@ -1218,9 +1220,7 @@ async fn extract_video_thumbnail(app: AppHandle, file_path: String) -> Result<St
             .await
             .map_err(|e| format!("Failed to create cache dir: {}", e))?;
 
-        let file_stem = path.file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("thumb");
+        let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("thumb");
         let thumb_path = cache_dir.join(format!("{}.jpg", file_stem));
 
         if thumb_path.exists() {
@@ -1229,11 +1229,16 @@ async fn extract_video_thumbnail(app: AppHandle, file_path: String) -> Result<St
 
         let mut cmd = tokio::process::Command::new(&ffmpeg_path);
         cmd.args([
-            "-i", &file_path,
-            "-ss", "1",
-            "-vframes", "1",
-            "-vf", "scale=320:-1",
-            "-q:v", "3",
+            "-i",
+            &file_path,
+            "-ss",
+            "1",
+            "-vframes",
+            "1",
+            "-vf",
+            "scale=320:-1",
+            "-q:v",
+            "3",
             "-y",
             thumb_path.to_str().ok_or("Invalid path")?,
         ])
@@ -1250,7 +1255,10 @@ async fn extract_video_thumbnail(app: AppHandle, file_path: String) -> Result<St
 
         if !output.status.success() || !thumb_path.exists() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("Thumbnail extraction failed: {}", stderr.lines().take(2).collect::<Vec<_>>().join(" ")));
+            return Err(format!(
+                "Thumbnail extraction failed: {}",
+                stderr.lines().take(2).collect::<Vec<_>>().join(" ")
+            ));
         }
 
         Ok(thumb_path.to_string_lossy().to_string())
@@ -1385,15 +1393,29 @@ async fn extract_thumbnail_color(url: String) -> Result<[u8; 3], String> {
 
             s = (s * boost_factor).min(1.0);
 
-            let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
+            let q = if l < 0.5 {
+                l * (1.0 + s)
+            } else {
+                l + s - l * s
+            };
             let p = 2.0 * l - q;
 
             fn hue2rgb(p: f32, q: f32, mut t: f32) -> f32 {
-                if t < 0.0 { t += 1.0; }
-                if t > 1.0 { t -= 1.0; }
-                if t < 1.0 / 6.0 { return p + (q - p) * 6.0 * t; }
-                if t < 0.5 { return q; }
-                if t < 2.0 / 3.0 { return p + (q - p) * (2.0 / 3.0 - t) * 6.0; }
+                if t < 0.0 {
+                    t += 1.0;
+                }
+                if t > 1.0 {
+                    t -= 1.0;
+                }
+                if t < 1.0 / 6.0 {
+                    return p + (q - p) * 6.0 * t;
+                }
+                if t < 0.5 {
+                    return q;
+                }
+                if t < 2.0 / 3.0 {
+                    return p + (q - p) * (2.0 / 3.0 - t) * 6.0;
+                }
                 p
             }
 
@@ -1645,11 +1667,7 @@ async fn embed_thumbnail_jpeg_bytes(
         cmd.args(["-disposition:v:0", "attached_pic"]);
     }
 
-    cmd.arg(
-        temp_output
-            .to_str()
-            .ok_or("Invalid output path encoding")?,
-    );
+    cmd.arg(temp_output.to_str().ok_or("Invalid output path encoding")?);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     #[cfg(target_os = "windows")]
@@ -1895,7 +1913,7 @@ async fn download_file(
 
         let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
         let mut stdout_reader = BufReader::new(stdout).lines();
-        
+
         // Ensure stderr is also consumed to prevent blocking, though we primarily watch stdout
         let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
         tokio::spawn(async move {
@@ -1905,7 +1923,8 @@ async fn download_file(
             }
         });
 
-        let mut last_progress_emit = std::time::Instant::now() - std::time::Duration::from_millis(200);
+        let mut last_progress_emit =
+            std::time::Instant::now() - std::time::Duration::from_millis(200);
         const PROGRESS_THROTTLE_MS: u64 = 250;
         let mut line_count = 0;
 
@@ -1918,11 +1937,11 @@ async fn download_file(
                             line_count += 1;
                             if !line.is_empty() {
                                 debug!("aria2c: {}", line);
-                                
+
                                 let now = std::time::Instant::now();
                                 if now.duration_since(last_progress_emit).as_millis() >= PROGRESS_THROTTLE_MS as u128 {
                                     last_progress_emit = now;
-                                    
+
                                     let _ = window.emit("download-progress", serde_json::json!({
                                         "url": url,
                                         "message": line,
@@ -1944,7 +1963,10 @@ async fn download_file(
         }
 
         info!("Waiting for aria2c to exit...");
-        let status = child.wait().await.map_err(|e| format!("aria2c failed: {}", e))?;
+        let status = child
+            .wait()
+            .await
+            .map_err(|e| format!("aria2c failed: {}", e))?;
         info!("aria2c exited with status: {:?}", status);
 
         // Remove from active downloads after completion
@@ -2594,74 +2616,73 @@ pub fn run() {
             .build(),
     );
 
-    let builder = builder
-        .invoke_handler(tauri::generate_handler![
-            download_video,
-            cancel_download,
-            get_video_info,
-            get_video_formats,
-            get_playlist_info,
-            get_media_duration,
-            extract_video_thumbnail,
-            extract_thumbnail_color,
-            get_cached_thumbnail_color,
-            lux_get_video_info,
-            lux_get_video_formats,
-            lux_get_playlist_info,
-            lux_download_video,
-            set_acrylic,
-            notifications::show_notification_window,
-            notifications::reveal_notification_window,
-            notifications::close_notification_window,
-            notifications::close_all_notifications,
-            notifications::notification_action,
-            logs::get_log_file_path,
-            logs::append_log,
-            logs::cleanup_old_logs,
-            logs::open_logs_folder,
-            logs::get_logs_folder_path,
-            logs::read_session_logs,
-            logs::get_session_log_count,
-            resolve_proxy_config,
-            validate_proxy_url,
-            detect_system_proxy,
-            check_ip,
-            download_file,
-            check_file_url,
-            check_for_update,
-            download_and_install_update,
-            deps::check_ytdlp,
-            deps::install_ytdlp,
-            deps::uninstall_ytdlp,
-            deps::get_ytdlp_releases,
-            deps::check_ffmpeg,
-            deps::install_ffmpeg,
-            deps::uninstall_ffmpeg,
-            deps::check_aria2,
-            deps::install_aria2,
-            deps::uninstall_aria2,
-            deps::check_deno,
-            deps::install_deno,
-            deps::uninstall_deno,
-            deps::check_quickjs,
-            deps::install_quickjs,
-            deps::uninstall_quickjs,
-            deps::check_lux,
-            deps::install_lux,
-            deps::uninstall_lux,
-            clear_cache,
-            get_cache_stats,
-            clear_memory_caches,
-            autostart_enable,
-            autostart_disable,
-            autostart_is_enabled
-        ]);
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        download_video,
+        cancel_download,
+        get_video_info,
+        get_video_formats,
+        get_playlist_info,
+        get_media_duration,
+        extract_video_thumbnail,
+        extract_thumbnail_color,
+        get_cached_thumbnail_color,
+        lux_get_video_info,
+        lux_get_video_formats,
+        lux_get_playlist_info,
+        lux_download_video,
+        set_acrylic,
+        notifications::show_notification_window,
+        notifications::reveal_notification_window,
+        notifications::close_notification_window,
+        notifications::close_all_notifications,
+        notifications::notification_action,
+        logs::get_log_file_path,
+        logs::append_log,
+        logs::cleanup_old_logs,
+        logs::open_logs_folder,
+        logs::get_logs_folder_path,
+        logs::read_session_logs,
+        logs::get_session_log_count,
+        resolve_proxy_config,
+        validate_proxy_url,
+        detect_system_proxy,
+        check_ip,
+        download_file,
+        check_file_url,
+        check_for_update,
+        download_and_install_update,
+        deps::check_ytdlp,
+        deps::install_ytdlp,
+        deps::uninstall_ytdlp,
+        deps::get_ytdlp_releases,
+        deps::check_ffmpeg,
+        deps::install_ffmpeg,
+        deps::uninstall_ffmpeg,
+        deps::check_aria2,
+        deps::install_aria2,
+        deps::uninstall_aria2,
+        deps::check_deno,
+        deps::install_deno,
+        deps::uninstall_deno,
+        deps::check_quickjs,
+        deps::install_quickjs,
+        deps::uninstall_quickjs,
+        deps::check_lux,
+        deps::install_lux,
+        deps::uninstall_lux,
+        clear_cache,
+        get_cache_stats,
+        clear_memory_caches,
+        autostart_enable,
+        autostart_disable,
+        autostart_is_enabled
+    ]);
 
     #[cfg(not(target_os = "android"))]
     let builder = builder
         .setup(|app| {
             tray::setup(app.handle())?;
-            
+
             let start_minimized = std::env::args().any(|arg| arg == "--minimized");
             if start_minimized {
                 if let Some(window) = app.get_webview_window("main") {
@@ -2672,13 +2693,13 @@ pub fn run() {
                         .and_then(|store| store.get("startMinimized"))
                         .and_then(|v| v.as_bool())
                         .unwrap_or(true);
-                    
+
                     if should_minimize {
                         let _ = window.hide();
                     }
                 }
             }
-            
+
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -2737,4 +2758,3 @@ mod tests {
         assert_eq!(*guard, 42);
     }
 }
-

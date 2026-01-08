@@ -110,22 +110,26 @@ const MAX_PERSISTED_FAILED_ITEMS = 50;
 function serializeQueueItems(items: QueueItem[]): QueueItem[] {
   const pending = items.filter((item) => item.status === 'pending' || item.status === 'paused');
   const failed = items.filter((item) => item.status === 'failed');
-  
+
   const limitedFailed = failed.slice(0, MAX_PERSISTED_FAILED_ITEMS);
-  
+
   return [...pending, ...limitedFailed].map((item) => {
-    const cleanOptions = item.options ? {
-      ...item.options,
-      prefetchedInfo: item.options.prefetchedInfo ? {
-        title: item.options.prefetchedInfo.title,
-        author: item.options.prefetchedInfo.author,
-        duration: item.options.prefetchedInfo.duration,
-        thumbnail: item.options.prefetchedInfo.thumbnail?.startsWith('data:') 
-          ? undefined 
-          : item.options.prefetchedInfo.thumbnail,
-      } : undefined,
-    } : undefined;
-    
+    const cleanOptions = item.options
+      ? {
+          ...item.options,
+          prefetchedInfo: item.options.prefetchedInfo
+            ? {
+                title: item.options.prefetchedInfo.title,
+                author: item.options.prefetchedInfo.author,
+                duration: item.options.prefetchedInfo.duration,
+                thumbnail: item.options.prefetchedInfo.thumbnail?.startsWith('data:')
+                  ? undefined
+                  : item.options.prefetchedInfo.thumbnail,
+              }
+            : undefined,
+        }
+      : undefined;
+
     return {
       ...item,
       thumbnail: item.thumbnail?.startsWith('data:') ? '' : item.thumbnail,
@@ -298,25 +302,26 @@ function createQueueStore() {
 
     unlisten = await listen<{ url: string; message: string }>('download-progress', (event) => {
       const { url, message } = event.payload;
-      
+
       const now = Date.now();
       const lastUpdate = progressThrottleMap.get(url) || 0;
-      const isImportantMessage = message.includes('100%') || 
-                                  message.includes('Destination') ||
-                                  message.includes('[Merger]') ||
-                                  message.includes('[ffmpeg]') ||
-                                  message.includes('Deleting') ||
-                                  message.includes('ERROR') ||
-                                  message.includes('WARNING');
-      
-      if (!isImportantMessage && (now - lastUpdate) < PROGRESS_THROTTLE_MS) {
+      const isImportantMessage =
+        message.includes('100%') ||
+        message.includes('Destination') ||
+        message.includes('[Merger]') ||
+        message.includes('[ffmpeg]') ||
+        message.includes('Deleting') ||
+        message.includes('ERROR') ||
+        message.includes('WARNING');
+
+      if (!isImportantMessage && now - lastUpdate < PROGRESS_THROTTLE_MS) {
         return;
       }
-      
+
       progressThrottleMap.set(url, now);
-      
+
       if (progressThrottleMap.size > 20) {
-        const activeUrls = new Set(get({ subscribe }).items.map(i => i.url));
+        const activeUrls = new Set(get({ subscribe }).items.map((i) => i.url));
         for (const [throttleUrl] of progressThrottleMap) {
           if (!activeUrls.has(throttleUrl)) {
             progressThrottleMap.delete(throttleUrl);
@@ -390,13 +395,15 @@ function createQueueStore() {
         eta = match[3] || '';
       } else {
         const aria2TrailingMatch = message.match(/\[#\w+[^\]]*\](\d+\.?\d*)%\s+(\S+)\s*(.*)/);
-        const aria2InlineMatch = message.match(/\[#\w+\s+[\d.]+\w+\/[\d.]+\w+\((\d+)%\)\s*CN:\d+\s+DL:([\d.]+\w+)(?:\s+ETA:(\S+))?\]/);
+        const aria2InlineMatch = message.match(
+          /\[#\w+\s+[\d.]+\w+\/[\d.]+\w+\((\d+)%\)\s*CN:\d+\s+DL:([\d.]+\w+)(?:\s+ETA:(\S+))?\]/
+        );
         const aria2Match = aria2TrailingMatch || aria2InlineMatch;
         if (aria2Match) {
           rawProgress = parseFloat(aria2Match[1]);
-          speed = aria2Match[2] ? (aria2Match[2].replace(/^DL:/, '') + '/s') : '';
+          speed = aria2Match[2] ? aria2Match[2].replace(/^DL:/, '') + '/s' : '';
           const etaRaw = aria2Match[3] || '';
-          eta = (etaRaw === 'NA' || etaRaw === '') ? '' : etaRaw.replace(/^ETA:/, '');
+          eta = etaRaw === 'NA' || etaRaw === '' ? '' : etaRaw.replace(/^ETA:/, '');
           if (!statusMessage) {
             const state = get({ subscribe });
             const item = state.items.find((i) => i.url === url);
@@ -640,7 +647,7 @@ function createQueueStore() {
       const proxyConfig = getProxyConfig();
 
       // Bypass proxy for file downloads if setting is enabled
-      const effectiveProxyConfig = currentSettings.bypassProxyForDownloads 
+      const effectiveProxyConfig = currentSettings.bypassProxyForDownloads
         ? { mode: 'none', customUrl: '', retryWithoutProxy: false }
         : proxyConfig;
 
@@ -676,7 +683,7 @@ function createQueueStore() {
       const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'ico'];
       const isImage = imageExtensions.includes(extension.toLowerCase());
       const thumbnail = isImage ? filePath : '';
-      const fileType = isImage ? 'image' as const : 'file' as const;
+      const fileType = isImage ? ('image' as const) : ('file' as const);
 
       update((state) => {
         const newItems = state.items.map((item) =>
@@ -891,14 +898,14 @@ function createQueueStore() {
           format,
           (progress: AndroidProgress) => {
             const rawProgress = Math.max(0, progress.progress);
-            
+
             let cappedProgress: number;
             if (rawProgress >= 99.9) {
               cappedProgress = 95;
             } else if (rawProgress >= 90) {
               cappedProgress = 85 + ((rawProgress - 90) / 10) * 10;
             } else {
-              cappedProgress = rawProgress * 0.85 / 90 * 90;
+              cappedProgress = ((rawProgress * 0.85) / 90) * 90;
             }
 
             const currentMax = maxProgressMap.get(url) || 0;
@@ -906,7 +913,7 @@ function createQueueStore() {
             if (cappedProgress > currentMax) {
               maxProgressMap.set(url, cappedProgress);
             }
-            
+
             let statusMessage = '';
             const line = progress.line || '';
             if (line.includes('[ExtractAudio]') || line.includes('[ffmpeg]')) {
@@ -991,21 +998,22 @@ function createQueueStore() {
 
         if (canUseLux) {
           logs.info('queue', `Using LUX backend for: ${url}`);
-          
+
           let luxFormatId = pendingItem.options?.videoQuality;
-          
-          if (luxFormatId && (
-            luxFormatId.includes('+') ||  // Format merging like "bestvideo+bestaudio"
-            luxFormatId.includes('/') ||  // Fallback like "best/bestvideo+bestaudio"
-            luxFormatId === 'bestvideo' ||
-            luxFormatId === 'bestaudio' ||
-            luxFormatId === 'best' ||
-            luxFormatId === 'max'
-          )) {
+
+          if (
+            luxFormatId &&
+            (luxFormatId.includes('+') || // Format merging like "bestvideo+bestaudio"
+              luxFormatId.includes('/') || // Fallback like "best/bestvideo+bestaudio"
+              luxFormatId === 'bestvideo' ||
+              luxFormatId === 'bestaudio' ||
+              luxFormatId === 'best' ||
+              luxFormatId === 'max')
+          ) {
             luxFormatId = '';
             logs.info('queue', `Converted yt-dlp format string to lux auto-select`);
           }
-          
+
           downloadPromise = invoke<string>('lux_download_video', {
             url: url,
             formatId: luxFormatId || '',
@@ -1033,14 +1041,19 @@ function createQueueStore() {
             cookiesFromBrowser: pendingItem.options?.cookiesFromBrowser ?? '',
             customCookies: pendingItem.options?.customCookies ?? '',
             downloadPath: downloadPath,
-            embedThumbnail: isAudioDownload && (pendingItem.options?.embedThumbnail ?? currentSettings.embedThumbnail),
+            embedThumbnail:
+              isAudioDownload &&
+              (pendingItem.options?.embedThumbnail ?? currentSettings.embedThumbnail),
             thumbnailUrlForEmbed: pendingItem.thumbnail || '',
             playlistTitle: playlistTitle,
             proxyConfig: proxyConfig,
             sponsorBlock: pendingItem.options?.sponsorBlock ?? currentSettings.sponsorBlock,
             chapters: pendingItem.options?.chapters ?? currentSettings.chapters,
             embedSubtitles: pendingItem.options?.embedSubtitles ?? currentSettings.embedSubtitles,
-            subtitleLanguages: pendingItem.options?.subtitleLanguages ?? currentSettings.subtitleLanguages ?? 'en,ru',
+            subtitleLanguages:
+              pendingItem.options?.subtitleLanguages ??
+              currentSettings.subtitleLanguages ??
+              'en,ru',
             downloadSpeedLimit: currentSettings.downloadSpeedLimit,
           });
         }
@@ -1106,8 +1119,7 @@ function createQueueStore() {
               ),
             }));
           }
-        } catch {
-        }
+        } catch {}
       }
 
       update((state) => {
@@ -1458,7 +1470,10 @@ function createQueueStore() {
         if (isLuxPreferred(url)) {
           processor = 'lux';
         } else {
-          logs.warn('queue', `Lux selected but URL is not a Chinese platform, falling back to yt-dlp: ${url.slice(0, 50)}...`);
+          logs.warn(
+            'queue',
+            `Lux selected but URL is not a Chinese platform, falling back to yt-dlp: ${url.slice(0, 50)}...`
+          );
           processor = 'ytdlp';
         }
       } else {

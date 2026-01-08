@@ -78,7 +78,7 @@ pub fn clear_all() {
     let mut video_info = lock_or_recover(&VIDEO_INFO_CACHE);
     let mut playlist_info = lock_or_recover(&PLAYLIST_INFO_CACHE);
     let mut video_formats = lock_or_recover(&VIDEO_FORMATS_CACHE);
-    
+
     video_info.clear();
     playlist_info.clear();
     video_formats.clear();

@@ -76,12 +76,12 @@
     const topProgress = Math.min(scrollTop / MASK_SIZE, 1);
     const bottomProgress = Math.min((maxScroll - scrollTop) / MASK_SIZE, 1);
 
-    const topFade = topProgress > 0 
-      ? `transparent, black ${MASK_SIZE * topProgress}px` 
-      : 'black, black 0px';
-    const bottomFade = bottomProgress > 0 
-      ? `black calc(100% - ${MASK_SIZE * bottomProgress}px), transparent` 
-      : 'black 100%, black 100%';
+    const topFade =
+      topProgress > 0 ? `transparent, black ${MASK_SIZE * topProgress}px` : 'black, black 0px';
+    const bottomFade =
+      bottomProgress > 0
+        ? `black calc(100% - ${MASK_SIZE * bottomProgress}px), transparent`
+        : 'black 100%, black 100%';
 
     scrollMaskStyle = `mask-image: linear-gradient(to bottom, ${topFade}, ${bottomFade}); -webkit-mask-image: linear-gradient(to bottom, ${topFade}, ${bottomFade});`;
   }
@@ -114,23 +114,35 @@
     return checkIsYouTubeUrl(urlStr) && isLikelyChannel(urlStr.trim());
   }
 
-  type PlatformIcon = 'platform_youtube' | 'platform_youtube_music' | 'platform_bilibili' | 'platform_tiktok' | 'platform_twitter' | 'platform_instagram' | 'platform_twitch' | 'platform_vimeo' | 'platform_facebook' | 'platform_weibo' | 'platform_generic';
-  
+  type PlatformIcon =
+    | 'platform_youtube'
+    | 'platform_youtube_music'
+    | 'platform_bilibili'
+    | 'platform_tiktok'
+    | 'platform_twitter'
+    | 'platform_instagram'
+    | 'platform_twitch'
+    | 'platform_vimeo'
+    | 'platform_facebook'
+    | 'platform_weibo'
+    | 'platform_generic';
+
   function getPlatformIcon(urlStr: string): PlatformIcon {
     if (!urlStr.trim()) return 'platform_generic';
     const u = urlStr.toLowerCase();
-    
+
     if (u.includes('music.youtube.com')) return 'platform_youtube_music';
     if (u.includes('youtube.com') || u.includes('youtu.be')) return 'platform_youtube';
     if (u.includes('bilibili.com') || u.includes('b23.tv')) return 'platform_bilibili';
-    if (u.includes('tiktok.com') || u.includes('douyin.com') || u.includes('iesdouyin.com')) return 'platform_tiktok';
+    if (u.includes('tiktok.com') || u.includes('douyin.com') || u.includes('iesdouyin.com'))
+      return 'platform_tiktok';
     if (u.includes('twitter.com') || u.includes('x.com')) return 'platform_twitter';
     if (u.includes('instagram.com')) return 'platform_instagram';
     if (u.includes('twitch.tv')) return 'platform_twitch';
     if (u.includes('vimeo.com')) return 'platform_vimeo';
     if (u.includes('facebook.com') || u.includes('fb.watch')) return 'platform_facebook';
     if (u.includes('weibo.com')) return 'platform_weibo';
-    
+
     return 'platform_generic';
   }
 
@@ -572,7 +584,7 @@
     if (!downloadUrl) return;
 
     logs.info('download', `Using custom tracks: ${selection.formatString}`);
-    
+
     const queueId = queue.add(downloadUrl, {
       videoQuality: selection.formatString,
       downloadMode: selection.downloadMode,
@@ -585,7 +597,8 @@
       ignoreMixes,
       cookiesFromBrowser,
       customCookies,
-      sponsorBlock: selection.sponsorblock && selection.sponsorblock.length > 0 ? true : sponsorBlock,
+      sponsorBlock:
+        selection.sponsorblock && selection.sponsorblock.length > 0 ? true : sponsorBlock,
       chapters: selection.embedChapters ?? chapters,
       embedSubtitles: selection.embedSubs ?? embedSubtitles,
       subtitleLanguages: selection.subLangs ?? subtitleLanguages,
@@ -831,9 +844,9 @@
       {#each views as view (view.id)}
         {#key view.id}
           {@const active = isActive(view.id)}
-          <div 
-            class="view-container" 
-            class:active 
+          <div
+            class="view-container"
+            class:active
             onscroll={handleViewScroll}
             style={active ? scrollMaskStyle : ''}
           >
@@ -998,7 +1011,9 @@
                       : $t('settings.deps.notInstalled')}
                     badgeType={ytdlpInstalled ? 'success' : 'error'}
                     disabled={!ytdlpInstalled}
-                    disabledReason={!ytdlpInstalled ? $t('download.blocks.installFirst') : undefined}
+                    disabledReason={!ytdlpInstalled
+                      ? $t('download.blocks.installFirst')
+                      : undefined}
                     bind:expanded={ytdlpExpanded}
                   >
                     <!-- Cookies -->
@@ -1042,7 +1057,9 @@
                       </div>
                       {#if embedSubtitles}
                         <div class="inline-input">
-                          <label for="subtitle-langs">{$t('download.blocks.subtitleLanguages')}</label>
+                          <label for="subtitle-langs"
+                            >{$t('download.blocks.subtitleLanguages')}</label
+                          >
                           <input
                             id="subtitle-langs"
                             type="text"
@@ -1116,25 +1133,37 @@
                       <div class="speed-chips">
                         <Chip
                           selected={downloadSpeedLimit === 0}
-                          onclick={() => { downloadSpeedLimit = 0; saveSettings(); }}
+                          onclick={() => {
+                            downloadSpeedLimit = 0;
+                            saveSettings();
+                          }}
                         >
                           {$t('settings.downloads.unlimited')}
                         </Chip>
                         <Chip
                           selected={downloadSpeedLimit === 5}
-                          onclick={() => { downloadSpeedLimit = 5; saveSettings(); }}
+                          onclick={() => {
+                            downloadSpeedLimit = 5;
+                            saveSettings();
+                          }}
                         >
                           5 MB/s
                         </Chip>
                         <Chip
                           selected={downloadSpeedLimit === 10}
-                          onclick={() => { downloadSpeedLimit = 10; saveSettings(); }}
+                          onclick={() => {
+                            downloadSpeedLimit = 10;
+                            saveSettings();
+                          }}
                         >
                           10 MB/s
                         </Chip>
                         <Chip
                           selected={downloadSpeedLimit === 25}
-                          onclick={() => { downloadSpeedLimit = 25; saveSettings(); }}
+                          onclick={() => {
+                            downloadSpeedLimit = 25;
+                            saveSettings();
+                          }}
                         >
                           25 MB/s
                         </Chip>
@@ -1142,7 +1171,9 @@
                           selected={![0, 5, 10, 25].includes(downloadSpeedLimit)}
                           onclick={() => (speedLimitModalOpen = true)}
                         >
-                          {![0, 5, 10, 25].includes(downloadSpeedLimit) ? `${downloadSpeedLimit} MB/s` : $t('download.options.custom')}
+                          {![0, 5, 10, 25].includes(downloadSpeedLimit)
+                            ? `${downloadSpeedLimit} MB/s`
+                            : $t('download.options.custom')}
                         </Chip>
                       </div>
                     </div>
@@ -1583,7 +1614,7 @@
     appearance: none;
     margin: 0;
   }
-  .speed-input[type=number] {
+  .speed-input[type='number'] {
     -moz-appearance: textfield;
     appearance: textfield;
   }

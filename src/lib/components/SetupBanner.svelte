@@ -11,20 +11,16 @@
   let bundleToastId = $state<number | null>(null);
   let isInstallingBundle = $state(false);
 
-  let missingDeps = $derived(
-    bundleDeps.filter(dep => !$deps[dep]?.installed)
-  );
+  let missingDeps = $derived(bundleDeps.filter((dep) => !$deps[dep]?.installed));
 
-  let installingCount = $derived(
-    bundleDeps.filter(dep => $deps.installingDeps.has(dep)).length
-  );
+  let installingCount = $derived(bundleDeps.filter((dep) => $deps.installingDeps.has(dep)).length);
 
   let overallProgress = $derived.by(() => {
     if (installingCount === 0) return 0;
-    
+
     let totalProgress = 0;
     let count = 0;
-    
+
     for (const dep of bundleDeps) {
       if ($deps.installingDeps.has(dep)) {
         const progress = $deps.installProgressMap.get(dep);
@@ -35,7 +31,7 @@
         count++;
       }
     }
-    
+
     return count > 0 ? Math.round(totalProgress / bundleDeps.length) : 0;
   });
 
@@ -50,17 +46,17 @@
 
   async function installBundle() {
     if (isInstallingBundle || missingDeps.length === 0) return;
-    
+
     isInstallingBundle = true;
 
     bundleToastId = toast.progress($t('deps.installingBundle'), 0);
-    
+
     let successCount = 0;
     let failCount = 0;
 
     for (const dep of missingDeps) {
       if ($deps[dep]?.installed) continue;
-      
+
       let success = false;
       switch (dep) {
         case 'ytdlp':
@@ -76,7 +72,7 @@
           success = await deps.installQuickjs();
           break;
       }
-      
+
       if (success) {
         successCount++;
       } else {
@@ -96,7 +92,7 @@
     } else {
       toast.error($t('deps.bundleFailed'));
     }
-    
+
     isInstallingBundle = false;
   }
 
@@ -105,7 +101,7 @@
       const progress = $deps.installProgressMap.get(currentInstallingDep);
       updateToast(bundleToastId, {
         progress: overallProgress,
-        subMessage: currentInstallingDep + (progress?.message ? `: ${progress.message}` : '')
+        subMessage: currentInstallingDep + (progress?.message ? `: ${progress.message}` : ''),
       });
     }
   });
@@ -150,11 +146,7 @@
             <span class="banner-sub">{missingDeps.length} {$t('deps.componentsNeeded')}</span>
           </div>
         </div>
-        <Button
-          variant="primary"
-          size="sm"
-          onclick={installBundle}
-        >
+        <Button variant="primary" size="sm" onclick={installBundle}>
           {$t('deps.installAll')}
         </Button>
       </div>
@@ -250,7 +242,9 @@
   }
 
   @keyframes spin {
-    to { transform: rotate(360deg); }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .error-text {

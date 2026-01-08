@@ -97,7 +97,7 @@ function showTooltip(target: HTMLElement, text: string) {
 
   tooltipEl.style.top = `${top}px`;
   tooltipEl.style.left = `${left}px`;
-  
+
   requestAnimationFrame(() => {
     tooltipEl?.classList.add('visible');
   });

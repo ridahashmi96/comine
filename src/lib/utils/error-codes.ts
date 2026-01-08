@@ -3,24 +3,24 @@ export enum ErrorCode {
   PROXY_ERROR = 'PROXY_ERROR',
   TIMEOUT_ERROR = 'TIMEOUT_ERROR',
   CONNECTION_REFUSED = 'CONNECTION_REFUSED',
-  
+
   AUTH_REQUIRED = 'AUTH_REQUIRED',
   INVALID_COOKIES = 'INVALID_COOKIES',
-  
+
   VIDEO_UNAVAILABLE = 'VIDEO_UNAVAILABLE',
   VIDEO_PRIVATE = 'VIDEO_PRIVATE',
   VIDEO_GEOBLOCKED = 'VIDEO_GEOBLOCKED',
   FORMAT_NOT_AVAILABLE = 'FORMAT_NOT_AVAILABLE',
   UNSUPPORTED_SITE = 'UNSUPPORTED_SITE',
-  
+
   DOWNLOAD_FAILED = 'DOWNLOAD_FAILED',
   DISK_FULL = 'DISK_FULL',
   PERMISSION_DENIED = 'PERMISSION_DENIED',
   FILE_NOT_FOUND = 'FILE_NOT_FOUND',
-  
+
   DEPENDENCY_NOT_INSTALLED = 'DEPENDENCY_NOT_INSTALLED',
   DEPENDENCY_OUTDATED = 'DEPENDENCY_OUTDATED',
-  
+
   UNKNOWN_ERROR = 'UNKNOWN_ERROR',
   INVALID_URL = 'INVALID_URL',
   PARSE_ERROR = 'PARSE_ERROR',
@@ -159,41 +159,44 @@ export const ERROR_MESSAGES: Record<ErrorCode, Omit<ErrorInfo, 'code'>> = {
 
 export function detectErrorCode(errorMessage: string): ErrorCode {
   const msg = errorMessage.toLowerCase();
-  
+
   if (msg.includes('proxy') || msg.includes('412')) return ErrorCode.PROXY_ERROR;
   if (msg.includes('timeout') || msg.includes('timed out')) return ErrorCode.TIMEOUT_ERROR;
   if (msg.includes('connection refused')) return ErrorCode.CONNECTION_REFUSED;
   if (msg.includes('network') || msg.includes('request error') || msg.includes('http error')) {
     return ErrorCode.NETWORK_ERROR;
   }
-  
+
   if (msg.includes('cookies') || msg.includes('cookie')) return ErrorCode.INVALID_COOKIES;
   if (msg.includes('login') || msg.includes('sign in') || msg.includes('authenticate')) {
     return ErrorCode.AUTH_REQUIRED;
   }
-  
+
   if (msg.includes('private')) return ErrorCode.VIDEO_PRIVATE;
-  if (msg.includes('unavailable') || msg.includes('not available')) return ErrorCode.VIDEO_UNAVAILABLE;
+  if (msg.includes('unavailable') || msg.includes('not available'))
+    return ErrorCode.VIDEO_UNAVAILABLE;
   if (msg.includes('geo') || msg.includes('region') || msg.includes('blocked')) {
     return ErrorCode.VIDEO_GEOBLOCKED;
   }
   if (msg.includes('format') || msg.includes('quality')) return ErrorCode.FORMAT_NOT_AVAILABLE;
-  if (msg.includes('unsupported') || msg.includes('not supported')) return ErrorCode.UNSUPPORTED_SITE;
-  
+  if (msg.includes('unsupported') || msg.includes('not supported'))
+    return ErrorCode.UNSUPPORTED_SITE;
+
   if (msg.includes('disk full') || msg.includes('no space')) return ErrorCode.DISK_FULL;
   if (msg.includes('permission denied') || msg.includes('access denied')) {
     return ErrorCode.PERMISSION_DENIED;
   }
-  if (msg.includes('file not found') || msg.includes('no such file')) return ErrorCode.FILE_NOT_FOUND;
-  
+  if (msg.includes('file not found') || msg.includes('no such file'))
+    return ErrorCode.FILE_NOT_FOUND;
+
   if (msg.includes('not installed') || msg.includes('command not found')) {
     return ErrorCode.DEPENDENCY_NOT_INSTALLED;
   }
-  
+
   if (msg.includes('invalid url') || msg.includes('malformed url')) return ErrorCode.INVALID_URL;
-  
+
   if (msg.includes('parse') || msg.includes('json')) return ErrorCode.PARSE_ERROR;
-  
+
   return ErrorCode.UNKNOWN_ERROR;
 }
 

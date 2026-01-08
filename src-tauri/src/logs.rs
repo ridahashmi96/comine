@@ -36,7 +36,11 @@ pub async fn get_log_file_path(app: AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn append_log(_app: AppHandle, session_file: String, entry: String) -> Result<(), String> {
+pub async fn append_log(
+    _app: AppHandle,
+    session_file: String,
+    entry: String,
+) -> Result<(), String> {
     #[cfg(target_os = "android")]
     {
         return Ok(());

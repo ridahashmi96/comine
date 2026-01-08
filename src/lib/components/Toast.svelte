@@ -31,10 +31,11 @@
   }
 
   /** Update an existing toast's message, progress, or type */
-  export function updateToast(id: number, updates: Partial<Pick<Toast, 'message' | 'progress' | 'type' | 'subMessage'>>) {
-    toasts.update((t) => t.map((toast) => 
-      toast.id === id ? { ...toast, ...updates } : toast
-    ));
+  export function updateToast(
+    id: number,
+    updates: Partial<Pick<Toast, 'message' | 'progress' | 'type' | 'subMessage'>>
+  ) {
+    toasts.update((t) => t.map((toast) => (toast.id === id ? { ...toast, ...updates } : toast)));
   }
 
   toast.success = (msg: string, duration?: number) => toast(msg, 'success', duration);
@@ -44,7 +45,10 @@
   /** Create a persistent progress toast (duration=0 means no auto-dismiss) */
   toast.progress = (msg: string, progress: number = 0, subMessage?: string) => {
     const id = ++idCounter;
-    toasts.update((t) => [...t, { id, message: msg, type: 'progress', duration: 0, progress, subMessage }]);
+    toasts.update((t) => [
+      ...t,
+      { id, message: msg, type: 'progress', duration: 0, progress, subMessage },
+    ]);
     return id;
   };
 </script>

@@ -21,7 +21,7 @@ const SAMPLE_SIZE = 50;
 
 function normalizeThumbnailUrlForCache(url: string): string {
   if (!url) return url;
-  
+
   try {
     const parsed = new URL(url);
     const host = parsed.hostname.toLowerCase();
@@ -53,7 +53,7 @@ function scheduleCanvasRelease(): void {
 
 function getSharedCanvas(): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null {
   if (canvasIdleTimer) clearTimeout(canvasIdleTimer);
-  
+
   if (!sharedCanvas) {
     sharedCanvas = document.createElement('canvas');
     sharedCanvas.width = SAMPLE_SIZE;
@@ -61,7 +61,7 @@ function getSharedCanvas(): { canvas: HTMLCanvasElement; ctx: CanvasRenderingCon
     sharedCtx = sharedCanvas.getContext('2d', { willReadFrequently: true });
   }
   if (!sharedCtx) return null;
-  
+
   scheduleCanvasRelease();
   return { canvas: sharedCanvas, ctx: sharedCtx };
 }
@@ -96,13 +96,17 @@ export async function extractDominantColor(imageUrl: string): Promise<RGB | null
   if (cached) return cached;
 
   try {
-    const rustCached = await invoke<[number, number, number] | null>('get_cached_thumbnail_color', { url: imageUrl });
+    const rustCached = await invoke<[number, number, number] | null>('get_cached_thumbnail_color', {
+      url: imageUrl,
+    });
     if (rustCached) {
       const color: RGB = { r: rustCached[0], g: rustCached[1], b: rustCached[2] };
       setCacheEntry(imageUrl, color);
       return color;
     }
-  } catch { /* continue with JS extraction */ }
+  } catch {
+    /* continue with JS extraction */
+  }
 
   try {
     const response = await fetch(imageUrl, { mode: 'cors' });
@@ -116,7 +120,9 @@ export async function extractDominantColor(imageUrl: string): Promise<RGB | null
         return result;
       }
     }
-  } catch { /* try direct image load */ }
+  } catch {
+    /* try direct image load */
+  }
 
   return new Promise((resolve) => {
     const img = new Image();
@@ -160,7 +166,7 @@ export async function extractDominantColor(imageUrl: string): Promise<RGB | null
 async function extractFromBlobUrl(blobUrl: string): Promise<RGB | null> {
   return new Promise((resolve) => {
     const img = new Image();
-    
+
     img.onload = () => {
       const result = extractFromImage(img);
       img.onload = null;
@@ -207,8 +213,7 @@ function extractFromImage(img: HTMLImageElement): RGB | null {
       const max = Math.max(r, g, b);
       const min = Math.min(r, g, b);
       const lightness = (max + min) / 2 / 255;
-      const saturation =
-        max === min ? 0 : (max - min) / (1 - Math.abs(2 * lightness - 1)) / 255;
+      const saturation = max === min ? 0 : (max - min) / (1 - Math.abs(2 * lightness - 1)) / 255;
 
       const lightnessScore = 1 - Math.abs(lightness - 0.5) * 2;
       const score = saturation * lightnessScore * (1 - Math.abs(lightness - 0.4));
@@ -332,13 +337,17 @@ export async function getCachedColorAsync(url: string): Promise<RGB | null> {
   if (jsCached) return jsCached;
 
   try {
-    const rustCached = await invoke<[number, number, number] | null>('get_cached_thumbnail_color', { url });
+    const rustCached = await invoke<[number, number, number] | null>('get_cached_thumbnail_color', {
+      url,
+    });
     if (rustCached) {
       const color: RGB = { r: rustCached[0], g: rustCached[1], b: rustCached[2] };
       setCacheEntry(url, color);
       return color;
     }
-  } catch { /* not available */ }
+  } catch {
+    /* not available */
+  }
 
   return null;
 }

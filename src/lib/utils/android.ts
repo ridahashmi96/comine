@@ -273,7 +273,7 @@ export function downloadOnAndroid(
       const speedLimit = settings?.speedLimit ?? 0;
       const aria2MinSplitSize = settings?.aria2MinSplitSize ?? '1M';
       const downloadPath = settings?.downloadPath ?? null;
-      
+
       logHandler?.(
         'info',
         'Android',
@@ -640,7 +640,7 @@ export function pickFolderOnAndroid(): Promise<string | null> {
       clearTimeout(timeout);
       activeCallbacks.delete(callbackName);
       delete callbacks[callbackName];
-      
+
       try {
         const result = JSON.parse(resultJson);
         if (result.success && result.path) {
@@ -648,7 +648,11 @@ export function pickFolderOnAndroid(): Promise<string | null> {
         } else if (result.cancelled) {
           resolve(null);
         } else {
-          logHandler?.('error', 'Android', `Folder picker error: ${result.error || 'Unknown error'}`);
+          logHandler?.(
+            'error',
+            'Android',
+            `Folder picker error: ${result.error || 'Unknown error'}`
+          );
           resolve(null);
         }
       } catch (error) {

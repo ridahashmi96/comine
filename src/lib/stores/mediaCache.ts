@@ -349,10 +349,13 @@ class UnifiedMediaCache {
   constructor() {
     this.metadata.setMutationCallback(() => this.scheduleDiskFlush());
     this.heavyData.setMutationCallback(() => this.scheduleDiskFlush());
-    
-    this.cleanupTimer = setInterval(() => {
-      this.clearStale();
-    }, 2 * 60 * 1000);
+
+    this.cleanupTimer = setInterval(
+      () => {
+        this.clearStale();
+      },
+      2 * 60 * 1000
+    );
   }
 
   private scheduleDiskFlush(): void {
@@ -440,7 +443,7 @@ class UnifiedMediaCache {
       this.load();
       this.loaded = true;
     }
-    
+
     const key = normalizeUrl(url);
     const meta = this.metadata.get(key);
     if (!meta) {
@@ -733,12 +736,12 @@ class UnifiedMediaCache {
 
   async unload(): Promise<void> {
     await this.flush();
-    
+
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = null;
     }
-    
+
     this.metadata.clear();
     this.heavyData.clear();
     this.log('UNLOAD', 'memory cleared, disk persisted');
@@ -746,7 +749,7 @@ class UnifiedMediaCache {
   }
 
   load(): void {
-    this.loadAsync().catch(e => {
+    this.loadAsync().catch((e) => {
       console.error('[MediaCache] Load failed:', e);
     });
   }

@@ -68,12 +68,12 @@
   }
 
   .nav-item.external.telegram:hover {
-    color: #26A5E4;
+    color: #26a5e4;
     background: rgba(38, 165, 228, 0.15);
   }
 
   .nav-item.external.discord:hover {
-    color: #5865F2;
+    color: #5865f2;
     background: rgba(88, 101, 242, 0.15);
   }
 

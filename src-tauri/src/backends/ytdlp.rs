@@ -179,8 +179,7 @@ impl Backend for YtDlpBackend {
         )
         .await?;
 
-        let is_youtube =
-            request.url.contains("youtube.com") || request.url.contains("youtu.be");
+        let is_youtube = request.url.contains("youtube.com") || request.url.contains("youtu.be");
         if is_youtube {
             args.extend([
                 "--extractor-args".to_string(),
@@ -368,7 +367,9 @@ impl Backend for YtDlpBackend {
                         .collect();
 
                     if entries.is_empty() {
-                        return Err("Failed to parse playlist info: no valid JSON found".to_string());
+                        return Err(
+                            "Failed to parse playlist info: no valid JSON found".to_string()
+                        );
                     }
 
                     (None, entries)
@@ -429,15 +430,16 @@ impl Backend for YtDlpBackend {
                 let duration = entry["duration"].as_f64();
                 let is_music = is_ytm_playlist || duration.map(|d| d < 600.0).unwrap_or(false);
 
-                let entry_url = if request.url.contains("youtube.com") || request.url.contains("youtu.be") {
-                    if is_ytm_playlist {
-                        format!("https://music.youtube.com/watch?v={}", id)
+                let entry_url =
+                    if request.url.contains("youtube.com") || request.url.contains("youtu.be") {
+                        if is_ytm_playlist {
+                            format!("https://music.youtube.com/watch?v={}", id)
+                        } else {
+                            format!("https://www.youtube.com/watch?v={}", id)
+                        }
                     } else {
-                        format!("https://www.youtube.com/watch?v={}", id)
-                    }
-                } else {
-                    entry["url"].as_str().unwrap_or("").to_string()
-                };
+                        entry["url"].as_str().unwrap_or("").to_string()
+                    };
 
                 Some(PlaylistEntry {
                     id,
@@ -475,7 +477,9 @@ impl Backend for YtDlpBackend {
                 .and_then(|e| e["playlist_title"].as_str())
                 .map(|s| s.to_string())
         } else {
-            playlist_json.as_ref().and_then(|pj| pj["title"].as_str().map(|s| s.to_string()))
+            playlist_json
+                .as_ref()
+                .and_then(|pj| pj["title"].as_str().map(|s| s.to_string()))
         };
 
         let playlist_id = if is_ndjson_format {
@@ -484,7 +488,9 @@ impl Backend for YtDlpBackend {
                 .and_then(|e| e["playlist_id"].as_str())
                 .map(|s| s.to_string())
         } else {
-            playlist_json.as_ref().and_then(|pj| pj["id"].as_str().map(|s| s.to_string()))
+            playlist_json
+                .as_ref()
+                .and_then(|pj| pj["id"].as_str().map(|s| s.to_string()))
         };
 
         let playlist_uploader = if is_ndjson_format {

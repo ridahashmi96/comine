@@ -411,7 +411,13 @@
   }
 
   .log-container.scrolled {
-    mask-image: linear-gradient(to bottom, transparent, black 32px, black calc(100% - 56px), transparent);
+    mask-image: linear-gradient(
+      to bottom,
+      transparent,
+      black 32px,
+      black calc(100% - 56px),
+      transparent
+    );
     -webkit-mask-image: linear-gradient(
       to bottom,
       transparent,

@@ -71,21 +71,21 @@
 
   // Wrapper function for installing dependencies with toast progress
   async function installDepWithToast(
-    depName: DependencyName, 
+    depName: DependencyName,
     installFn: () => Promise<boolean>,
     displayName: string
   ) {
     // Show initial progress toast
     const toastId = toast.progress($t('deps.installing', { component: displayName }), 0);
     depToastIds.set(depName, toastId);
-    
+
     // Start installation
     const success = await installFn();
-    
+
     // Dismiss the progress toast
     dismissToast(toastId);
     depToastIds.delete(depName);
-    
+
     // Show result toast
     if (success) {
       toast.success($t('deps.installed', { component: displayName }));
@@ -99,9 +99,9 @@
     for (const [depName, toastId] of depToastIds) {
       const progress = $deps.installProgressMap.get(depName);
       if (progress) {
-        updateToast(toastId, { 
+        updateToast(toastId, {
           progress: progress.progress,
-          subMessage: progress.message || progress.stage
+          subMessage: progress.message || progress.stage,
         });
       }
     }
@@ -246,7 +246,18 @@
     },
     accentColor: {
       section: 'app',
-      keywords: ['accent', 'color', 'theme', 'buttons', 'highlight', 'rgb', 'rainbow', 'акцент', 'цвет', 'тема'],
+      keywords: [
+        'accent',
+        'color',
+        'theme',
+        'buttons',
+        'highlight',
+        'rgb',
+        'rainbow',
+        'акцент',
+        'цвет',
+        'тема',
+      ],
     },
     accentStyle: {
       section: 'app',
@@ -804,19 +815,21 @@
     <div class="settings-content">
       <!-- General Section -->
       {#if sectionHasMatches('general')}
-        <SettingsBlock 
-          title={$t('settings.general.title')} 
+        <SettingsBlock
+          title={$t('settings.general.title')}
           icon="settings"
-          onResetSection={isSectionModified('general') ? async () => {
-             undoLanguage();
-             if (onDesktop) {
-                await handleStartOnBootChange(defaultSettings.startOnBoot);
-                updateSetting('startMinimized', defaultSettings.startMinimized);
-                updateSetting('watchClipboard', defaultSettings.watchClipboard);
-                updateSetting('statusPopup', defaultSettings.statusPopup);
-                updateSetting('closeBehavior', defaultSettings.closeBehavior);
-             }
-          } : undefined}
+          onResetSection={isSectionModified('general')
+            ? async () => {
+                undoLanguage();
+                if (onDesktop) {
+                  await handleStartOnBootChange(defaultSettings.startOnBoot);
+                  updateSetting('startMinimized', defaultSettings.startMinimized);
+                  updateSetting('watchClipboard', defaultSettings.watchClipboard);
+                  updateSetting('statusPopup', defaultSettings.statusPopup);
+                  updateSetting('closeBehavior', defaultSettings.closeBehavior);
+                }
+              }
+            : undefined}
         >
           <!-- Language Selector -->
           {#if matchesSearch('language')}
@@ -828,11 +841,7 @@
               onReset={undoLanguage}
             >
               <div style="width: 200px;">
-                <Select
-                  options={languageOptions}
-                  value={$locale}
-                  onchange={handleLanguageChange}
-                />
+                <Select options={languageOptions} value={$locale} onchange={handleLanguageChange} />
               </div>
             </SettingItem>
           {/if}
@@ -848,10 +857,7 @@
                 await handleStartOnBootChange(defaultSettings.startOnBoot);
               }}
             >
-              <Toggle
-                checked={$settings.startOnBoot}
-                onchange={handleStartOnBootChange}
-              />
+              <Toggle checked={$settings.startOnBoot} onchange={handleStartOnBootChange} />
             </SettingItem>
           {/if}
 
@@ -864,10 +870,7 @@
               defaultValue={defaultSettings.startMinimized}
               onReset={() => updateSetting('startMinimized', defaultSettings.startMinimized)}
             >
-              <Toggle
-                checked={$settings.startMinimized}
-                onchange={handleStartMinimizedChange}
-              />
+              <Toggle checked={$settings.startMinimized} onchange={handleStartMinimizedChange} />
             </SettingItem>
           {/if}
 
@@ -880,10 +883,7 @@
               defaultValue={defaultSettings.watchClipboard}
               onReset={() => updateSetting('watchClipboard', defaultSettings.watchClipboard)}
             >
-              <Toggle
-                checked={$settings.watchClipboard}
-                onchange={handleWatchClipboardChange}
-              />
+              <Toggle checked={$settings.watchClipboard} onchange={handleWatchClipboardChange} />
             </SettingItem>
           {/if}
 
@@ -895,16 +895,13 @@
               defaultValue={defaultSettings.statusPopup}
               onReset={() => updateSetting('statusPopup', defaultSettings.statusPopup)}
             >
-              <Toggle
-                checked={$settings.statusPopup}
-                onchange={handleStatusPopupChange}
-              />
+              <Toggle checked={$settings.statusPopup} onchange={handleStatusPopupChange} />
             </SettingItem>
           {/if}
 
           <!-- Close behavior (desktop only) -->
           {#if onDesktop}
-             <SettingItem
+            <SettingItem
               title={$t('settings.general.closeBehavior')}
               description={$t('settings.general.closeBehaviorDescription')}
               icon="close"
@@ -926,21 +923,32 @@
 
       <!-- Notifications Section (desktop only - Android uses system notifications) -->
       {#if sectionHasMatches('notifications') && onDesktop}
-        <SettingsBlock 
-          title={$t('settings.notifications.title')} 
+        <SettingsBlock
+          title={$t('settings.notifications.title')}
           icon="bell"
-          onResetSection={isSectionModified('notifications') ? () => {
-            updateSetting('notificationsEnabled', defaultSettings.notificationsEnabled);
-            updateSetting('notificationPosition', defaultSettings.notificationPosition);
-            updateSetting('notificationMonitor', defaultSettings.notificationMonitor);
-            updateSetting('compactNotifications', defaultSettings.compactNotifications);
-            updateSetting('notificationFancyBackground', defaultSettings.notificationFancyBackground);
-            updateSetting('notificationThumbnailTheming', defaultSettings.notificationThumbnailTheming);
-            updateSetting('notificationCornerDismiss', defaultSettings.notificationCornerDismiss);
-            updateSetting('notificationOffset', defaultSettings.notificationOffset);
-            updateSetting('notificationDuration', defaultSettings.notificationDuration);
-            updateSetting('notificationShowProgress', defaultSettings.notificationShowProgress);
-          } : undefined}
+          onResetSection={isSectionModified('notifications')
+            ? () => {
+                updateSetting('notificationsEnabled', defaultSettings.notificationsEnabled);
+                updateSetting('notificationPosition', defaultSettings.notificationPosition);
+                updateSetting('notificationMonitor', defaultSettings.notificationMonitor);
+                updateSetting('compactNotifications', defaultSettings.compactNotifications);
+                updateSetting(
+                  'notificationFancyBackground',
+                  defaultSettings.notificationFancyBackground
+                );
+                updateSetting(
+                  'notificationThumbnailTheming',
+                  defaultSettings.notificationThumbnailTheming
+                );
+                updateSetting(
+                  'notificationCornerDismiss',
+                  defaultSettings.notificationCornerDismiss
+                );
+                updateSetting('notificationOffset', defaultSettings.notificationOffset);
+                updateSetting('notificationDuration', defaultSettings.notificationDuration);
+                updateSetting('notificationShowProgress', defaultSettings.notificationShowProgress);
+              }
+            : undefined}
         >
           {#if matchesSearch('notificationsEnabled')}
             <SettingItem
@@ -949,7 +957,8 @@
               icon="bell"
               value={$settings.notificationsEnabled}
               defaultValue={defaultSettings.notificationsEnabled}
-              onReset={() => updateSetting('notificationsEnabled', defaultSettings.notificationsEnabled)}
+              onReset={() =>
+                updateSetting('notificationsEnabled', defaultSettings.notificationsEnabled)}
             >
               <Toggle
                 checked={$settings.notificationsEnabled}
@@ -965,7 +974,8 @@
               icon="widgets"
               value={$settings.notificationPosition}
               defaultValue={defaultSettings.notificationPosition}
-              onReset={() => updateSetting('notificationPosition', defaultSettings.notificationPosition)}
+              onReset={() =>
+                updateSetting('notificationPosition', defaultSettings.notificationPosition)}
             >
               <div style="width: 180px;">
                 <Select
@@ -984,7 +994,8 @@
               icon="cursor"
               value={$settings.notificationMonitor}
               defaultValue={defaultSettings.notificationMonitor}
-              onReset={() => updateSetting('notificationMonitor', defaultSettings.notificationMonitor)}
+              onReset={() =>
+                updateSetting('notificationMonitor', defaultSettings.notificationMonitor)}
             >
               <div style="width: 180px;">
                 <Select
@@ -1003,7 +1014,8 @@
               icon="minimize_square"
               value={$settings.compactNotifications}
               defaultValue={defaultSettings.compactNotifications}
-              onReset={() => updateSetting('compactNotifications', defaultSettings.compactNotifications)}
+              onReset={() =>
+                updateSetting('compactNotifications', defaultSettings.compactNotifications)}
             >
               <Toggle
                 checked={$settings.compactNotifications}
@@ -1019,7 +1031,11 @@
               icon="image"
               value={$settings.notificationFancyBackground}
               defaultValue={defaultSettings.notificationFancyBackground}
-              onReset={() => updateSetting('notificationFancyBackground', defaultSettings.notificationFancyBackground)}
+              onReset={() =>
+                updateSetting(
+                  'notificationFancyBackground',
+                  defaultSettings.notificationFancyBackground
+                )}
             >
               <Toggle
                 checked={$settings.notificationFancyBackground}
@@ -1035,7 +1051,11 @@
               icon="image"
               value={$settings.notificationThumbnailTheming}
               defaultValue={defaultSettings.notificationThumbnailTheming}
-              onReset={() => updateSetting('notificationThumbnailTheming', defaultSettings.notificationThumbnailTheming)}
+              onReset={() =>
+                updateSetting(
+                  'notificationThumbnailTheming',
+                  defaultSettings.notificationThumbnailTheming
+                )}
             >
               <Toggle
                 checked={$settings.notificationThumbnailTheming}
@@ -1051,7 +1071,11 @@
               icon="cross_circle"
               value={$settings.notificationCornerDismiss}
               defaultValue={defaultSettings.notificationCornerDismiss}
-              onReset={() => updateSetting('notificationCornerDismiss', defaultSettings.notificationCornerDismiss)}
+              onReset={() =>
+                updateSetting(
+                  'notificationCornerDismiss',
+                  defaultSettings.notificationCornerDismiss
+                )}
             >
               <Toggle
                 checked={$settings.notificationCornerDismiss}
@@ -1067,7 +1091,8 @@
               icon="sort_vertical"
               value={$settings.notificationOffset}
               defaultValue={defaultSettings.notificationOffset}
-              onReset={() => updateSetting('notificationOffset', defaultSettings.notificationOffset)}
+              onReset={() =>
+                updateSetting('notificationOffset', defaultSettings.notificationOffset)}
             >
               <div class="slider-with-value">
                 <input
@@ -1095,7 +1120,8 @@
               icon="clock"
               value={$settings.notificationDuration}
               defaultValue={defaultSettings.notificationDuration}
-              onReset={() => updateSetting('notificationDuration', defaultSettings.notificationDuration)}
+              onReset={() =>
+                updateSetting('notificationDuration', defaultSettings.notificationDuration)}
             >
               <div class="slider-with-value">
                 <input
@@ -1123,11 +1149,13 @@
               icon="download"
               value={$settings.notificationShowProgress}
               defaultValue={defaultSettings.notificationShowProgress}
-              onReset={() => updateSetting('notificationShowProgress', defaultSettings.notificationShowProgress)}
+              onReset={() =>
+                updateSetting('notificationShowProgress', defaultSettings.notificationShowProgress)}
             >
               <Toggle
                 checked={$settings.notificationShowProgress}
-                onchange={() => updateSetting('notificationShowProgress', !$settings.notificationShowProgress)}
+                onchange={() =>
+                  updateSetting('notificationShowProgress', !$settings.notificationShowProgress)}
               />
             </SettingItem>
           {/if}
@@ -1136,12 +1164,14 @@
 
       <!-- Processing Section -->
       {#if sectionHasMatches('processing')}
-        <SettingsBlock 
-          title={$t('settings.processing.title')} 
+        <SettingsBlock
+          title={$t('settings.processing.title')}
           icon="server"
-          onResetSection={isSectionModified('processing') ? () => {
-            updateSetting('defaultProcessor', defaultSettings.defaultProcessor);
-          } : undefined}
+          onResetSection={isSectionModified('processing')
+            ? () => {
+                updateSetting('defaultProcessor', defaultSettings.defaultProcessor);
+              }
+            : undefined}
         >
           {#if matchesSearch('defaultProcessor')}
             {#snippet processorHint()}
@@ -1149,12 +1179,18 @@
                 {#if onAndroid}
                   <div class="setting-hint">Uses yt-dlp for all downloads.</div>
                 {:else}
-                  <div class="setting-hint">Detects Chinese platforms (Bilibili, Douyin) for Lux, others use yt-dlp.</div>
+                  <div class="setting-hint">
+                    Detects Chinese platforms (Bilibili, Douyin) for Lux, others use yt-dlp.
+                  </div>
                 {/if}
               {:else if $settings.defaultProcessor === 'lux' && !onAndroid}
-                <div class="setting-hint">Optimized for Chinese platforms only. Western sites may not work.</div>
+                <div class="setting-hint">
+                  Optimized for Chinese platforms only. Western sites may not work.
+                </div>
               {:else}
-                <div class="setting-hint">Supports 1000+ sites. Some Chinese platforms work better with Lux.</div>
+                <div class="setting-hint">
+                  Supports 1000+ sites. Some Chinese platforms work better with Lux.
+                </div>
               {/if}
             {/snippet}
 
@@ -1190,23 +1226,28 @@
 
       <!-- Downloads Section -->
       {#if sectionHasMatches('downloads')}
-        <SettingsBlock 
-          title={$t('settings.downloads.title')} 
+        <SettingsBlock
+          title={$t('settings.downloads.title')}
           icon="download"
-          onResetSection={isSectionModified('downloads') ? () => {
-            updateSetting('downloadPath', defaultSettings.downloadPath);
-            updateSetting('useAudioPath', defaultSettings.useAudioPath);
-            updateSetting('audioPath', defaultSettings.audioPath);
-            updateSetting('usePlaylistFolders', defaultSettings.usePlaylistFolders);
-            updateSetting('youtubeMusicAudioOnly', defaultSettings.youtubeMusicAudioOnly);
-            updateSetting('embedThumbnail', defaultSettings.embedThumbnail);
-            updateSetting('concurrentDownloads', defaultSettings.concurrentDownloads);
-            updateSetting('watchClipboardForFiles', defaultSettings.watchClipboardForFiles);
-            updateSetting('fileDownloadNotifications', defaultSettings.fileDownloadNotifications);
-            updateSetting('aria2Connections', defaultSettings.aria2Connections);
-            updateSetting('aria2Splits', defaultSettings.aria2Splits);
-            updateSetting('downloadSpeedLimit', defaultSettings.downloadSpeedLimit);
-          } : undefined}
+          onResetSection={isSectionModified('downloads')
+            ? () => {
+                updateSetting('downloadPath', defaultSettings.downloadPath);
+                updateSetting('useAudioPath', defaultSettings.useAudioPath);
+                updateSetting('audioPath', defaultSettings.audioPath);
+                updateSetting('usePlaylistFolders', defaultSettings.usePlaylistFolders);
+                updateSetting('youtubeMusicAudioOnly', defaultSettings.youtubeMusicAudioOnly);
+                updateSetting('embedThumbnail', defaultSettings.embedThumbnail);
+                updateSetting('concurrentDownloads', defaultSettings.concurrentDownloads);
+                updateSetting('watchClipboardForFiles', defaultSettings.watchClipboardForFiles);
+                updateSetting(
+                  'fileDownloadNotifications',
+                  defaultSettings.fileDownloadNotifications
+                );
+                updateSetting('aria2Connections', defaultSettings.aria2Connections);
+                updateSetting('aria2Splits', defaultSettings.aria2Splits);
+                updateSetting('downloadSpeedLimit', defaultSettings.downloadSpeedLimit);
+              }
+            : undefined}
         >
           {#if matchesSearch('downloadPath')}
             <SettingItem
@@ -1240,11 +1281,13 @@
                 onchange={(checked) => updateSetting('useAudioPath', checked)}
               />
             </SettingItem>
-            
+
             {#if $settings.useAudioPath}
               <div class="setting-sub-row">
                 <div class="setting-label-group">
-                  <span class="setting-label" style="font-size: 13px;">{$t('settings.downloads.audioPath')}</span>
+                  <span class="setting-label" style="font-size: 13px;"
+                    >{$t('settings.downloads.audioPath')}</span
+                  >
                 </div>
                 <div class="setting-controls">
                   <button class="path-btn" onclick={pickAudioPath}>
@@ -1265,7 +1308,8 @@
               icon="playlist"
               value={$settings.usePlaylistFolders}
               defaultValue={defaultSettings.usePlaylistFolders}
-              onReset={() => updateSetting('usePlaylistFolders', defaultSettings.usePlaylistFolders)}
+              onReset={() =>
+                updateSetting('usePlaylistFolders', defaultSettings.usePlaylistFolders)}
             >
               <Toggle
                 checked={$settings.usePlaylistFolders}
@@ -1281,7 +1325,8 @@
               icon="headphones"
               value={$settings.youtubeMusicAudioOnly}
               defaultValue={defaultSettings.youtubeMusicAudioOnly}
-              onReset={() => updateSetting('youtubeMusicAudioOnly', defaultSettings.youtubeMusicAudioOnly)}
+              onReset={() =>
+                updateSetting('youtubeMusicAudioOnly', defaultSettings.youtubeMusicAudioOnly)}
             >
               <Toggle
                 checked={$settings.youtubeMusicAudioOnly}
@@ -1313,7 +1358,8 @@
               icon="queue"
               value={$settings.concurrentDownloads}
               defaultValue={defaultSettings.concurrentDownloads}
-              onReset={() => updateSetting('concurrentDownloads', defaultSettings.concurrentDownloads)}
+              onReset={() =>
+                updateSetting('concurrentDownloads', defaultSettings.concurrentDownloads)}
             >
               <div class="slider-with-value">
                 <input
@@ -1342,7 +1388,8 @@
               icon="clipboard"
               value={$settings.watchClipboardForFiles}
               defaultValue={defaultSettings.watchClipboardForFiles}
-              onReset={() => updateSetting('watchClipboardForFiles', defaultSettings.watchClipboardForFiles)}
+              onReset={() =>
+                updateSetting('watchClipboardForFiles', defaultSettings.watchClipboardForFiles)}
             >
               <Toggle
                 checked={$settings.watchClipboardForFiles}
@@ -1359,7 +1406,11 @@
               icon="bell"
               value={$settings.fileDownloadNotifications}
               defaultValue={defaultSettings.fileDownloadNotifications}
-              onReset={() => updateSetting('fileDownloadNotifications', defaultSettings.fileDownloadNotifications)}
+              onReset={() =>
+                updateSetting(
+                  'fileDownloadNotifications',
+                  defaultSettings.fileDownloadNotifications
+                )}
             >
               <Toggle
                 checked={$settings.fileDownloadNotifications}
@@ -1431,7 +1482,8 @@
               icon="tuning"
               value={$settings.downloadSpeedLimit}
               defaultValue={defaultSettings.downloadSpeedLimit}
-              onReset={() => updateSetting('downloadSpeedLimit', defaultSettings.downloadSpeedLimit)}
+              onReset={() =>
+                updateSetting('downloadSpeedLimit', defaultSettings.downloadSpeedLimit)}
             >
               <div class="slider-with-value">
                 <input
@@ -1464,7 +1516,8 @@
               icon="download"
               value={$settings.bypassProxyForDownloads}
               defaultValue={defaultSettings.bypassProxyForDownloads}
-              onReset={() => updateSetting('bypassProxyForDownloads', defaultSettings.bypassProxyForDownloads)}
+              onReset={() =>
+                updateSetting('bypassProxyForDownloads', defaultSettings.bypassProxyForDownloads)}
             >
               <Toggle
                 checked={$settings.bypassProxyForDownloads}
@@ -1477,14 +1530,16 @@
 
       <!-- Network Section (proxy settings) - Desktop only -->
       {#if sectionHasMatches('network') && onDesktop}
-        <SettingsBlock 
-          title={$t('settings.network.title')} 
+        <SettingsBlock
+          title={$t('settings.network.title')}
           icon="globe"
-          onResetSection={isSectionModified('network') ? () => {
-            updateSetting('proxyMode', defaultSettings.proxyMode);
-            updateSetting('customProxyUrl', defaultSettings.customProxyUrl);
-            updateSetting('retryWithoutProxy', defaultSettings.retryWithoutProxy);
-          } : undefined}
+          onResetSection={isSectionModified('network')
+            ? () => {
+                updateSetting('proxyMode', defaultSettings.proxyMode);
+                updateSetting('customProxyUrl', defaultSettings.customProxyUrl);
+                updateSetting('retryWithoutProxy', defaultSettings.retryWithoutProxy);
+              }
+            : undefined}
         >
           {#if matchesSearch('proxy')}
             <!-- Proxy Mode -->
@@ -1553,8 +1608,7 @@
                   <div class="proxy-input-wrapper" class:error={proxyValidationError}>
                     <Input
                       value={customProxyInput}
-                      oninput={(e) =>
-                        handleCustomProxyInput((e.target as HTMLInputElement).value)}
+                      oninput={(e) => handleCustomProxyInput((e.target as HTMLInputElement).value)}
                       placeholder={$t('settings.network.customProxyUrlPlaceholder')}
                     />
                   </div>
@@ -1580,7 +1634,8 @@
                 icon="restart"
                 value={$settings.retryWithoutProxy}
                 defaultValue={defaultSettings.retryWithoutProxy}
-                onReset={() => updateSetting('retryWithoutProxy', defaultSettings.retryWithoutProxy)}
+                onReset={() =>
+                  updateSetting('retryWithoutProxy', defaultSettings.retryWithoutProxy)}
               >
                 <Toggle
                   checked={$settings.retryWithoutProxy}
@@ -1631,27 +1686,29 @@
 
       <!-- App Section -->
       {#if sectionHasMatches('app')}
-        <SettingsBlock 
-          title={$t('settings.app.title')} 
+        <SettingsBlock
+          title={$t('settings.app.title')}
           icon="widgets"
-          onResetSection={isSectionModified('app') ? () => {
-            updateSetting('autoUpdate', defaultSettings.autoUpdate);
-            updateSetting('allowPreReleases', defaultSettings.allowPreReleases);
-            updateSetting('sendStats', defaultSettings.sendStats);
-            updateSetting('backgroundType', defaultSettings.backgroundType);
-            updateSetting('backgroundColor', defaultSettings.backgroundColor);
-            updateSetting('backgroundVideo', defaultSettings.backgroundVideo);
-            updateSetting('backgroundImage', defaultSettings.backgroundImage);
-            updateSetting('backgroundBlur', defaultSettings.backgroundBlur);
-            updateSetting('backgroundOpacity', defaultSettings.backgroundOpacity);
-            updateSetting('accentColor', defaultSettings.accentColor);
-            updateSetting('useSystemAccent', defaultSettings.useSystemAccent);
-            updateSetting('disableAnimations', defaultSettings.disableAnimations);
-            updateSetting('toastPosition', defaultSettings.toastPosition);
-            updateSetting('sizeUnit', defaultSettings.sizeUnit);
-            updateSetting('showHistoryStats', defaultSettings.showHistoryStats);
-            updateSetting('thumbnailTheming', defaultSettings.thumbnailTheming);
-          } : undefined}
+          onResetSection={isSectionModified('app')
+            ? () => {
+                updateSetting('autoUpdate', defaultSettings.autoUpdate);
+                updateSetting('allowPreReleases', defaultSettings.allowPreReleases);
+                updateSetting('sendStats', defaultSettings.sendStats);
+                updateSetting('backgroundType', defaultSettings.backgroundType);
+                updateSetting('backgroundColor', defaultSettings.backgroundColor);
+                updateSetting('backgroundVideo', defaultSettings.backgroundVideo);
+                updateSetting('backgroundImage', defaultSettings.backgroundImage);
+                updateSetting('backgroundBlur', defaultSettings.backgroundBlur);
+                updateSetting('backgroundOpacity', defaultSettings.backgroundOpacity);
+                updateSetting('accentColor', defaultSettings.accentColor);
+                updateSetting('useSystemAccent', defaultSettings.useSystemAccent);
+                updateSetting('disableAnimations', defaultSettings.disableAnimations);
+                updateSetting('toastPosition', defaultSettings.toastPosition);
+                updateSetting('sizeUnit', defaultSettings.sizeUnit);
+                updateSetting('showHistoryStats', defaultSettings.showHistoryStats);
+                updateSetting('thumbnailTheming', defaultSettings.thumbnailTheming);
+              }
+            : undefined}
         >
           {#if matchesSearch('autoUpdate')}
             <SettingItem
@@ -1677,10 +1734,7 @@
               defaultValue={defaultSettings.autoUpdate}
               onReset={() => updateSetting('autoUpdate', defaultSettings.autoUpdate)}
             >
-              <Toggle
-                checked={$settings.autoUpdate}
-                onchange={handleAutoUpdateChange}
-              />
+              <Toggle checked={$settings.autoUpdate} onchange={handleAutoUpdateChange} />
             </SettingItem>
 
             {#if $updateState.available && $updateState.info}
@@ -1717,10 +1771,7 @@
               {#if $updateState.downloading}
                 <div class="setting-sub-row update-progress">
                   <div class="update-progress-bar">
-                    <div
-                      class="update-progress-fill"
-                      style="width: {$updateState.progress}%"
-                    ></div>
+                    <div class="update-progress-fill" style="width: {$updateState.progress}%"></div>
                   </div>
                 </div>
               {/if}
@@ -1761,10 +1812,7 @@
               defaultValue={defaultSettings.sendStats}
               onReset={() => updateSetting('sendStats', defaultSettings.sendStats)}
             >
-              <Toggle
-                checked={$settings.sendStats}
-                onchange={handleSendStatsChange}
-              />
+              <Toggle checked={$settings.sendStats} onchange={handleSendStatsChange} />
             </SettingItem>
           {/if}
 
@@ -1922,9 +1970,7 @@
                     step="1"
                     value={$settings.backgroundOpacity}
                     oninput={(e) =>
-                      handleBackgroundOpacityChange(
-                        parseInt((e.target as HTMLInputElement).value)
-                      )}
+                      handleBackgroundOpacityChange(parseInt((e.target as HTMLInputElement).value))}
                   />
                   <span class="slider-value">{$settings.backgroundOpacity}%</span>
                 </div>
@@ -1990,7 +2036,9 @@
                 label={$t('settings.app.useSystemAccent')}
                 onchange={handleUseSystemAccentChange}
               />
-              <span class="setting-hint" style="margin-left: 0; padding-left: 0;">{$t('settings.app.useSystemAccentDescription')}</span>
+              <span class="setting-hint" style="margin-left: 0; padding-left: 0;"
+                >{$t('settings.app.useSystemAccentDescription')}</span
+              >
             </div>
           {/if}
 
@@ -2122,16 +2170,13 @@
 
       <!-- Dependencies Section (desktop only - Android uses bundled youtubedl-android) -->
       {#if sectionHasMatches('deps') && onDesktop}
-        <SettingsBlock 
-          title={$t('settings.deps.title')} 
-          icon="package"
-        >
+        <SettingsBlock title={$t('settings.deps.title')} icon="package">
           {#if matchesSearch('ytdlp')}
-            <SettingItem
-              title="yt-dlp"
-              description={$t('settings.deps.ytdlpDescription')}
-            >
-              <div class="dep-item" style="width: 100%; display: flex; justify-content: space-between; align-items: center;">
+            <SettingItem title="yt-dlp" description={$t('settings.deps.ytdlpDescription')}>
+              <div
+                class="dep-item"
+                style="width: 100%; display: flex; justify-content: space-between; align-items: center;"
+              >
                 <div class="dep-info" style="display: flex; align-items: center; gap: 8px;">
                   <span class="dep-badge required">{$t('settings.deps.required')}</span>
                   {#if $deps.checking === 'ytdlp'}
@@ -2152,11 +2197,19 @@
                     <button class="dep-btn danger" onclick={() => deps.uninstallYtdlp()}>
                       {$t('settings.deps.uninstall')}
                     </button>
-                    <button class="dep-btn" onclick={() => installDepWithToast('ytdlp', () => deps.installYtdlp(), 'yt-dlp')}>
+                    <button
+                      class="dep-btn"
+                      onclick={() =>
+                        installDepWithToast('ytdlp', () => deps.installYtdlp(), 'yt-dlp')}
+                    >
                       {$t('settings.deps.reinstall')}
                     </button>
                   {:else}
-                    <button class="dep-btn primary" onclick={() => installDepWithToast('ytdlp', () => deps.installYtdlp(), 'yt-dlp')}>
+                    <button
+                      class="dep-btn primary"
+                      onclick={() =>
+                        installDepWithToast('ytdlp', () => deps.installYtdlp(), 'yt-dlp')}
+                    >
                       {$t('settings.deps.install')}
                     </button>
                   {/if}
@@ -2174,11 +2227,11 @@
           {/if}
 
           <!-- ffmpeg -->
-          <SettingItem
-            title="ffmpeg"
-            description={$t('settings.deps.ffmpegDescription')}
-          >
-            <div class="dep-item" style="width: 100%; display: flex; justify-content: space-between; align-items: center;">
+          <SettingItem title="ffmpeg" description={$t('settings.deps.ffmpegDescription')}>
+            <div
+              class="dep-item"
+              style="width: 100%; display: flex; justify-content: space-between; align-items: center;"
+            >
               <div class="dep-info" style="display: flex; align-items: center; gap: 8px;">
                 {#if $deps.checking === 'ffmpeg'}
                   <span class="dep-status checking">{$t('settings.deps.checking')}</span>
@@ -2198,11 +2251,19 @@
                   <button class="dep-btn danger" onclick={() => deps.uninstallFfmpeg()}>
                     {$t('settings.deps.uninstall')}
                   </button>
-                  <button class="dep-btn" onclick={() => installDepWithToast('ffmpeg', () => deps.installFfmpeg(), 'ffmpeg')}>
+                  <button
+                    class="dep-btn"
+                    onclick={() =>
+                      installDepWithToast('ffmpeg', () => deps.installFfmpeg(), 'ffmpeg')}
+                  >
                     {$t('settings.deps.reinstall')}
                   </button>
                 {:else}
-                  <button class="dep-btn primary" onclick={() => installDepWithToast('ffmpeg', () => deps.installFfmpeg(), 'ffmpeg')}>
+                  <button
+                    class="dep-btn primary"
+                    onclick={() =>
+                      installDepWithToast('ffmpeg', () => deps.installFfmpeg(), 'ffmpeg')}
+                  >
                     {$t('settings.deps.install')}
                   </button>
                 {/if}
@@ -2219,11 +2280,11 @@
           </SettingItem>
 
           <!-- aria2 -->
-          <SettingItem
-            title="aria2"
-            description={$t('settings.deps.aria2Description')}
-          >
-            <div class="dep-item" style="width: 100%; display: flex; justify-content: space-between; align-items: center;">
+          <SettingItem title="aria2" description={$t('settings.deps.aria2Description')}>
+            <div
+              class="dep-item"
+              style="width: 100%; display: flex; justify-content: space-between; align-items: center;"
+            >
               <div class="dep-info" style="display: flex; align-items: center; gap: 8px;">
                 {#if $deps.checking === 'aria2'}
                   <span class="dep-status checking">{$t('settings.deps.checking')}</span>
@@ -2243,11 +2304,17 @@
                   <button class="dep-btn danger" onclick={() => deps.uninstallAria2()}>
                     {$t('settings.deps.uninstall')}
                   </button>
-                  <button class="dep-btn" onclick={() => installDepWithToast('aria2', () => deps.installAria2(), 'aria2')}>
+                  <button
+                    class="dep-btn"
+                    onclick={() => installDepWithToast('aria2', () => deps.installAria2(), 'aria2')}
+                  >
                     {$t('settings.deps.reinstall')}
                   </button>
                 {:else}
-                  <button class="dep-btn primary" onclick={() => installDepWithToast('aria2', () => deps.installAria2(), 'aria2')}>
+                  <button
+                    class="dep-btn primary"
+                    onclick={() => installDepWithToast('aria2', () => deps.installAria2(), 'aria2')}
+                  >
                     {$t('settings.deps.install')}
                   </button>
                 {/if}
@@ -2264,11 +2331,11 @@
           </SettingItem>
 
           <!-- deno (JavaScript runtime for yt-dlp) -->
-          <SettingItem
-            title="deno"
-            description={$t('settings.deps.denoDescription')}
-          >
-            <div class="dep-item" style="width: 100%; display: flex; justify-content: space-between; align-items: center;">
+          <SettingItem title="deno" description={$t('settings.deps.denoDescription')}>
+            <div
+              class="dep-item"
+              style="width: 100%; display: flex; justify-content: space-between; align-items: center;"
+            >
               <div class="dep-info" style="display: flex; align-items: center; gap: 8px;">
                 {#if $deps.checking === 'deno'}
                   <span class="dep-status checking">{$t('settings.deps.checking')}</span>
@@ -2288,11 +2355,17 @@
                   <button class="dep-btn danger" onclick={() => deps.uninstallDeno()}>
                     {$t('settings.deps.uninstall')}
                   </button>
-                  <button class="dep-btn" onclick={() => installDepWithToast('deno', () => deps.installDeno(), 'deno')}>
+                  <button
+                    class="dep-btn"
+                    onclick={() => installDepWithToast('deno', () => deps.installDeno(), 'deno')}
+                  >
                     {$t('settings.deps.reinstall')}
                   </button>
                 {:else}
-                  <button class="dep-btn primary" onclick={() => installDepWithToast('deno', () => deps.installDeno(), 'deno')}>
+                  <button
+                    class="dep-btn primary"
+                    onclick={() => installDepWithToast('deno', () => deps.installDeno(), 'deno')}
+                  >
                     {$t('settings.deps.install')}
                   </button>
                 {/if}
@@ -2309,11 +2382,11 @@
           </SettingItem>
 
           <!-- quickjs (Lightweight JavaScript runtime for yt-dlp PO tokens) -->
-          <SettingItem
-            title="quickjs"
-            description={$t('settings.deps.quickjsDescription')}
-          >
-            <div class="dep-item" style="width: 100%; display: flex; justify-content: space-between; align-items: center;">
+          <SettingItem title="quickjs" description={$t('settings.deps.quickjsDescription')}>
+            <div
+              class="dep-item"
+              style="width: 100%; display: flex; justify-content: space-between; align-items: center;"
+            >
               <div class="dep-info" style="display: flex; align-items: center; gap: 8px;">
                 {#if $deps.checking === 'quickjs'}
                   <span class="dep-status checking">{$t('settings.deps.checking')}</span>
@@ -2333,11 +2406,19 @@
                   <button class="dep-btn danger" onclick={() => deps.uninstallQuickjs()}>
                     {$t('settings.deps.uninstall')}
                   </button>
-                  <button class="dep-btn" onclick={() => installDepWithToast('quickjs', () => deps.installQuickjs(), 'quickjs')}>
+                  <button
+                    class="dep-btn"
+                    onclick={() =>
+                      installDepWithToast('quickjs', () => deps.installQuickjs(), 'quickjs')}
+                  >
                     {$t('settings.deps.reinstall')}
                   </button>
                 {:else}
-                  <button class="dep-btn primary" onclick={() => installDepWithToast('quickjs', () => deps.installQuickjs(), 'quickjs')}>
+                  <button
+                    class="dep-btn primary"
+                    onclick={() =>
+                      installDepWithToast('quickjs', () => deps.installQuickjs(), 'quickjs')}
+                  >
                     {$t('settings.deps.install')}
                   </button>
                 {/if}
@@ -2354,11 +2435,11 @@
           </SettingItem>
 
           <!-- lux -->
-          <SettingItem
-            title="lux"
-            description={$t('settings.deps.luxDescription')}
-          >
-            <div class="dep-item" style="width: 100%; display: flex; justify-content: space-between; align-items: center;">
+          <SettingItem title="lux" description={$t('settings.deps.luxDescription')}>
+            <div
+              class="dep-item"
+              style="width: 100%; display: flex; justify-content: space-between; align-items: center;"
+            >
               <div class="dep-info" style="display: flex; align-items: center; gap: 8px;">
                 <span class="dep-badge optional">{$t('settings.deps.optional')}</span>
                 {#if $deps.checking === 'lux'}
@@ -2379,11 +2460,17 @@
                   <button class="dep-btn danger" onclick={() => deps.uninstallLux()}>
                     {$t('settings.deps.uninstall')}
                   </button>
-                  <button class="dep-btn" onclick={() => installDepWithToast('lux', () => deps.installLux(), 'lux')}>
+                  <button
+                    class="dep-btn"
+                    onclick={() => installDepWithToast('lux', () => deps.installLux(), 'lux')}
+                  >
                     {$t('settings.deps.reinstall')}
                   </button>
                 {:else}
-                  <button class="dep-btn primary" onclick={() => installDepWithToast('lux', () => deps.installLux(), 'lux')}>
+                  <button
+                    class="dep-btn primary"
+                    onclick={() => installDepWithToast('lux', () => deps.installLux(), 'lux')}
+                  >
                     {$t('settings.deps.install')}
                   </button>
                 {/if}
@@ -2407,10 +2494,7 @@
 
       <!-- Data Section -->
       {#if !searchQuery.trim() || 'data reset clear export import история сброс очистить экспорт импорт'.includes(searchQuery.toLowerCase())}
-        <SettingsBlock 
-          title={$t('settings.data.title')} 
-          icon="folder"
-        >
+        <SettingsBlock title={$t('settings.data.title')} icon="folder">
           <!-- Reset Settings -->
           <SettingItem
             title={$t('settings.data.resetSettings')}
@@ -2814,8 +2898,12 @@
   }
 
   @keyframes rgb-shift {
-    0% { background-position: 0% 50%; }
-    100% { background-position: 200% 50%; }
+    0% {
+      background-position: 0% 50%;
+    }
+    100% {
+      background-position: 200% 50%;
+    }
   }
 
   /* Accent style buttons */
@@ -2960,8 +3048,6 @@
     border-radius: 2px;
   }
 
-
-
   .slider-with-value {
     display: flex;
     align-items: center;
@@ -3080,8 +3166,6 @@
     background: rgba(59, 130, 246, 0.15);
   }
 
-
-
   .dep-status {
     font-size: 13px;
     padding: 2px 8px;
@@ -3187,8 +3271,6 @@
     font-size: 13px;
     color: rgba(239, 68, 68, 0.9);
   }
-
-
 
   .data-btn {
     display: flex;
@@ -3430,8 +3512,6 @@
     background: rgba(251, 191, 36, 0.15);
     color: rgba(251, 191, 36, 0.9);
   }
-
-
 
   /* Mobile responsive styles */
   @media (max-width: 700px) {

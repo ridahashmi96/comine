@@ -15,22 +15,22 @@
   });
 
   let accentStyle = $derived($settings.accentStyle || 'solid');
-  
+
   let secondaryColor = $derived.by(() => {
     const hex = ($settings.backgroundColor || '#1a1a2e').replace('#', '');
     const r = parseInt(hex.substring(0, 2), 16);
     const g = parseInt(hex.substring(2, 4), 16);
     const b = parseInt(hex.substring(4, 6), 16);
-    
+
     const accentHex = ($settings.accentColor || '#6366F1').replace('#', '');
     const ar = parseInt(accentHex.substring(0, 2), 16);
     const ag = parseInt(accentHex.substring(2, 4), 16);
     const ab = parseInt(accentHex.substring(4, 6), 16);
-    
+
     const r2 = Math.round(r * 0.85 + ar * 0.15);
     const g2 = Math.round(g * 0.85 + ag * 0.15);
     const b2 = Math.round(b * 0.85 + ab * 0.15);
-    
+
     return `#${((1 << 24) | (r2 << 16) | (g2 << 8) | b2).toString(16).slice(1)}`;
   });
 
@@ -60,7 +60,11 @@
   }
 </script>
 
-<div class="background-provider" data-type={effectiveBackgroundType} data-accent-style={accentStyle}>
+<div
+  class="background-provider"
+  data-type={effectiveBackgroundType}
+  data-accent-style={accentStyle}
+>
   {#if effectiveBackgroundType === 'animated' && $settings.backgroundVideo}
     {@const videoSrc = $settings.backgroundVideo}
     {@const opacity = onDesktop ? $settings.backgroundOpacity / 100 : 1}
@@ -100,10 +104,7 @@
         <div class="glow-orb"></div>
       </div>
     {:else}
-      <div
-        class="background-solid"
-        style="background-color: {bgColor}; opacity: {opacity};"
-      ></div>
+      <div class="background-solid" style="background-color: {bgColor}; opacity: {opacity};"></div>
     {/if}
   {/if}
 </div>

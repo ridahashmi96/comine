@@ -639,7 +639,12 @@
       <div class="main-row">
         <div class="left">
           {#if displayThumbnail && !thumbnailError}
-            <img src={displayThumbnail} alt="" class="thumb" onerror={() => (thumbnailError = true)} />
+            <img
+              src={displayThumbnail}
+              alt=""
+              class="thumb"
+              onerror={() => (thumbnailError = true)}
+            />
           {:else if loading && !hasPrefetchedInfo}
             <div class="thumb skeleton"></div>
           {:else}

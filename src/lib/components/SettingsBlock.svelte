@@ -22,10 +22,10 @@
       {/if}
       <h2 class="block-title">{title}</h2>
     </div>
-    
+
     {#if onResetSection}
-      <button 
-        class="section-reset-btn" 
+      <button
+        class="section-reset-btn"
         onclick={onResetSection}
         use:tooltip={$t('settings.resetSectionTooltip')}
       >
@@ -34,9 +34,9 @@
       </button>
     {/if}
   </div>
-  
+
   <Divider mt={8} mb={4} />
-  
+
   <div class="block-content">
     {@render children?.()}
   </div>
@@ -64,7 +64,7 @@
   }
 
   :global(.header-icon) {
-    color: var(--accent-color, #6366F1);
+    color: var(--accent-color, #6366f1);
     opacity: 0.9;
     width: 24px;
     display: flex;

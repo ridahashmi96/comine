@@ -217,7 +217,7 @@
 
   function makeVideoLabel(f: VideoFormat): string {
     const parts: string[] = [];
-    
+
     if (f.resolution) {
       const resParts = f.resolution.split('x');
       if (resParts.length >= 2 && resParts[1]) {
@@ -243,7 +243,7 @@
     } else {
       parts.push('?');
     }
-    
+
     if (f.fps && f.fps > 30) parts.push(`${Math.round(f.fps)}fps`);
     const codec = getCodec(f.vcodec);
     if (codec) parts.push(codec);
@@ -304,7 +304,7 @@
   let selectedPreset = $state<PresetId>('best');
   let isYouTubeMusic = $derived(url.includes('music.youtube.com'));
   let didInitialPreset = $state(false);
-  
+
   let backend = $derived(detectBackendForUrl(url));
   let platformName = $derived.by(() => {
     if (url.includes('bilibili.com') || url.includes('b23.tv')) return 'Bilibili';
@@ -322,14 +322,14 @@
 
   const presets = $derived.by(() => {
     const available: { id: PresetId; label: string; icon: IconName }[] = [];
-    
+
     available.push({ id: 'best', label: $t('download.tracks.presetBest'), icon: 'video' });
-    
+
     const resolutionCounts = new Map<number, number>();
     if (videoFormats.length > 0) {
-      videoFormats.forEach(f => {
+      videoFormats.forEach((f) => {
         let height = 0;
-        
+
         if (f.resolution) {
           const parts = f.resolution.split('x');
           if (parts.length >= 2) {
@@ -338,42 +338,42 @@
             height = parseInt(f.resolution.replace('p', ''));
           }
         }
-        
+
         if (height === 0 && f.format_note) {
           const match = f.format_note.match(/(\d+)p/);
           if (match) {
             height = parseInt(match[1]);
           }
         }
-        
+
         if (height > 0) {
           resolutionCounts.set(height, (resolutionCounts.get(height) || 0) + 1);
         }
       });
     }
-    
+
     const sortedResolutions = Array.from(resolutionCounts.keys())
       .sort((a, b) => b - a)
       .slice(0, 3);
-    
-    sortedResolutions.forEach(height => {
-      available.push({ 
-        id: `${height}p`, 
-        label: `${height}p`, 
-        icon: 'video' as IconName 
+
+    sortedResolutions.forEach((height) => {
+      available.push({
+        id: `${height}p`,
+        label: `${height}p`,
+        icon: 'video' as IconName,
       });
     });
-    
-    if (audioFormats.length > 0 || videoFormats.some(f => f.has_audio)) {
+
+    if (audioFormats.length > 0 || videoFormats.some((f) => f.has_audio)) {
       available.push({ id: 'music', label: $t('download.tracks.presetMusic'), icon: 'music' });
     }
-    
+
     return available;
   });
 
   function applyPreset(preset: PresetId) {
     selectedPreset = preset;
-    
+
     if (preset === 'best') {
       selectedVideo = 'best';
       selectedAudio = 'best';
@@ -413,12 +413,11 @@
   });
 
   let hasSeparateStreams = $derived(
-    info?.formats?.some((f) => (f.has_video && !f.has_audio) || (f.has_audio && !f.has_video)) ?? false
+    info?.formats?.some((f) => (f.has_video && !f.has_audio) || (f.has_audio && !f.has_video)) ??
+      false
   );
-  
-  let hasMuxedFormats = $derived(
-    info?.formats?.some((f) => f.has_video && f.has_audio) ?? false
-  );
+
+  let hasMuxedFormats = $derived(info?.formats?.some((f) => f.has_video && f.has_audio) ?? false);
 
   let useDualSelectors = $derived(hasSeparateStreams);
 
@@ -450,7 +449,7 @@
 
   let selectedVideoIsMuxed = $derived(
     selectedVideo !== 'best' && selectedVideo !== 'none'
-      ? info?.formats.find(f => f.format_id === selectedVideo)?.has_audio ?? false
+      ? (info?.formats.find((f) => f.format_id === selectedVideo)?.has_audio ?? false)
       : false
   );
 
@@ -512,12 +511,18 @@
             disabled: selectedVideoIsMuxed,
           },
           ...(selectedVideo !== 'none'
-            ? [{ value: 'none', label: $t('download.tracks.noAudio'), disabled: selectedVideoIsMuxed }]
+            ? [
+                {
+                  value: 'none',
+                  label: $t('download.tracks.noAudio'),
+                  disabled: selectedVideoIsMuxed,
+                },
+              ]
             : []),
-          ...audioFormats.map((f) => ({ 
-            value: f.format_id, 
+          ...audioFormats.map((f) => ({
+            value: f.format_id,
             label: makeAudioLabel(f),
-            disabled: selectedVideoIsMuxed 
+            disabled: selectedVideoIsMuxed,
           })),
         ]
   );
@@ -609,11 +614,9 @@
           formatString = selectedVideo; // Use specific stream ID
         }
       }
-    }
-    else if (!useDualSelectors) {
+    } else if (!useDualSelectors) {
       formatString = selectedMuxed === 'best' ? 'best' : selectedMuxed;
-    }
-    else if (selectedVideo === 'none' && selectedAudio === 'none') {
+    } else if (selectedVideo === 'none' && selectedAudio === 'none') {
       formatString = 'bestvideo+bestaudio/best';
     } else if (selectedVideo === 'best') {
       if (selectedAudio === 'best') {
@@ -844,7 +847,7 @@
         const backend = detectBackendForUrl(url);
         const luxInstalled = backend === 'lux' && $deps.lux?.installed;
         const command = luxInstalled ? 'lux_get_video_formats' : 'get_video_formats';
-        
+
         loadedInfo = await invoke<VideoInfo>(command, {
           url,
           cookiesFromBrowser: cookiesFromBrowser || null,
@@ -920,7 +923,12 @@
             {#if loading}
               <div class="video-thumb skeleton"></div>
             {:else if displayThumbnail && !thumbnailError}
-              <img src={displayThumbnail} alt="" class="video-thumb" onerror={() => (thumbnailError = true)} />
+              <img
+                src={displayThumbnail}
+                alt=""
+                class="video-thumb"
+                onerror={() => (thumbnailError = true)}
+              />
               {#if info?.duration}
                 <span class="thumb-duration">{formatDuration(info.duration)}</span>
               {/if}
@@ -1062,7 +1070,10 @@
               <div class="checks">
                 <Checkbox bind:checked={skipSponsors} label={$t('download.tracks.skipSponsors')} />
                 <Checkbox bind:checked={skipIntros} label={$t('download.tracks.skipIntros')} />
-                <Checkbox bind:checked={skipSelfPromo} label={$t('download.tracks.skipSelfPromo')} />
+                <Checkbox
+                  bind:checked={skipSelfPromo}
+                  label={$t('download.tracks.skipSelfPromo')}
+                />
                 <Checkbox
                   bind:checked={skipInteraction}
                   label={$t('download.tracks.skipInteraction')}
@@ -1100,7 +1111,12 @@
           {#if loading}
             <div class="thumb skeleton"></div>
           {:else if displayThumbnail && !thumbnailError}
-            <img src={displayThumbnail} alt="" class="thumb" onerror={() => (thumbnailError = true)} />
+            <img
+              src={displayThumbnail}
+              alt=""
+              class="thumb"
+              onerror={() => (thumbnailError = true)}
+            />
           {:else}
             <div class="thumb empty"><Icon name="video" size={20} /></div>
           {/if}
@@ -1203,7 +1219,10 @@
               <div class="option-grid">
                 <Checkbox bind:checked={skipSponsors} label={$t('download.tracks.skipSponsors')} />
                 <Checkbox bind:checked={skipIntros} label={$t('download.tracks.skipIntros')} />
-                <Checkbox bind:checked={skipSelfPromo} label={$t('download.tracks.skipSelfPromo')} />
+                <Checkbox
+                  bind:checked={skipSelfPromo}
+                  label={$t('download.tracks.skipSelfPromo')}
+                />
                 <Checkbox
                   bind:checked={skipInteraction}
                   label={$t('download.tracks.skipInteraction')}

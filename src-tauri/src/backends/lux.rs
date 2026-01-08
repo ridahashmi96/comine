@@ -139,13 +139,15 @@ pub async fn setup_cookies(
 }
 
 fn parse_resolution(quality: &str) -> Option<String> {
-    let patterns = ["2160p", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p"];
+    let patterns = [
+        "2160p", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p",
+    ];
     for pattern in patterns {
         if quality.contains(pattern) {
             return Some(pattern.to_string());
         }
     }
-    
+
     if quality.contains("1080") {
         return Some("1080p".to_string());
     } else if quality.contains("720") {
@@ -155,7 +157,7 @@ fn parse_resolution(quality: &str) -> Option<String> {
     } else if quality.contains("360") {
         return Some("360p".to_string());
     }
-    
+
     None
 }
 
@@ -174,8 +176,8 @@ fn parse_codec(quality: &str) -> Option<String> {
 }
 
 fn has_video(quality: &str) -> bool {
-    quality.contains("video") 
-        || quality.contains("p ") 
+    quality.contains("video")
+        || quality.contains("p ")
         || quality.contains("1080")
         || quality.contains("720")
         || quality.contains("480")
@@ -252,7 +254,8 @@ impl Backend for LuxBackend {
         match first_result {
             Ok(info) => Ok(info),
             Err(first_error) => {
-                let retry_enabled = request.proxy_config
+                let retry_enabled = request
+                    .proxy_config
                     .as_ref()
                     .map(|c| c.retry_without_proxy)
                     .unwrap_or(true);
@@ -283,7 +286,8 @@ impl Backend for LuxBackend {
                             "Lux get_video_info failed without proxy, retrying with system proxy: {}",
                             first_error.lines().next().unwrap_or(&first_error)
                         );
-                        self.execute_get_video_info(app, &request, Some(&system_proxy.url)).await
+                        self.execute_get_video_info(app, &request, Some(&system_proxy.url))
+                            .await
                     } else {
                         Err(first_error)
                     }
@@ -313,11 +317,7 @@ impl Backend for LuxBackend {
 
         let config = get_command(app, proxy_url)?;
 
-        let mut args = vec![
-            "-j".to_string(),
-            "-i".to_string(),
-            "-p".to_string(),
-        ];
+        let mut args = vec!["-j".to_string(), "-i".to_string(), "-p".to_string()];
 
         let start = request.offset + 1;
         let end = request.offset + request.limit;
@@ -329,7 +329,10 @@ impl Backend for LuxBackend {
         setup_cookies(app, &mut args, &request.custom_cookies).await?;
         args.push(request.url.clone());
 
-        debug!("Running lux playlist command: {} {:?}", config.lux_path, args);
+        debug!(
+            "Running lux playlist command: {} {:?}",
+            config.lux_path, args
+        );
 
         let mut cmd = tokio::process::Command::new(&config.lux_path);
         cmd.args(&args)
@@ -370,7 +373,7 @@ impl Backend for LuxBackend {
                     }
 
                     let title = response.title.unwrap_or_else(|| "Unknown".to_string());
-                    
+
                     if playlist_title.is_empty() {
                         if let Some(site) = &response.site {
                             site_name = site.clone();
@@ -439,15 +442,15 @@ impl Backend for LuxBackend {
 
         let config = get_command(app, proxy_url)?;
 
-        let mut args = vec![
-            "-j".to_string(),
-            "-i".to_string(),
-        ];
+        let mut args = vec!["-j".to_string(), "-i".to_string()];
 
         setup_cookies(app, &mut args, &request.custom_cookies).await?;
         args.push(request.url.clone());
 
-        debug!("Running lux formats command: {} {:?}", config.lux_path, args);
+        debug!(
+            "Running lux formats command: {} {:?}",
+            config.lux_path, args
+        );
 
         let mut cmd = tokio::process::Command::new(&config.lux_path);
         cmd.args(&args)
@@ -461,26 +464,30 @@ impl Backend for LuxBackend {
         #[cfg(target_os = "windows")]
         cmd.hide_console();
 
-        let output = tokio::time::timeout(
-            std::time::Duration::from_secs(15),
-            cmd.output()
-        )
-        .await
-        .map_err(|_| "Lux formats request timed out after 15 seconds".to_string())?
-        .map_err(|e| format!("Failed to execute lux: {}", e))?;
+        let output = tokio::time::timeout(std::time::Duration::from_secs(15), cmd.output())
+            .await
+            .map_err(|_| "Lux formats request timed out after 15 seconds".to_string())?
+            .map_err(|e| format!("Failed to execute lux: {}", e))?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
 
         let trimmed = stdout.trim();
-        
+
         let response: LuxVideoResponse = if trimmed.starts_with('[') {
-            let responses: Vec<LuxVideoResponse> = serde_json::from_str(trimmed)
-                .map_err(|e| format!("Failed to parse lux JSON array: {}. Output starts with: {}", e, &trimmed[..trimmed.len().min(100)]))?;
-            responses.into_iter().next().ok_or_else(|| "Lux returned empty array".to_string())?
+            let responses: Vec<LuxVideoResponse> = serde_json::from_str(trimmed).map_err(|e| {
+                format!(
+                    "Failed to parse lux JSON array: {}. Output starts with: {}",
+                    e,
+                    &trimmed[..trimmed.len().min(100)]
+                )
+            })?;
+            responses
+                .into_iter()
+                .next()
+                .ok_or_else(|| "Lux returned empty array".to_string())?
         } else if trimmed.starts_with('{') {
-            serde_json::from_str(trimmed)
-                .map_err(|e| format!("Failed to parse lux JSON: {}", e))?
+            serde_json::from_str(trimmed).map_err(|e| format!("Failed to parse lux JSON: {}", e))?
         } else {
             return Err(format!(
                 "No JSON output from lux. stderr: {}",
@@ -502,7 +509,7 @@ impl Backend for LuxBackend {
                 let quality = stream.quality.clone().unwrap_or_default();
                 let resolution = parse_resolution(&quality);
                 let vcodec = parse_codec(&quality);
-                
+
                 let ext = stream
                     .urls
                     .as_ref()
@@ -587,7 +594,7 @@ impl LuxBackend {
         progress_callback: impl Fn(String) + Send + Sync + 'static,
     ) -> Result<String, String> {
         let callback = std::sync::Arc::new(progress_callback);
-        
+
         let resolved_proxy = request
             .proxy_config
             .as_ref()
@@ -615,7 +622,8 @@ impl LuxBackend {
         match first_result {
             Ok(path) => Ok(path),
             Err(first_error) => {
-                let retry_enabled = request.proxy_config
+                let retry_enabled = request
+                    .proxy_config
                     .as_ref()
                     .map(|c| c.retry_without_proxy)
                     .unwrap_or(true);
@@ -634,7 +642,7 @@ impl LuxBackend {
                         "Lux download failed with proxy ({}), retrying without proxy...",
                         first_error.lines().next().unwrap_or(&first_error)
                     );
-                    
+
                     self.execute_download(app, &request, None, callback.clone())
                         .await
                         .map_err(|second_error| {
@@ -650,13 +658,13 @@ impl LuxBackend {
                         custom_url: String::new(),
                         retry_without_proxy: false,
                     });
-                    
+
                     if !system_proxy.url.is_empty() {
                         warn!(
                             "Lux download failed without proxy ({}), retrying with system proxy...",
                             first_error.lines().next().unwrap_or(&first_error)
                         );
-                        
+
                         self.execute_download(app, &request, Some(&system_proxy.url), callback.clone())
                             .await
                             .map_err(|second_error| {
@@ -684,10 +692,7 @@ impl LuxBackend {
     ) -> Result<VideoInfo, String> {
         let config = get_command(app, proxy_url)?;
 
-        let mut args = vec![
-            "-j".to_string(),
-            "-i".to_string(),
-        ];
+        let mut args = vec!["-j".to_string(), "-i".to_string()];
 
         setup_cookies(app, &mut args, &request.custom_cookies).await?;
         args.push(request.url.clone());
@@ -706,13 +711,10 @@ impl LuxBackend {
         #[cfg(target_os = "windows")]
         cmd.hide_console();
 
-        let output = tokio::time::timeout(
-            std::time::Duration::from_secs(15),
-            cmd.output()
-        )
-        .await
-        .map_err(|_| "Lux info request timed out".to_string())?
-        .map_err(|e| format!("Failed to execute lux: {}", e))?;
+        let output = tokio::time::timeout(std::time::Duration::from_secs(15), cmd.output())
+            .await
+            .map_err(|_| "Lux info request timed out".to_string())?
+            .map_err(|e| format!("Failed to execute lux: {}", e))?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -730,14 +732,27 @@ impl LuxBackend {
         }
 
         let trimmed = stdout.trim();
-        
+
         let response: LuxVideoResponse = if trimmed.starts_with('[') {
-            let responses: Vec<LuxVideoResponse> = serde_json::from_str(trimmed)
-                .map_err(|e| format!("Failed to parse lux JSON array: {}. Output starts with: {}", e, &trimmed[..trimmed.len().min(100)]))?;
-            responses.into_iter().next().ok_or_else(|| "Lux returned empty array".to_string())?
+            let responses: Vec<LuxVideoResponse> = serde_json::from_str(trimmed).map_err(|e| {
+                format!(
+                    "Failed to parse lux JSON array: {}. Output starts with: {}",
+                    e,
+                    &trimmed[..trimmed.len().min(100)]
+                )
+            })?;
+            responses
+                .into_iter()
+                .next()
+                .ok_or_else(|| "Lux returned empty array".to_string())?
         } else if trimmed.starts_with('{') {
-            serde_json::from_str(trimmed)
-                .map_err(|e| format!("Failed to parse lux JSON: {}. Output starts with: {}", e, &trimmed[..trimmed.len().min(100)]))?
+            serde_json::from_str(trimmed).map_err(|e| {
+                format!(
+                    "Failed to parse lux JSON: {}. Output starts with: {}",
+                    e,
+                    &trimmed[..trimmed.len().min(100)]
+                )
+            })?
         } else {
             return Err(format!(
                 "No JSON output from lux. stderr: {}",
@@ -806,7 +821,7 @@ impl LuxBackend {
                 || format_id == "bestvideo+bestaudio"
                 || format_id == "bestvideo"
                 || format_id == "bestaudio";
-            
+
             if !is_generic {
                 args.push("-f".to_string());
                 args.push(format_id.clone());
@@ -859,7 +874,7 @@ impl LuxBackend {
                 use tokio::io::{AsyncBufReadExt, BufReader};
                 let reader = BufReader::new(stdout);
                 let mut lines = reader.lines();
-                
+
                 while let Ok(Some(line)) = lines.next_line().await {
                     if line.contains("File saved:") || line.contains("Saved to:") {
                         if let Some(path_part) = line.split(':').nth(1) {
@@ -878,7 +893,7 @@ impl LuxBackend {
                             }
                         }
                     }
-                    
+
                     if line.contains("error") || line.contains("HTTP") || line.contains("failed") {
                         if let Ok(mut capture) = error_capture_stdout.lock() {
                             if capture.len() < 50 {
@@ -899,7 +914,7 @@ impl LuxBackend {
                 use tokio::io::{AsyncBufReadExt, BufReader};
                 let reader = BufReader::new(stderr);
                 let mut lines = reader.lines();
-                
+
                 while let Ok(Some(line)) = lines.next_line().await {
                     if line.contains("error") || line.contains("failed") {
                         if let Ok(mut capture) = error_capture_stderr.lock() {
@@ -932,13 +947,17 @@ impl LuxBackend {
                 .lock()
                 .map(|v| v.iter().take(10).cloned().collect::<Vec<_>>().join("\n"))
                 .unwrap_or_default();
-            
+
             let error_output = if !error_messages.is_empty() {
-                error_messages.lines().take(5).collect::<Vec<_>>().join("\n")
+                error_messages
+                    .lines()
+                    .take(5)
+                    .collect::<Vec<_>>()
+                    .join("\n")
             } else {
                 "Unknown error".to_string()
             };
-            
+
             return Err(format!("Lux download failed: {}", error_output));
         }
 
@@ -952,13 +971,17 @@ impl LuxBackend {
         warn!("Could not extract filename from lux output, scanning directory...");
         let mut latest_file: Option<(std::path::PathBuf, std::time::SystemTime)> = None;
         let scan_start = std::time::SystemTime::now();
-        
+
         if let Ok(entries) = std::fs::read_dir(&request.output_dir) {
             for entry in entries.flatten() {
                 if let Ok(metadata) = entry.metadata() {
                     if metadata.is_file() {
                         if let Ok(modified) = metadata.modified() {
-                            if scan_start.duration_since(modified).map(|d| d.as_secs() < 60).unwrap_or(false) {
+                            if scan_start
+                                .duration_since(modified)
+                                .map(|d| d.as_secs() < 60)
+                                .unwrap_or(false)
+                            {
                                 if latest_file.as_ref().map_or(true, |(_, t)| modified > *t) {
                                     latest_file = Some((entry.path(), modified));
                                 }
@@ -985,7 +1008,10 @@ mod tests {
 
     #[test]
     fn test_parse_resolution() {
-        assert_eq!(parse_resolution("1080p video/webm; codecs=\"vp9\""), Some("1080p".to_string()));
+        assert_eq!(
+            parse_resolution("1080p video/webm; codecs=\"vp9\""),
+            Some("1080p".to_string())
+        );
         assert_eq!(parse_resolution("720p video/mp4"), Some("720p".to_string()));
         assert_eq!(parse_resolution("高清 1080P"), Some("1080p".to_string()));
         assert_eq!(parse_resolution("流畅 360P"), Some("360p".to_string()));
@@ -994,9 +1020,18 @@ mod tests {
 
     #[test]
     fn test_parse_codec() {
-        assert_eq!(parse_codec("video/webm; codecs=\"vp9\""), Some("vp9".to_string()));
-        assert_eq!(parse_codec("video/mp4; codecs=\"avc1.640028\""), Some("h264".to_string()));
-        assert_eq!(parse_codec("video/mp4; codecs=\"av01.0.05M.08\""), Some("av1".to_string()));
+        assert_eq!(
+            parse_codec("video/webm; codecs=\"vp9\""),
+            Some("vp9".to_string())
+        );
+        assert_eq!(
+            parse_codec("video/mp4; codecs=\"avc1.640028\""),
+            Some("h264".to_string())
+        );
+        assert_eq!(
+            parse_codec("video/mp4; codecs=\"av01.0.05M.08\""),
+            Some("av1".to_string())
+        );
     }
 
     #[test]

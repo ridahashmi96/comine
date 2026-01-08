@@ -167,7 +167,7 @@
       padding-top: 0;
       min-height: 24px;
     }
-    
+
     .control-wrapper {
       margin-left: 0;
     }

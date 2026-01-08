@@ -85,7 +85,9 @@
   let isMobile = $state(false);
   $effect(() => {
     if (typeof window === 'undefined') return;
-    const checkMobile = () => { isMobile = window.innerWidth <= 480; };
+    const checkMobile = () => {
+      isMobile = window.innerWidth <= 480;
+    };
     checkMobile();
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
@@ -224,7 +226,7 @@
 
   let gridCardHeight = $derived.by(() => {
     const thumbHeight = (gridCardWidth * 9) / 16;
-    return Math.round(thumbHeight + 54); 
+    return Math.round(thumbHeight + 54);
   });
 
   let visibleRange = $derived.by(() => {
@@ -354,7 +356,9 @@
                     decoding="async"
                     fetchpriority="low"
                     referrerpolicy="no-referrer"
-                    onerror={() => { failedThumbnails = new Set([...failedThumbnails, item.id]); }}
+                    onerror={() => {
+                      failedThumbnails = new Set([...failedThumbnails, item.id]);
+                    }}
                   />
                 {:else}
                   <div class="thumb-placeholder">
@@ -431,11 +435,12 @@
             {@const isSelected = isItemSelected(item.id)}
             {@const settings = getSettings(item)}
             {@const isHovered = hoveredItemId === item.id}
-            {@const thumbSrc = item.thumbnail && !failedThumbnails.has(item.id)
-              ? isFastScrolling
-                ? item.thumbnail
-                : normalizeYouTubeThumbnailUrl(item.thumbnail, 'mq')
-              : null}
+            {@const thumbSrc =
+              item.thumbnail && !failedThumbnails.has(item.id)
+                ? isFastScrolling
+                  ? item.thumbnail
+                  : normalizeYouTubeThumbnailUrl(item.thumbnail, 'mq')
+                : null}
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <!-- svelte-ignore a11y_click_events_have_key_events -->
             <div
@@ -454,7 +459,9 @@
                     decoding="async"
                     fetchpriority="low"
                     referrerpolicy="no-referrer"
-                    onerror={() => { failedThumbnails = new Set([...failedThumbnails, item.id]); }}
+                    onerror={() => {
+                      failedThumbnails = new Set([...failedThumbnails, item.id]);
+                    }}
                   />
                 {:else}
                   <div class="card-thumb-placeholder">

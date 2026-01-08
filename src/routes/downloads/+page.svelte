@@ -35,7 +35,13 @@
   import Divider from '$lib/components/Divider.svelte';
   import Select from '$lib/components/Select.svelte';
   import { tooltip } from '$lib/actions/tooltip';
-  import { extractDominantColor, generateColorVars, getCachedColor, getCachedColorAsync, type RGB } from '$lib/utils/color';
+  import {
+    extractDominantColor,
+    generateColorVars,
+    getCachedColor,
+    getCachedColorAsync,
+    type RGB,
+  } from '$lib/utils/color';
   import { saveScrollPosition, getScrollPosition } from '$lib/stores/scroll';
 
   const ROUTE_PATH = '/downloads';
@@ -51,7 +57,13 @@
     | { kind: 'date'; label: string }
     | { kind: 'single'; item: HistoryItem; dateLabel: string }
     | { kind: 'playlist'; group: HistoryPlaylistGroup; dateLabel: string }
-    | { kind: 'playlist-child'; item: HistoryItem; playlistId: string; isLast: boolean; dateLabel: string };
+    | {
+        kind: 'playlist-child';
+        item: HistoryItem;
+        playlistId: string;
+        isLast: boolean;
+        dateLabel: string;
+      };
 
   let containerEl: HTMLDivElement | null = $state(null);
   let scrollTop = $state(0);
@@ -79,7 +91,7 @@
     const topProgress = Math.min(st / MASK_SIZE, 1);
     const topFade =
       topProgress > 0 ? `transparent, black ${MASK_SIZE * topProgress}px` : 'black, black 0px';
-    
+
     const bottomProgress = Math.min((maxScroll - st) / MASK_SIZE, 1);
     const bottomFade =
       bottomProgress > 0
@@ -102,7 +114,7 @@
 
   onMount(() => {
     history.init();
-    
+
     const savedPosition = getScrollPosition(ROUTE_PATH);
     if (savedPosition > 0 && containerEl) {
       containerEl.scrollTop = savedPosition;
@@ -213,7 +225,7 @@
   async function extractItemColor(id: string, thumbnailUrl: string | undefined) {
     if (!$settings.thumbnailTheming || !thumbnailUrl) return;
     if (itemColors.has(thumbnailUrl)) return;
-    
+
     const cachedColor = await getCachedColorAsync(thumbnailUrl);
     if (cachedColor) {
       if (itemColors.size >= MAX_COLOR_CACHE) {
@@ -228,7 +240,7 @@
       colorAccessOrder = [...colorAccessOrder, thumbnailUrl];
       return;
     }
-    
+
     const color = await extractDominantColor(thumbnailUrl);
     if (color) {
       if (itemColors.size >= MAX_COLOR_CACHE) {
@@ -252,23 +264,23 @@
 
   function getThumbnailSrc(thumbnail: string | undefined): string | undefined {
     if (!thumbnail) return undefined;
-    
+
     if (thumbnailSrcCache.has(thumbnail)) {
       return thumbnailSrcCache.get(thumbnail);
     }
-    
+
     let result: string;
     if (thumbnail.match(/^[A-Z]:\\/i) || thumbnail.startsWith('/')) {
       result = convertFileSrc(thumbnail);
     } else {
       result = thumbnail;
     }
-    
+
     if (thumbnailSrcCache.size >= MAX_THUMBNAIL_CACHE) {
       const oldest = thumbnailCacheOrder.shift();
       if (oldest) thumbnailSrcCache.delete(oldest);
     }
-    
+
     thumbnailSrcCache.set(thumbnail, result);
     thumbnailCacheOrder.push(thumbnail);
     return result;
@@ -287,22 +299,22 @@
   const MAX_PLAYLIST_THUMB_CACHE = 50;
   const playlistThumbnailCache = new Map<string, string[]>();
   let playlistCacheOrder: string[] = [];
-  
+
   function getPlaylistGridThumbs(playlistId: string, items: { thumbnail?: string }[]): string[] {
     if (playlistThumbnailCache.has(playlistId)) {
       return playlistThumbnailCache.get(playlistId)!;
     }
-    
+
     const thumbs = items
       .filter((i) => i.thumbnail)
       .slice(0, 4)
       .map((i) => getThumbnailSrc(i.thumbnail!) || i.thumbnail!);
-    
+
     if (playlistThumbnailCache.size >= MAX_PLAYLIST_THUMB_CACHE) {
       const oldest = playlistCacheOrder.shift();
       if (oldest) playlistThumbnailCache.delete(oldest);
     }
-    
+
     playlistThumbnailCache.set(playlistId, thumbs);
     playlistCacheOrder.push(playlistId);
     return thumbs;
@@ -327,7 +339,7 @@
     }
     collapsedHistoryPlaylists = next;
   }
-  
+
   function handlePlaylistKeydown(event: KeyboardEvent, playlistId: string, isHistory: boolean) {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
@@ -395,7 +407,10 @@
     const visibleRows = Math.ceil(containerHeight / gridRowHeight) + 1;
 
     const startIdx = Math.max(0, (startRow - BUFFER_COUNT) * gridItemsPerRow);
-    const endIdx = Math.min(flatGridItems.length, (startRow + visibleRows + BUFFER_COUNT) * gridItemsPerRow);
+    const endIdx = Math.min(
+      flatGridItems.length,
+      (startRow + visibleRows + BUFFER_COUNT) * gridItemsPerRow
+    );
 
     return { startIdx, endIdx };
   });
@@ -733,7 +748,7 @@
         <button
           class="stats-toggle-btn"
           class:active={showStatsPanel}
-          onclick={() => showStatsPanel = !showStatsPanel}
+          onclick={() => (showStatsPanel = !showStatsPanel)}
           use:tooltip={$t('downloads.stats.toggle')}
         >
           <Icon name="stats" size={18} />
@@ -768,32 +783,50 @@
           </div>
         </div>
       </div>
-      
+
       <div class="stats-breakdown">
         <div class="breakdown-section">
           <span class="breakdown-title">{$t('downloads.stats.byType')}</span>
           <div class="breakdown-items">
             {#if typeCounts.video > 0}
-              <span class="breakdown-item"><Icon name="video" size={14} /> {typeCounts.video} {$t('downloads.filters.video')}</span>
+              <span class="breakdown-item"
+                ><Icon name="video" size={14} />
+                {typeCounts.video}
+                {$t('downloads.filters.video')}</span
+              >
             {/if}
             {#if typeCounts.audio > 0}
-              <span class="breakdown-item"><Icon name="music" size={14} /> {typeCounts.audio} {$t('downloads.filters.audio')}</span>
+              <span class="breakdown-item"
+                ><Icon name="music" size={14} />
+                {typeCounts.audio}
+                {$t('downloads.filters.audio')}</span
+              >
             {/if}
             {#if typeCounts.image > 0}
-              <span class="breakdown-item"><Icon name="image" size={14} /> {typeCounts.image} {$t('downloads.filters.image')}</span>
+              <span class="breakdown-item"
+                ><Icon name="image" size={14} />
+                {typeCounts.image}
+                {$t('downloads.filters.image')}</span
+              >
             {/if}
             {#if typeCounts.file > 0}
-              <span class="breakdown-item"><Icon name="file_text" size={14} /> {typeCounts.file} {$t('downloads.filters.file')}</span>
+              <span class="breakdown-item"
+                ><Icon name="file_text" size={14} />
+                {typeCounts.file}
+                {$t('downloads.filters.file')}</span
+              >
             {/if}
           </div>
         </div>
-        
+
         {#if topFormats.length > 0}
           <div class="breakdown-section">
             <span class="breakdown-title">{$t('downloads.stats.topFormats')}</span>
             <div class="breakdown-items format-items">
               {#each topFormats as [format, count]}
-                <span class="format-badge">{format.toUpperCase()} <span class="format-count">{count}</span></span>
+                <span class="format-badge"
+                  >{format.toUpperCase()} <span class="format-count">{count}</span></span
+                >
               {/each}
             </div>
           </div>
@@ -925,7 +958,9 @@
                             loading="lazy"
                             decoding="async"
                             onload={() => extractItemColor(download.id, thumbSrc)}
-                            onerror={() => { failedThumbnails = new Set([...failedThumbnails, download.id]); }}
+                            onerror={() => {
+                              failedThumbnails = new Set([...failedThumbnails, download.id]);
+                            }}
                           />
                         {:else}
                           <div class="thumb-placeholder">
@@ -1039,7 +1074,9 @@
                     loading="lazy"
                     decoding="async"
                     onload={() => extractItemColor(download.id, thumbSrc)}
-                    onerror={() => { failedThumbnails = new Set([...failedThumbnails, download.id]); }}
+                    onerror={() => {
+                      failedThumbnails = new Set([...failedThumbnails, download.id]);
+                    }}
                   />
                 {:else}
                   <div class="thumb-placeholder">
@@ -1157,7 +1194,10 @@
                 {:else if row.kind === 'playlist'}
                   {@const playlistGroup = row.group}
                   {@const isExpanded = !collapsedHistoryPlaylists.has(playlistGroup.playlistId)}
-                  {@const gridThumbs = getPlaylistGridThumbs(playlistGroup.playlistId, playlistGroup.items)}
+                  {@const gridThumbs = getPlaylistGridThumbs(
+                    playlistGroup.playlistId,
+                    playlistGroup.items
+                  )}
                   <div
                     class="playlist-header-row"
                     class:expanded={isExpanded}
@@ -1237,7 +1277,9 @@
                             extractItemColor(subItem.id, thumbSrc);
                             checkFileExists(subItem.id, subItem.filePath);
                           }}
-                          onerror={() => { failedThumbnails = new Set([...failedThumbnails, subItem.id]); }}
+                          onerror={() => {
+                            failedThumbnails = new Set([...failedThumbnails, subItem.id]);
+                          }}
                         />
                       {:else}
                         <div class="thumbnail-placeholder">
@@ -1343,7 +1385,9 @@
                             extractItemColor(singleItem.id, thumbSrc);
                             checkFileExists(singleItem.id, singleItem.filePath);
                           }}
-                          onerror={() => { failedThumbnails = new Set([...failedThumbnails, singleItem.id]); }}
+                          onerror={() => {
+                            failedThumbnails = new Set([...failedThumbnails, singleItem.id]);
+                          }}
                         />
                       {:else}
                         <div class="thumbnail-placeholder">
@@ -1472,7 +1516,9 @@
                           extractItemColor(item.id, thumbSrc);
                           checkFileExists(item.id, item.filePath);
                         }}
-                        onerror={() => { failedThumbnails = new Set([...failedThumbnails, item.id]); }}
+                        onerror={() => {
+                          failedThumbnails = new Set([...failedThumbnails, item.id]);
+                        }}
                       />
                     {:else}
                       <div class="card-thumb-placeholder">
