@@ -930,10 +930,10 @@
 
     const currentSettings = getSettings();
     const isChannel = isLikelyChannel(url);
-    const isPlaylist = !isChannel && isLikelyPlaylist(url, { ignoreMixes: currentSettings.ignoreMixes });
+    const isPlaylist =
+      !isChannel && isLikelyPlaylist(url, { ignoreMixes: currentSettings.ignoreMixes });
 
     try {
-
       if (isChannel && !isAndroid()) {
         interface ChannelInfo {
           is_playlist: boolean;
@@ -953,7 +953,9 @@
           cookiesFromBrowser: currentSettings.cookiesFromBrowser || null,
           customCookies: currentSettings.customCookies || null,
           proxyConfig: getProxyConfig(),
-          youtubePlayerClient: currentSettings.usePlayerClientForExtraction ? currentSettings.youtubePlayerClient : null,
+          youtubePlayerClient: currentSettings.usePlayerClientForExtraction
+            ? currentSettings.youtubePlayerClient
+            : null,
         });
 
         const channelName =
@@ -1010,7 +1012,9 @@
           cookiesFromBrowser: currentSettings.cookiesFromBrowser || null,
           customCookies: currentSettings.customCookies || null,
           proxyConfig: getProxyConfig(),
-          youtubePlayerClient: currentSettings.usePlayerClientForExtraction ? currentSettings.youtubePlayerClient : null,
+          youtubePlayerClient: currentSettings.usePlayerClientForExtraction
+            ? currentSettings.youtubePlayerClient
+            : null,
         });
         logs.info(
           'layout',
@@ -1056,7 +1060,9 @@
       const videoInfo: VideoInfo = await invoke(command, {
         url,
         proxyConfig: getProxyConfig(),
-        youtubePlayerClient: currentSettings.usePlayerClientForExtraction ? currentSettings.youtubePlayerClient : null,
+        youtubePlayerClient: currentSettings.usePlayerClientForExtraction
+          ? currentSettings.youtubePlayerClient
+          : null,
       });
 
       const originalThumbnailUrl = videoInfo.thumbnail || getQuickThumbnail(url);
@@ -1754,5 +1760,15 @@
 
   :global(*::-webkit-scrollbar-corner) {
     background: transparent;
+  }
+
+  :global(.has-thumb-accent) {
+    --accent: var(--thumb-accent) !important;
+    --accent-light: var(--thumb-accent-light) !important;
+    --accent-dark: var(--thumb-accent-dark) !important;
+    --accent-alpha: var(--thumb-accent-alpha) !important;
+    --accent-alpha-hover: var(--thumb-accent-alpha-hover) !important;
+    --accent-bg: var(--thumb-accent-alpha) !important;
+    --accent-bg-hover: var(--thumb-accent-alpha-hover) !important;
   }
 </style>

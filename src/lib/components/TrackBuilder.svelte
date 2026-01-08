@@ -3,6 +3,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { t } from '$lib/i18n';
   import { getProxyConfig, getSettings, settings } from '$lib/stores/settings';
+  import ThumbnailGlow from './ThumbnailGlow.svelte';
   import { logs } from '$lib/stores/logs';
   import { deps } from '$lib/stores/deps';
   import { portal } from '$lib/actions/portal';
@@ -858,7 +859,9 @@
           cookiesFromBrowser: cookiesFromBrowser || null,
           customCookies: customCookies || null,
           proxyConfig: getProxyConfig(),
-          youtubePlayerClient: currentSettings.usePlayerClientForExtraction ? currentSettings.youtubePlayerClient : null,
+          youtubePlayerClient: currentSettings.usePlayerClientForExtraction
+            ? currentSettings.youtubePlayerClient
+            : null,
         });
         if (destroyed) return;
       }
@@ -885,6 +888,10 @@
     }
   }
 </script>
+
+{#if showHeader && $settings.builderThumbnailGlow}
+  <ThumbnailGlow thumbnailUrl={displayThumbnail} enabled={showHeader} />
+{/if}
 
 <div class="track-builder" class:full-bleed={showHeader}>
   {#if showHeader}

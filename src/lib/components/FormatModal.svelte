@@ -161,7 +161,9 @@
           cookiesFromBrowser: cookiesFromBrowser || null,
           customCookies: customCookies || null,
           proxyConfig: getProxyConfig(),
-          youtubePlayerClient: currentSettings.usePlayerClientForExtraction ? currentSettings.youtubePlayerClient : null,
+          youtubePlayerClient: currentSettings.usePlayerClientForExtraction
+            ? currentSettings.youtubePlayerClient
+            : null,
         });
       }
 

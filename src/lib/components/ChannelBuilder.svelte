@@ -4,6 +4,7 @@
   import { t } from '$lib/i18n';
   import { tooltip } from '$lib/actions/tooltip';
   import { settings, type DownloadMode, getProxyConfig, getSettings } from '$lib/stores/settings';
+  import ThumbnailGlow from './ThumbnailGlow.svelte';
   import { deps } from '$lib/stores/deps';
   import { isAndroid, getPlaylistInfoOnAndroid } from '$lib/utils/android';
   import { formatDuration, getDisplayThumbnailUrl } from '$lib/utils/format';
@@ -427,7 +428,9 @@
           cookiesFromBrowser: cookiesFromBrowser || null,
           customCookies: customCookies || null,
           proxyConfig: getProxyConfig(),
-          youtubePlayerClient: currentSettings.usePlayerClientForExtraction ? currentSettings.youtubePlayerClient : null,
+          youtubePlayerClient: currentSettings.usePlayerClientForExtraction
+            ? currentSettings.youtubePlayerClient
+            : null,
         });
         if (destroyed) return;
 
@@ -445,7 +448,9 @@
             cookiesFromBrowser: cookiesFromBrowser || null,
             customCookies: customCookies || null,
             proxyConfig: getProxyConfig(),
-            youtubePlayerClient: currentSettings.usePlayerClientForExtraction ? currentSettings.youtubePlayerClient : null,
+            youtubePlayerClient: currentSettings.usePlayerClientForExtraction
+              ? currentSettings.youtubePlayerClient
+              : null,
           });
           if (destroyed) return;
 
@@ -603,6 +608,10 @@
   ];
   let downloadOrder = $state<'queue' | 'reverse' | 'shuffle'>('queue');
 </script>
+
+{#if showHeader && $settings.builderThumbnailGlow}
+  <ThumbnailGlow thumbnailUrl={displayThumbnail} enabled={showHeader} />
+{/if}
 
 <div class="channel-builder" class:full-bleed={showHeader} class:entries-open={showEntries}>
   {#if showHeader}

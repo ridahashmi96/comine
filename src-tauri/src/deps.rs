@@ -1544,7 +1544,10 @@ pub async fn install_aria2(
         );
 
         let version = get_latest_aria2_version().await.unwrap_or_else(|e| {
-            warn!("Failed to fetch latest aria2 version, using fallback: {}", e);
+            warn!(
+                "Failed to fetch latest aria2 version, using fallback: {}",
+                e
+            );
             "1.37.0".to_string() // Fallback version
         });
         info!("Installing aria2 version: {}", version);

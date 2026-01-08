@@ -106,7 +106,10 @@
 
   function checkIsPlaylistUrl(urlStr: string): boolean {
     if (!urlStr.trim()) return false;
-    return checkIsYouTubeUrl(urlStr) && isLikelyPlaylist(urlStr.trim(), { ignoreMixes: $settings.ignoreMixes });
+    return (
+      checkIsYouTubeUrl(urlStr) &&
+      isLikelyPlaylist(urlStr.trim(), { ignoreMixes: $settings.ignoreMixes })
+    );
   }
 
   function checkIsChannelUrl(urlStr: string): boolean {

@@ -309,6 +309,21 @@
         'тема',
       ],
     },
+    builderThumbnailGlow: {
+      section: 'app',
+      keywords: [
+        'thumbnail',
+        'glow',
+        'theming',
+        'builder',
+        'track',
+        'playlist',
+        'channel',
+        'dynamic',
+        'свечение',
+        'фон',
+      ],
+    },
     ytdlp: {
       section: 'deps',
       keywords: ['yt-dlp', 'ytdlp', 'dependency', 'download', 'зависимость'],
@@ -1179,7 +1194,10 @@
             ? () => {
                 updateSetting('defaultProcessor', defaultSettings.defaultProcessor);
                 updateSetting('youtubePlayerClient', defaultSettings.youtubePlayerClient);
-                updateSetting('usePlayerClientForExtraction', defaultSettings.usePlayerClientForExtraction);
+                updateSetting(
+                  'usePlayerClientForExtraction',
+                  defaultSettings.usePlayerClientForExtraction
+                );
               }
             : undefined}
         >
@@ -1240,13 +1258,15 @@
               icon="tuning"
               value={$settings.youtubePlayerClient}
               defaultValue={defaultSettings.youtubePlayerClient}
-              onReset={() => updateSetting('youtubePlayerClient', defaultSettings.youtubePlayerClient)}
+              onReset={() =>
+                updateSetting('youtubePlayerClient', defaultSettings.youtubePlayerClient)}
             >
               <div style="width: 220px;">
                 <Input
                   value={$settings.youtubePlayerClient}
                   placeholder="tv,android_sdkless"
-                  oninput={(e) => updateSetting('youtubePlayerClient', (e.target as HTMLInputElement).value)}
+                  oninput={(e) =>
+                    updateSetting('youtubePlayerClient', (e.target as HTMLInputElement).value)}
                 />
               </div>
             </SettingItem>
@@ -1260,11 +1280,15 @@
               icon="link"
               value={$settings.usePlayerClientForExtraction}
               defaultValue={defaultSettings.usePlayerClientForExtraction}
-              onReset={() => updateSetting('usePlayerClientForExtraction', defaultSettings.usePlayerClientForExtraction)}
+              onReset={() =>
+                updateSetting(
+                  'usePlayerClientForExtraction',
+                  defaultSettings.usePlayerClientForExtraction
+                )}
             >
-              <Toggle 
-                checked={$settings.usePlayerClientForExtraction} 
-                onchange={(checked) => updateSetting('usePlayerClientForExtraction', checked)} 
+              <Toggle
+                checked={$settings.usePlayerClientForExtraction}
+                onchange={(checked) => updateSetting('usePlayerClientForExtraction', checked)}
               />
             </SettingItem>
           {/if}
@@ -2208,6 +2232,25 @@
                 checked={$settings.thumbnailTheming}
                 onchange={() => {
                   updateSetting('thumbnailTheming', !$settings.thumbnailTheming);
+                }}
+              />
+            </SettingItem>
+          {/if}
+
+          {#if matchesSearch('builderThumbnailGlow')}
+            <SettingItem
+              title={$t('settings.app.builderThumbnailGlow')}
+              description={$t('settings.app.builderThumbnailGlowDescription')}
+              icon="blur"
+              value={$settings.builderThumbnailGlow}
+              defaultValue={defaultSettings.builderThumbnailGlow}
+              onReset={() =>
+                updateSetting('builderThumbnailGlow', defaultSettings.builderThumbnailGlow)}
+            >
+              <Toggle
+                checked={$settings.builderThumbnailGlow}
+                onchange={() => {
+                  updateSetting('builderThumbnailGlow', !$settings.builderThumbnailGlow);
                 }}
               />
             </SettingItem>

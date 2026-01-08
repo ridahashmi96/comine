@@ -96,14 +96,14 @@ export function isYouTubeMix(urlStr: string): boolean {
   try {
     const urlObj = new URL(urlStr);
     const hostname = urlObj.hostname.toLowerCase();
-    
+
     if (!hostname.includes('youtube.com') && !hostname.includes('youtu.be')) {
       return false;
     }
-    
+
     const list = urlObj.searchParams.get('list');
     if (!list) return false;
-    
+
     return (
       list.startsWith('RD') ||
       list.startsWith('RDMM') ||

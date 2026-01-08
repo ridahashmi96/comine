@@ -181,7 +181,8 @@ impl Backend for YtDlpBackend {
 
         let is_youtube = request.url.contains("youtube.com") || request.url.contains("youtu.be");
         if is_youtube {
-            let player_client = request.youtube_player_client
+            let player_client = request
+                .youtube_player_client
                 .as_deref()
                 .filter(|s| !s.is_empty())
                 .unwrap_or("android_sdkless");
@@ -322,7 +323,8 @@ impl Backend for YtDlpBackend {
 
         let is_youtube = request.url.contains("youtube.com") || request.url.contains("youtu.be");
         if is_youtube {
-            let player_client = request.youtube_player_client
+            let player_client = request
+                .youtube_player_client
                 .as_deref()
                 .filter(|s| !s.is_empty())
                 .unwrap_or("android_sdkless");
@@ -592,7 +594,8 @@ impl Backend for YtDlpBackend {
 
         let is_youtube = request.url.contains("youtube.com") || request.url.contains("youtu.be");
         if is_youtube {
-            let player_client = request.youtube_player_client
+            let player_client = request
+                .youtube_player_client
                 .as_deref()
                 .filter(|s| !s.is_empty())
                 .unwrap_or("android_sdkless");

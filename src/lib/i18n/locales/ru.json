@@ -458,6 +458,8 @@
       "showHistoryStatsDescription": "Показывать панель статистики внизу страницы загрузок",
       "thumbnailTheming": "Цвет из миниатюры",
       "thumbnailThemingDescription": "Использовать цвета миниатюр для прогресс-баров и эффектов наведения",
+      "builderThumbnailGlow": "Свечение в окнах просмотра",
+      "builderThumbnailGlowDescription": "Применять мягкое свечение цветов миниатюры в окнах видео, плейлистов и каналов",
       "resetToDefault": "Сбросить"
     },
     "network": {

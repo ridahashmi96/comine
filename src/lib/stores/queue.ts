@@ -1371,7 +1371,9 @@ function createQueueStore() {
             url,
             customCookies: customCookies ?? '',
             proxyConfig: proxyConfig,
-            youtubePlayerClient: currentSettings.usePlayerClientForExtraction ? currentSettings.youtubePlayerClient : null,
+            youtubePlayerClient: currentSettings.usePlayerClientForExtraction
+              ? currentSettings.youtubePlayerClient
+              : null,
           });
           logs.debug(
             'queue',
@@ -1384,7 +1386,9 @@ function createQueueStore() {
             cookiesFromBrowser: cookiesFromBrowser ?? '',
             customCookies: customCookies ?? '',
             proxyConfig: proxyConfig,
-            youtubePlayerClient: currentSettings.usePlayerClientForExtraction ? currentSettings.youtubePlayerClient : null,
+            youtubePlayerClient: currentSettings.usePlayerClientForExtraction
+              ? currentSettings.youtubePlayerClient
+              : null,
           });
           logs.debug(
             'queue',

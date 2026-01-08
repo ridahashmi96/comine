@@ -548,6 +548,8 @@ export type TranslationKeys =
   | 'settings.app.sizeUnitDescription'
   | 'settings.app.thumbnailTheming'
   | 'settings.app.thumbnailThemingDescription'
+  | 'settings.app.builderThumbnailGlow'
+  | 'settings.app.builderThumbnailGlowDescription'
   | 'settings.app.title'
   | 'settings.app.updateAvailable'
   | 'settings.app.updateCheckFailed'
@@ -735,6 +737,5 @@ export type TranslationKeys =
 
   // Window
   | 'window.close'
-  | 'window.maximize'
-  'window.minimize'
-;
+  | 'window.maximize';
+('window.minimize');

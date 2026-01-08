@@ -7,9 +7,17 @@ interface AndroidYtDlp {
   isReady(): boolean;
   getVersion(): string;
   getVideoInfo(url: string, callbackName: string): void;
-  getVideoInfoWithClient(url: string, youtubePlayerClient: string | null, callbackName: string): void;
+  getVideoInfoWithClient(
+    url: string,
+    youtubePlayerClient: string | null,
+    callbackName: string
+  ): void;
   getPlaylistInfo(url: string, callbackName: string): void;
-  getPlaylistInfoWithClient(url: string, youtubePlayerClient: string | null, callbackName: string): void;
+  getPlaylistInfoWithClient(
+    url: string,
+    youtubePlayerClient: string | null,
+    callbackName: string
+  ): void;
   download(
     url: string,
     format: string | null,

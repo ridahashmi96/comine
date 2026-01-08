@@ -128,6 +128,7 @@ export interface AppSettings {
   usePlayerClientForExtraction: boolean;
 
   thumbnailTheming: boolean;
+  builderThumbnailGlow: boolean;
 
   proxyMode: ProxyMode;
   customProxyUrl: string;
@@ -258,6 +259,7 @@ export const defaultSettings: AppSettings = {
   usePlayerClientForExtraction: false,
 
   thumbnailTheming: true,
+  builderThumbnailGlow: true,
 
   proxyMode: 'system',
   customProxyUrl: '',

@@ -8,6 +8,7 @@
     | 'arrow_right'
     | 'arrow_down'
     | 'bell'
+    | 'blur'
     | 'book'
     | 'box'
     | 'burger'
