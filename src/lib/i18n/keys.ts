@@ -45,6 +45,7 @@ export type TranslationKeys =
   // Clipboard
   | 'clipboard.detected'
   | 'clipboard.error'
+  | 'clipboard.fetchingInfo'
   | 'clipboard.fileDetected'
   | 'clipboard.noValidUrl'
 
@@ -93,6 +94,11 @@ export type TranslationKeys =
   | 'deps.installingBundle'
   | 'deps.setupRequired'
 
+  // Disk
+  | 'disk.lowSpace'
+  | 'disk.lowSpaceWarning'
+  | 'disk.available'
+
   // Download
   | 'download.audio.best'
   | 'download.back'
@@ -120,6 +126,7 @@ export type TranslationKeys =
   | 'download.customizePlaylist'
   | 'download.downloading'
   | 'download.error'
+  | 'download.errorDiskFull'
   | 'download.formats.addedToQueue'
   | 'download.formats.audioOnly'
   | 'download.formats.audioOnlyResult'
@@ -229,6 +236,7 @@ export type TranslationKeys =
   // Downloads
   | 'downloads.active'
   | 'downloads.completed'
+  | 'downloads.started'
   | 'downloads.dateGroups.older'
   | 'downloads.dateGroups.thisMonth'
   | 'downloads.dateGroups.thisWeek'

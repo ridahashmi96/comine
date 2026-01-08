@@ -322,6 +322,29 @@
     }
   }
 
+  let diskSpaceWarningShown = false;
+
+  async function checkDiskSpace() {
+    if (diskSpaceWarningShown) return;
+    
+    try {
+      const downloadPath = $settings.downloadPath;
+      if (!downloadPath) return;
+      
+      const diskInfo = await invoke<{ available_gb: number; available_bytes: number }>('get_disk_space', { path: downloadPath });
+      
+      if (diskInfo && diskInfo.available_gb < 2) {
+        diskSpaceWarningShown = true;
+        const available = Math.round(diskInfo.available_gb * 10) / 10;
+        const warningMsg = ($t('disk.lowSpaceWarning') || 'Only {available} GB free on your download drive').replace('{available}', String(available));
+        toast.warning(warningMsg, 0); // Don't auto-dismiss
+        logs.warn('system', `Low disk space: ${available} GB available on download drive`);
+      }
+    } catch (e) {
+      logs.debug('system', `Could not check disk space: ${e}`);
+    }
+  }
+
   onMount(() => {
     if (window.location.pathname.startsWith('/notification')) {
       return;
@@ -337,6 +360,7 @@
       // Auto-install missing dependencies
       if (!isAndroid()) {
         autoInstallDependencies();
+        checkDiskSpace();
       }
     }, 1500);
 
@@ -883,6 +907,11 @@
       return;
     }
 
+    const fetchingToastId = toast.loading(
+      $t('clipboard.fetchingInfo') || 'Fetching media info...',
+      url.length > 50 ? url.substring(0, 50) + '...' : url
+    );
+
     const isChannel = isLikelyChannel(url);
     const isPlaylist = !isChannel && isLikelyPlaylist(url);
 
@@ -928,6 +957,7 @@
             author: handle || undefined,
           });
 
+          dismissToast(fetchingToastId);
           await invoke('show_notification_window', {
             data: {
               title: channelName,
@@ -981,6 +1011,7 @@
             author: playlistInfo.uploader || undefined,
           });
 
+          dismissToast(fetchingToastId);
           await invoke('show_notification_window', {
             data: {
               title: playlistInfo.title || $t('playlist.notification.detected'),
@@ -1031,6 +1062,7 @@
         duration: videoInfo.duration,
       });
 
+      dismissToast(fetchingToastId);
       await invoke('show_notification_window', {
         data: {
           title: videoInfo.title || $t('notification.mediaDetected'),
@@ -1047,6 +1079,7 @@
       });
     } catch (err) {
       console.error('Failed to get video info:', err);
+      dismissToast(fetchingToastId);
       const currentSettings = getSettings();
       const quickThumbnail = getQuickThumbnail(url);
       await invoke('show_notification_window', {
@@ -1370,7 +1403,7 @@
   }
 
   .titlebar-spacer {
-    width: 84px; /* Same width as window-controls to balance */
+    width: 84px;
   }
 
   .titlebar-brand {

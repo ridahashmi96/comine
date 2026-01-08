@@ -333,6 +333,32 @@ function createQueueStore() {
       let statusMessage = '';
       let isPostProcessing = false;
 
+      // Detect disk space errors early (aria2 specific)
+      const lowerMessage = message.toLowerCase();
+      if (lowerMessage.includes('not enough space on the disk') || 
+          (lowerMessage.includes('errnum=112') && lowerMessage.includes('failed to write'))) {
+        logs.error('queue', `Disk space error detected for ${url}`);
+        const state = get({ subscribe });
+        const item = state.items.find((i) => i.url === url);
+        if (item) {
+          const errorMsg = translate('download.errorDiskFull') || 'Not enough disk space';
+          update((state) => ({
+            ...state,
+            items: state.items.map((i) =>
+              i.url === url
+                ? { ...i, status: 'failed' as DownloadStatus, error: errorMsg }
+                : i
+            ),
+          }));
+          emit('download-status-changed', {
+            url,
+            status: 'failed',
+            error: errorMsg,
+          });
+        }
+        return;
+      }
+
       if (message.includes('[download]') && message.includes('Destination')) {
         statusMessage = translate('downloads.status.starting');
         const destMatch = message.match(/Destination:\s*(.+)/);
@@ -384,42 +410,41 @@ function createQueueStore() {
           : translate('downloads.status.downloading');
       }
 
-      let match = message.match(/^\s*(\d+\.?\d*)%\s+(\S*)\s*(.*)/);
       let speed = '';
       let eta = '';
       let rawProgress = -1;
 
-      if (match && !message.includes('[debug]') && !message.includes('[info]')) {
-        rawProgress = parseFloat(match[1]);
-        speed = match[2] || '';
-        eta = match[3] || '';
+      const aria2InlineMatch = message.match(
+        /\[#\w+\s+[\d.]+\w+\/[\d.]+\w+\((\d+)%\)\s*CN:\d+\s+DL:([\d.]+\w+)(?:\s+ETA:(\S+))?\]/
+      );
+
+      if (aria2InlineMatch) {
+        rawProgress = parseFloat(aria2InlineMatch[1]);
+        speed = aria2InlineMatch[2] ? aria2InlineMatch[2] + '/s' : '';
+        const etaRaw = aria2InlineMatch[3] || '';
+        eta = etaRaw === 'NA' || etaRaw === '' ? '' : etaRaw;
+        if (!statusMessage) {
+          const state = get({ subscribe });
+          const item = state.items.find((i) => i.url === url);
+          const isAudio = item?.options?.downloadMode === 'audio';
+          statusMessage = isAudio
+            ? translate('downloads.status.downloadingAudio')
+            : translate('downloads.status.downloading');
+        }
       } else {
-        const aria2TrailingMatch = message.match(/\[#\w+[^\]]*\](\d+\.?\d*)%\s+(\S+)\s*(.*)/);
-        const aria2InlineMatch = message.match(
-          /\[#\w+\s+[\d.]+\w+\/[\d.]+\w+\((\d+)%\)\s*CN:\d+\s+DL:([\d.]+\w+)(?:\s+ETA:(\S+))?\]/
-        );
-        const aria2Match = aria2TrailingMatch || aria2InlineMatch;
-        if (aria2Match) {
-          rawProgress = parseFloat(aria2Match[1]);
-          speed = aria2Match[2] ? aria2Match[2].replace(/^DL:/, '') + '/s' : '';
-          const etaRaw = aria2Match[3] || '';
-          eta = etaRaw === 'NA' || etaRaw === '' ? '' : etaRaw.replace(/^ETA:/, '');
-          if (!statusMessage) {
-            const state = get({ subscribe });
-            const item = state.items.find((i) => i.url === url);
-            const isAudio = item?.options?.downloadMode === 'audio';
-            statusMessage = isAudio
-              ? translate('downloads.status.downloadingAudio')
-              : translate('downloads.status.downloading');
-          }
+        const match = message.match(/^\s*(\d+\.?\d*)%\s+(\S*)\s*(.*)/);
+        if (match && !message.includes('[debug]') && !message.includes('[info]')) {
+          rawProgress = parseFloat(match[1]);
+          speed = match[2] || '';
+          eta = match[3] || '';
         } else {
-          const luxMatch = message.match(
-            /[\d.]+\s*\w*\s*\/\s*[\d.]+\s*\w*\s*\[.*?\]\s*([\d.]+)%\s*([\d.]+\s*\w+\/s)?\s*(\d+m\d+s)?/
-          );
-          if (luxMatch) {
-            rawProgress = parseFloat(luxMatch[1]);
-            speed = luxMatch[2]?.replace(/\s+/g, '') || '';
-            eta = luxMatch[3]?.replace(/(\d+)m(\d+)s/, '$1:$2') || '';
+          const aria2TrailingMatch = message.match(/\[#\w+[^\]]*\](\d+\.?\d*)%\s+(\S+)\s*(.*)/);
+          if (aria2TrailingMatch) {
+            rawProgress = parseFloat(aria2TrailingMatch[1]);
+            speed = aria2TrailingMatch[2] ? aria2TrailingMatch[2].replace(/^DL:/, '') : '';
+            if (speed && !speed.includes('/s')) speed += '/s';
+            const etaRaw = aria2TrailingMatch[3] || '';
+            eta = etaRaw === 'NA' || etaRaw === '' ? '' : etaRaw;
             if (!statusMessage) {
               const state = get({ subscribe });
               const item = state.items.find((i) => i.url === url);
@@ -427,6 +452,23 @@ function createQueueStore() {
               statusMessage = isAudio
                 ? translate('downloads.status.downloadingAudio')
                 : translate('downloads.status.downloading');
+            }
+          } else {
+            const luxMatch = message.match(
+              /[\d.]+\s*\w*\s*\/\s*[\d.]+\s*\w*\s*\[.*?\]\s*([\d.]+)%\s*([\d.]+\s*\w+\/s)?\s*(\d+m\d+s)?/
+            );
+            if (luxMatch) {
+              rawProgress = parseFloat(luxMatch[1]);
+              speed = luxMatch[2]?.replace(/\s+/g, '') || '';
+              eta = luxMatch[3]?.replace(/(\d+)m(\d+)s/, '$1:$2') || '';
+              if (!statusMessage) {
+                const state = get({ subscribe });
+                const item = state.items.find((i) => i.url === url);
+                const isAudio = item?.options?.downloadMode === 'audio';
+                statusMessage = isAudio
+                  ? translate('downloads.status.downloadingAudio')
+                  : translate('downloads.status.downloading');
+              }
             }
           }
         }
@@ -508,6 +550,15 @@ function createQueueStore() {
               : item
           ),
         }));
+
+        emit('download-progress-parsed', {
+          url,
+          progress,
+          speed: speed || (newStatus === 'processing' ? '' : currentItem?.speed || ''),
+          eta: eta || (newStatus === 'processing' ? '' : currentItem?.eta || ''),
+          status: newStatus,
+          statusMessage: newStatusMessage,
+        });
       } else if (isPostProcessing) {
         const currentMax = maxProgressMap.get(url) || 0;
         const postProcessProgress = Math.max(95, currentMax);
@@ -528,6 +579,15 @@ function createQueueStore() {
               : item
           ),
         }));
+
+        emit('download-progress-parsed', {
+          url,
+          progress: postProcessProgress,
+          speed: '',
+          eta: '',
+          status: 'processing' as DownloadStatus,
+          statusMessage,
+        });
       } else {
         update((state) => ({
           ...state,

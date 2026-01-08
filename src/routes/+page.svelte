@@ -614,7 +614,10 @@
     if (queueId) {
       logs.info('download', `Added to queue with ID: ${queueId}`);
     }
-    toast.info($t('downloads.active'));
+    const displayTitle = selection.title && selection.title.length > 40 
+      ? selection.title.slice(0, 40) + '…' 
+      : (selection.title || 'Download');
+    toast.info($t('downloads.started').replace('{title}', displayTitle));
     navigation.pop();
     url = '';
   }
@@ -781,7 +784,7 @@
         url: downloadUrl,
         filename: fileCheck.filename || 'download',
       });
-      toast.info($t('downloads.active'));
+      toast.info($t('downloads.started').replace('{title}', fileCheck.filename || 'File'));
       url = '';
       return;
     }
@@ -820,7 +823,12 @@
 
     if (queueId) {
       logs.info('download', `Added to queue with ID: ${queueId}`);
-      toast.info($t('downloads.active'));
+      try {
+        const urlObj = new URL(downloadUrl);
+        toast.info($t('downloads.started').replace('{title}', urlObj.hostname));
+      } catch {
+        toast.info($t('downloads.started').replace('{title}', 'Download'));
+      }
     }
     url = '';
   }

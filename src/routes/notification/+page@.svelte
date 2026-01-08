@@ -112,6 +112,10 @@
   let unlistenProgress: UnlistenFn | null = null;
   let unlistenStatus: UnlistenFn | null = null;
 
+  // Disk space warning
+  let lowDiskSpace = $state(false);
+  let availableSpaceGb = $state(0);
+
   let accentAlpha = $derived(accentColor + '66'); // 40% opacity
   let accentHover = $derived(adjustBrightness(accentColor, -10));
 
@@ -205,36 +209,22 @@
   }
 
   async function setupProgressListeners() {
-    unlistenProgress = await listen<{ url: string; message: string }>(
-      'download-progress',
-      (event) => {
-        const { url, message } = event.payload;
-        if (url !== mediaUrl) return;
+    unlistenProgress = await listen<{
+      url: string;
+      progress: number;
+      speed: string;
+      eta: string;
+      status: string;
+      statusMessage: string;
+    }>('download-progress-parsed', (event) => {
+      const { url, progress, speed, eta, status } = event.payload;
+      if (url !== mediaUrl) return;
 
-        // Parse progress from message
-        if (message.includes('[Merger]') || message.includes('Merging')) {
-          downloadState = 'processing';
-        } else if (message.includes('[ffmpeg]') || message.includes('[ExtractAudio]')) {
-          downloadState = 'processing';
-        } else if (message.includes('%')) {
-          downloadState = 'downloading';
-          const match = message.match(/^\s*(\d+\.?\d*)%\s+(\S*)\s*(.*)/);
-          if (match) {
-            downloadProgress = parseFloat(match[1]);
-            downloadSpeed = match[2] || '';
-            downloadEta = match[3] || '';
-          } else {
-            // Try aria2 format
-            const aria2Match = message.match(/\[#\w+[^\]]*\](\d+\.?\d*)%\s+(\S+)\s*(.*)/);
-            if (aria2Match) {
-              downloadProgress = parseFloat(aria2Match[1]);
-              downloadSpeed = aria2Match[2] ? aria2Match[2].replace(/^DL:/, '') + '/s' : '';
-              downloadEta = aria2Match[3] || '';
-            }
-          }
-        }
-      }
-    );
+      downloadProgress = progress;
+      downloadSpeed = speed;
+      downloadEta = eta;
+      downloadState = status === 'processing' ? 'processing' : 'downloading';
+    });
 
     unlistenStatus = await listen<{
       url: string;
@@ -317,8 +307,11 @@
 
   onMount(() => {
     (async () => {
+      let store: Awaited<ReturnType<typeof load>> | null = null;
+      let downloadPath = '';
+
       try {
-        const store = await load('settings.json', { autoSave: false, defaults: {} });
+        store = await load('settings.json', { autoSave: false, defaults: {} });
 
         const storedAccent = (await store.get<string>('accentColor')) ?? '#6366F1';
 
@@ -335,6 +328,7 @@
         thumbnailTheming = (await store.get<boolean>('notificationThumbnailTheming')) ?? true;
         notificationDuration = ((await store.get<number>('notificationDuration')) ?? 12) * 1000;
         showProgress = (await store.get<boolean>('notificationShowProgress')) ?? true;
+        downloadPath = (await store.get<string>('downloadPath')) || '';
 
         if (fancyBackground) {
           backgroundType = (await store.get<BackgroundType>('backgroundType')) ?? 'solid';
@@ -368,6 +362,19 @@
             }
           })
           .catch(() => {});
+      }
+
+      // Check disk space
+      if (downloadPath) {
+        try {
+          const diskInfo = await invoke<{ available_gb: number }>('get_disk_space', { path: downloadPath });
+          if (diskInfo && diskInfo.available_gb < 2) {
+            lowDiskSpace = true;
+            availableSpaceGb = Math.round(diskInfo.available_gb * 10) / 10;
+          }
+        } catch (e) {
+          console.warn('Could not check disk space:', e);
+        }
       }
     })();
 
@@ -786,8 +793,18 @@
               <span class="progress-status">Processing...</span>
             {:else if downloadProgress === 0 && !downloadSpeed}
               <span class="progress-status">Starting...</span>
-            {:else if downloadSpeed}
-              <span class="progress-speed">{downloadSpeed}</span>
+            {:else}
+              <span class="progress-speed">
+                {#if downloadSpeed}
+                  <Icon name="arrow_down" size={10} />
+                  {downloadSpeed}
+                {/if}
+                {#if downloadSpeed && downloadEta}<span class="speed-separator">·</span>{/if}
+                {#if downloadEta}
+                  <Icon name="clock" size={10} />
+                  {downloadEta}
+                {/if}
+              </span>
             {/if}
           </div>
         </div>
@@ -813,6 +830,13 @@
           <button class="btn dismiss" onclick={closeNotification}>Close</button>
         </div>
       {:else}
+        <!-- Low disk space warning -->
+        {#if lowDiskSpace}
+          <div class="disk-warning" in:fade={{ duration: 200 }}>
+            <Icon name="warning" size={12} />
+            <span>Low disk space: {availableSpaceGb} GB left</span>
+          </div>
+        {/if}
         <!-- Default buttons -->
         <div class="default-actions" out:fade={{ duration: 150 }}>
           {#if isChannel}
@@ -1362,28 +1386,31 @@
     border-radius: 3px;
     transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     position: relative;
+    overflow: hidden;
   }
   .progress-bar::after {
     content: '';
     position: absolute;
     top: 0;
     left: 0;
-    right: 0;
-    bottom: 0;
+    width: 200%;
+    height: 100%;
     background: linear-gradient(
       90deg,
       transparent 0%,
-      rgba(255, 255, 255, 0.2) 50%,
+      transparent 25%,
+      rgba(255, 255, 255, 0.25) 50%,
+      transparent 75%,
       transparent 100%
     );
-    animation: shimmer 1.5s infinite;
+    animation: shimmer 2s ease-in-out infinite;
   }
   @keyframes shimmer {
     0% {
-      transform: translateX(-100%);
+      transform: translateX(-50%);
     }
     100% {
-      transform: translateX(100%);
+      transform: translateX(50%);
     }
   }
   .themed .progress-bar {
@@ -1405,6 +1432,19 @@
   .progress-speed,
   .progress-status {
     color: rgba(255, 255, 255, 0.5);
+    display: flex;
+    align-items: center;
+    gap: 3px;
+  }
+
+  .progress-speed :global(svg) {
+    opacity: 0.7;
+    flex-shrink: 0;
+  }
+
+  .speed-separator {
+    margin: 0 2px;
+    opacity: 0.4;
   }
 
   /* Completion buttons */
@@ -1441,6 +1481,20 @@
     border-radius: 6px;
     color: #ef4444;
     font-size: 12px;
+    font-weight: 500;
+  }
+
+  /* Disk space warning */
+  .disk-warning {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    margin-bottom: 8px;
+    background: rgba(245, 158, 11, 0.15);
+    border-radius: 6px;
+    color: #fbbf24;
+    font-size: 11px;
     font-weight: 500;
   }
 

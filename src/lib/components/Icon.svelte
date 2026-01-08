@@ -6,6 +6,7 @@
     | 'album'
     | 'alt_arrow_rigth'
     | 'arrow_right'
+    | 'arrow_down'
     | 'bell'
     | 'book'
     | 'box'

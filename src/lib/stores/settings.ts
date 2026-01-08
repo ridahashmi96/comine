@@ -262,8 +262,8 @@ export const defaultSettings: AppSettings = {
 
   dismissedUpdateVersion: '',
 
-  aria2Connections: 4,
-  aria2Splits: 4,
+  aria2Connections: 16,
+  aria2Splits: 16,
   aria2MinSplitSize: '1M',
 
   downloadSpeedLimit: 0,

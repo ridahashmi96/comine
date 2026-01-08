@@ -182,7 +182,7 @@ export function detectErrorCode(errorMessage: string): ErrorCode {
   if (msg.includes('unsupported') || msg.includes('not supported'))
     return ErrorCode.UNSUPPORTED_SITE;
 
-  if (msg.includes('disk full') || msg.includes('no space')) return ErrorCode.DISK_FULL;
+  if (msg.includes('disk full') || msg.includes('no space') || msg.includes('not enough space on the disk') || msg.includes('errnum=112')) return ErrorCode.DISK_FULL;
   if (msg.includes('permission denied') || msg.includes('access denied')) {
     return ErrorCode.PERMISSION_DENIED;
   }

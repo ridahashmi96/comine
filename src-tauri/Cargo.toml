@@ -47,6 +47,7 @@ url = "2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 lru = "0.12"
 async-trait = "0.1"
+sysinfo = { version = "0.33", default-features = false, features = ["disk"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -63,6 +63,11 @@
       "openingModal": "Opening playlist selection..."
     }
   },
+  "disk": {
+    "lowSpace": "Low disk space",
+    "lowSpaceWarning": "Only {available} GB free on your download drive. Downloads may fail.",
+    "available": "{available} GB available"
+  },
   "download": {
     "title": "Download",
     "subtitle": "Paste a link to get started",
@@ -71,6 +76,7 @@
     "downloading": "Downloading...",
     "success": "Download successful!",
     "error": "Download failed",
+    "errorDiskFull": "Not enough disk space",
     "pasteFromClipboard": "Paste from clipboard",
     "youtubeDetected": "YouTube video",
     "playlistDetected": "Playlist detected",
@@ -215,6 +221,7 @@
     "subtitle": "Active and completed downloads",
     "active": "Active",
     "completed": "Completed",
+    "started": "Downloading: {title}",
     "noActive": "No active downloads",
     "startHint": "Start a download from the home page",
     "searchPlaceholder": "Search by title, author, date, file extension, etc.",
@@ -642,6 +649,7 @@
   },
   "clipboard": {
     "detected": "Media URL detected in clipboard",
+    "fetchingInfo": "Fetching media info...",
     "fileDetected": "File URL detected in clipboard",
     "noValidUrl": "No valid media URL in clipboard",
     "error": "Failed to read clipboard"

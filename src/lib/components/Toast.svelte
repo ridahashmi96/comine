@@ -1,7 +1,7 @@
 <script lang="ts" module>
   import { writable } from 'svelte/store';
 
-  export type ToastType = 'success' | 'error' | 'warning' | 'info' | 'progress';
+  export type ToastType = 'success' | 'error' | 'warning' | 'info' | 'progress' | 'loading';
 
   export interface Toast {
     id: number;
@@ -42,12 +42,19 @@
   toast.error = (msg: string, duration?: number) => toast(msg, 'error', duration);
   toast.warning = (msg: string, duration?: number) => toast(msg, 'warning', duration);
   toast.info = (msg: string, duration?: number) => toast(msg, 'info', duration);
-  /** Create a persistent progress toast (duration=0 means no auto-dismiss) */
   toast.progress = (msg: string, progress: number = 0, subMessage?: string) => {
     const id = ++idCounter;
     toasts.update((t) => [
       ...t,
       { id, message: msg, type: 'progress', duration: 0, progress, subMessage },
+    ]);
+    return id;
+  };
+  toast.loading = (msg: string, subMessage?: string) => {
+    const id = ++idCounter;
+    toasts.update((t) => [
+      ...t,
+      { id, message: msg, type: 'loading', duration: 0, subMessage },
     ]);
     return id;
   };
@@ -66,6 +73,7 @@
     warning: 'warning',
     info: 'info',
     progress: 'download',
+    loading: 'spinner',
   };
 
   let position = $derived<ToastPosition>(
@@ -89,22 +97,27 @@
       animate:flip={{ duration: 200 }}
       in:fly={{ y: flyY, duration: 200 }}
       out:fade={{ duration: 150 }}
+      role="alert"
     >
-      <Icon name={iconMap[t.type]} size={18} />
-      <div class="toast-content">
-        <span class="message">{t.message}</span>
-        {#if t.type === 'progress'}
-          <div class="progress-bar">
-            <div class="progress-fill" style="width: {t.progress ?? 0}%"></div>
-          </div>
+      <div class="toast-body">
+        <span class="toast-icon" class:spinning={t.type === 'loading'}>
+          <Icon name={iconMap[t.type]} size={15} />
+        </span>
+        <div class="toast-text">
+          <span class="message">{t.message}</span>
           {#if t.subMessage}
             <span class="sub-message">{t.subMessage}</span>
           {/if}
-        {/if}
+        </div>
+        <button class="dismiss" onclick={() => dismissToast(t.id)} aria-label="Dismiss">
+          <Icon name="cross" size={12} />
+        </button>
       </div>
-      <button class="dismiss" onclick={() => dismissToast(t.id)}>
-        <Icon name="cross" size={14} />
-      </button>
+      {#if t.type === 'progress'}
+        <div class="progress-track">
+          <div class="progress-fill" style="width: {t.progress ?? 0}%"></div>
+        </div>
+      {/if}
     </div>
   {/each}
 </div>
@@ -114,39 +127,37 @@
     position: fixed;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
     z-index: 2000;
     pointer-events: none;
   }
 
-  /* Position variants */
   .toast-container.bottom {
-    bottom: 20px;
+    bottom: 24px;
   }
-
   .toast-container.top {
-    top: 20px;
+    top: 24px;
   }
-
   .toast-container.right {
-    right: 20px;
+    right: 24px;
   }
-
   .toast-container.left {
-    left: 20px;
+    left: 24px;
   }
-
   .toast-container.center {
     left: 50%;
     transform: translateX(-50%);
   }
 
-  /* On mobile, add extra bottom padding for floating nav bar */
   @media (max-width: 480px) {
-    .toast-container.bottom {
-      bottom: calc(90px + env(safe-area-inset-bottom, 0px)); /* Above floating nav */
+    .toast-container {
+      left: 16px;
+      right: 16px;
+      transform: none;
     }
-
+    .toast-container.bottom {
+      bottom: calc(90px + env(safe-area-inset-bottom, 0px));
+    }
     .toast-container.top {
       top: calc(env(safe-area-inset-top, 24px) + 8px);
     }
@@ -154,87 +165,104 @@
 
   .toast {
     display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 12px 16px;
-    background: rgba(25, 25, 25, 0.95);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
-    color: white;
-    font-size: 13px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    flex-direction: column;
+    background: rgba(24, 24, 26, 0.92);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 12px;
+    box-shadow:
+      0 8px 32px rgba(0, 0, 0, 0.32),
+      0 2px 8px rgba(0, 0, 0, 0.16);
     pointer-events: auto;
-    max-width: 360px;
+    overflow: hidden;
+    min-width: 280px;
+    max-width: 380px;
   }
 
-  .toast.success {
-    border-left: 3px solid #22c55e;
+  .toast-body {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 16px;
   }
 
-  .toast.error {
-    border-left: 3px solid #ef4444;
+  .toast-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 1px;
   }
 
-  .toast.warning {
-    border-left: 3px solid #f59e0b;
+  .toast.success .toast-icon { color: #4ade80; }
+  .toast.error .toast-icon { color: #f87171; }
+  .toast.warning .toast-icon { color: #fbbf24; }
+  .toast.info .toast-icon { color: var(--accent, #818cf8); }
+  .toast.progress .toast-icon { color: var(--accent, #818cf8); }
+  .toast.loading .toast-icon { color: var(--accent, #818cf8); }
+
+  .spinning {
+    animation: spin 0.8s linear infinite;
   }
 
-  .toast.info {
-    border-left: 3px solid var(--accent, #6366f1);
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 
-  .toast.progress {
-    border-left: 3px solid var(--accent, #6366f1);
-  }
-
-  .toast-content {
+  .toast-text {
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 2px;
     min-width: 0;
   }
 
   .message {
-    flex: 1;
+    font-size: 13px;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.92);
+    line-height: 1.4;
   }
 
   .sub-message {
-    font-size: 11px;
+    font-size: 12px;
+    font-weight: 400;
     color: rgba(255, 255, 255, 0.5);
-  }
-
-  .progress-bar {
-    width: 100%;
-    height: 4px;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 2px;
     overflow: hidden;
-  }
-
-  .progress-fill {
-    height: 100%;
-    background: var(--accent, #6366f1);
-    border-radius: 2px;
-    transition: width 0.3s ease;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .dismiss {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
+    width: 20px;
+    height: 20px;
+    margin: -2px -4px -2px 0;
     background: transparent;
     border: none;
-    border-radius: 4px;
-    color: rgba(255, 255, 255, 0.5);
+    border-radius: 6px;
+    color: rgba(255, 255, 255, 0.3);
     cursor: pointer;
-    transition: all 0.15s;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
   }
 
   .dismiss:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: white;
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  .progress-track {
+    height: 3px;
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: var(--accent, #6366f1);
+    transition: width 0.25s ease-out;
   }
 </style>

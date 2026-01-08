@@ -1747,6 +1747,19 @@ async fn detect_system_proxy() -> Result<proxy::ResolvedProxy, String> {
     Ok(proxy::detect_system_proxy())
 }
 
+/// Get disk space info for a given path
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
+async fn get_disk_space(path: String) -> Result<utils::DiskSpaceInfo, String> {
+    utils::get_disk_space_for_path(&path).ok_or_else(|| "Could not determine disk space".to_string())
+}
+
+#[tauri::command]
+#[cfg(target_os = "android")]
+async fn get_disk_space(_path: String) -> Result<utils::DiskSpaceInfo, String> {
+    Err("Not supported on Android".to_string())
+}
+
 /// Check current public IP (to verify proxy is working)
 #[tauri::command]
 async fn check_ip(proxy_config: Option<proxy::ProxyConfig>) -> Result<IpCheckResult, String> {
@@ -2646,6 +2659,7 @@ pub fn run() {
         resolve_proxy_config,
         validate_proxy_url,
         detect_system_proxy,
+        get_disk_space,
         check_ip,
         download_file,
         check_file_url,
