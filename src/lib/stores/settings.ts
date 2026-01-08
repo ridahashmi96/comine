@@ -47,7 +47,40 @@ export type ToastPosition =
   | 'bottom-center'
   | 'top-center';
 export type NotificationMonitor = 'primary' | 'cursor';
-export type BackgroundType = 'acrylic' | 'animated' | 'solid' | 'image';
+/**
+ * Window effect types by platform:
+ * - Windows 10/11: acrylic, blur
+ * - Windows 11: mica, mica-dark, mica-light, tabbed, tabbed-dark, tabbed-light
+ * - macOS: vibrancy-* variants
+ * - All: solid, oled, animated, image (CSS-based)
+ */
+export type BackgroundType =
+  | 'solid'
+  | 'oled'
+  | 'animated'
+  | 'image'
+  | 'acrylic'
+  | 'blur'
+  | 'mica'
+  | 'mica-dark'
+  | 'mica-light'
+  | 'tabbed'
+  | 'tabbed-dark'
+  | 'tabbed-light'
+  | 'vibrancy-titlebar'
+  | 'vibrancy-selection'
+  | 'vibrancy-menu'
+  | 'vibrancy-popover'
+  | 'vibrancy-sidebar'
+  | 'vibrancy-header'
+  | 'vibrancy-sheet'
+  | 'vibrancy-window'
+  | 'vibrancy-hud'
+  | 'vibrancy-fullscreen'
+  | 'vibrancy-tooltip'
+  | 'vibrancy-content'
+  | 'vibrancy-under-window'
+  | 'vibrancy-under-page';
 export type AccentStyle = 'solid' | 'gradient' | 'glow';
 export type ProxyMode = 'none' | 'system' | 'custom';
 
@@ -91,6 +124,7 @@ export interface AppSettings {
   backgroundVideo: string;
   backgroundBlur: number;
   backgroundOpacity: number;
+  windowTint: number;
 
   accentColor: string;
   accentStyle: AccentStyle;
@@ -223,6 +257,7 @@ export const defaultSettings: AppSettings = {
   backgroundVideo: 'https://nichind.dev/assets/video/atri.mp4',
   backgroundBlur: 20,
   backgroundOpacity: 100,
+  windowTint: 48,
 
   accentColor: '#6366F1',
   accentStyle: 'solid',
@@ -333,6 +368,16 @@ export async function initSettings(): Promise<void> {
         values[keys.indexOf('useSystemAccent')] === undefined
       ) {
         loaded.useSystemAccent = true;
+      }
+    } else if (typeof navigator !== 'undefined') {
+      const backgroundTypeIdx = keys.indexOf('backgroundType');
+      if (values[backgroundTypeIdx] === null || values[backgroundTypeIdx] === undefined) {
+        const userAgent = navigator.userAgent.toLowerCase();
+        if (userAgent.includes('mac')) {
+          loaded.backgroundType = 'vibrancy-sidebar';
+        } else if (userAgent.includes('linux')) {
+          loaded.backgroundType = loaded.backgroundVideo ? 'animated' : 'solid';
+        }
       }
     }
 

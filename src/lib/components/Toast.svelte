@@ -148,15 +148,19 @@
 
   @media (max-width: 480px) {
     .toast-container {
-      left: 16px;
-      right: 16px;
+      left: 12px;
+      right: 12px;
       transform: none;
     }
     .toast-container.bottom {
-      bottom: calc(90px + env(safe-area-inset-bottom, 0px));
+      bottom: calc(80px + env(safe-area-inset-bottom, 0px));
     }
     .toast-container.top {
-      top: calc(env(safe-area-inset-top, 24px) + 8px);
+      top: calc(env(safe-area-inset-top, 0px) + 12px);
+    }
+    .toast {
+      min-width: unset;
+      max-width: unset;
     }
   }
 

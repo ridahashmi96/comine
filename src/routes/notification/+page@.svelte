@@ -1080,10 +1080,9 @@
     position: relative;
     z-index: 1;
     border-radius: 12px;
-    height: calc(100vh - 4px);
+    height: 100vh;
     box-sizing: border-box;
     border: 1px solid rgba(255, 255, 255, 0.08);
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
     transition: border-color 0.4s ease;
     overflow: hidden;
     isolation: isolate;

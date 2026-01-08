@@ -1707,33 +1707,111 @@ async fn embed_thumbnail_jpeg_bytes(
     Ok(())
 }
 
-/// Set acrylic/blur effect on the main window
-/// On Windows: Uses acrylic effect
-/// On Linux/macOS: No-op (acrylic not supported, transparency handled by config)
+/// Set window background effect
+/// Supports various effects for Windows and macOS
+/// effect_type: "acrylic", "blur", "mica", "mica-dark", "mica-light", "tabbed", "tabbed-dark", "tabbed-light"
+///              "vibrancy-*" for macOS vibrancy effects
+///              "none" to disable effects
 #[tauri::command]
 #[allow(unused_variables)]
-async fn set_acrylic(app: AppHandle, enable: bool) -> Result<(), String> {
+async fn set_window_effect(app: AppHandle, effect_type: String) -> Result<(), String> {
+    info!("Setting window effect: {}", effect_type);
+
     #[cfg(target_os = "windows")]
     {
         use tauri::utils::config::{Color, WindowEffectsConfig};
         use tauri_utils::WindowEffect;
 
         if let Some(window) = app.get_webview_window("main") {
-            if enable {
+            let _ = window.set_effects(None::<WindowEffectsConfig>);
+
+            if effect_type != "none" && !effect_type.starts_with("vibrancy-") {
+                let effect = match effect_type.as_str() {
+                    "blur" => WindowEffect::Blur,
+                    "mica" => WindowEffect::Mica,
+                    "mica-dark" => WindowEffect::MicaDark,
+                    "mica-light" => WindowEffect::MicaLight,
+                    "tabbed" => WindowEffect::Tabbed,
+                    "tabbed-dark" => WindowEffect::TabbedDark,
+                    "tabbed-light" => WindowEffect::TabbedLight,
+                    _ => WindowEffect::Acrylic,
+                };
+
+                // Only Acrylic supports color tinting
+                let color = if effect_type == "acrylic" {
+                    Some(Color(19, 19, 19, 163))
+                } else {
+                    None
+                };
+
                 let effects_config = WindowEffectsConfig {
-                    effects: vec![WindowEffect::Acrylic],
+                    effects: vec![effect],
                     state: None,
                     radius: None,
-                    color: Some(Color(19, 19, 19, 163)), // #131313a3
+                    color,
                 };
-                let _ = window.set_effects(Some(effects_config));
-            } else {
-                let _ = window.set_effects(None::<WindowEffectsConfig>);
+
+                // Force redraw when switching between effect APIs
+                let _ = window.set_decorations(true);
+                let _ = window.set_decorations(false);
+
+                if let Err(e) = window.set_effects(Some(effects_config)) {
+                    error!("Failed to set window effect: {:?}", e);
+                    return Err(format!("Failed to set window effect: {:?}", e));
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use tauri::utils::config::WindowEffectsConfig;
+        use tauri_utils::{WindowEffect, WindowEffectState};
+
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.set_effects(None::<WindowEffectsConfig>);
+
+            if effect_type != "none" && effect_type.starts_with("vibrancy-") {
+                let effect = match effect_type.as_str() {
+                    "vibrancy-titlebar" => WindowEffect::Titlebar,
+                    "vibrancy-selection" => WindowEffect::Selection,
+                    "vibrancy-menu" => WindowEffect::Menu,
+                    "vibrancy-popover" => WindowEffect::Popover,
+                    "vibrancy-sidebar" => WindowEffect::Sidebar,
+                    "vibrancy-header" => WindowEffect::HeaderView,
+                    "vibrancy-sheet" => WindowEffect::Sheet,
+                    "vibrancy-window" => WindowEffect::WindowBackground,
+                    "vibrancy-hud" => WindowEffect::HudWindow,
+                    "vibrancy-fullscreen" => WindowEffect::FullScreenUI,
+                    "vibrancy-tooltip" => WindowEffect::Tooltip,
+                    "vibrancy-content" => WindowEffect::ContentBackground,
+                    "vibrancy-under-window" => WindowEffect::UnderWindowBackground,
+                    "vibrancy-under-page" => WindowEffect::UnderPageBackground,
+                    _ => WindowEffect::WindowBackground,
+                };
+
+                let effects_config = WindowEffectsConfig {
+                    effects: vec![effect],
+                    state: Some(WindowEffectState::FollowsWindowActiveState),
+                    radius: Some(12.0),
+                    color: None,
+                };
+
+                if let Err(e) = window.set_effects(Some(effects_config)) {
+                    error!("Failed to set window effect: {:?}", e);
+                    return Err(format!("Failed to set window effect: {:?}", e));
+                }
             }
         }
     }
 
     Ok(())
+}
+
+#[tauri::command]
+#[allow(unused_variables)]
+async fn set_acrylic(app: AppHandle, enable: bool) -> Result<(), String> {
+    set_window_effect(app, if enable { "acrylic".to_string() } else { "none".to_string() }).await
 }
 
 // ==================== Proxy Commands ====================
@@ -2666,6 +2744,7 @@ pub fn run() {
         lux_get_video_formats,
         lux_get_playlist_info,
         lux_download_video,
+        set_window_effect,
         set_acrylic,
         notifications::show_notification_window,
         notifications::reveal_notification_window,

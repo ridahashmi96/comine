@@ -1188,7 +1188,7 @@
 {:else}
   <AccentProvider />
   <BackgroundProvider />
-  <div class="app" class:mobile={isMobile}>
+  <div class="app" class:mobile={isMobile} style="--window-tint: {$settings.backgroundType === 'oled' ? 0 : $settings.windowTint / 100};">
     <!-- Desktop titlebar (hidden on mobile) -->
     {#if !isMobile}
       <div class="titlebar" data-tauri-drag-region>
@@ -1294,6 +1294,13 @@
     box-sizing: border-box;
   }
 
+  :global(html),
+  :global(body) {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+  }
+
   :global(body) {
     font-family:
       'Jost',
@@ -1387,11 +1394,9 @@
   }
 
   .app {
-    background: rgba(19, 19, 19, 0.48);
-    border-radius: 12px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    height: 100vh;
-    width: 100vw;
+    background: rgba(19, 19, 19, var(--window-tint, 0.48));
+    height: 100%;
+    width: 100%;
     color: white;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
     display: flex;
@@ -1404,7 +1409,6 @@
     content: '';
     position: absolute;
     inset: 0;
-    border-radius: 12px;
     background: linear-gradient(
       to bottom,
       rgba(0, 0, 0, 1) 0%,

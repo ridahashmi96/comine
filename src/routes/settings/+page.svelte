@@ -54,6 +54,7 @@
 
   let onAndroid = $state(false);
   let onDesktop = $state(true);
+  let platform = $state<'windows' | 'macos' | 'linux' | 'android'>('windows');
 
   let backgroundVideoInput = $state('');
   let backgroundImageInput = $state('');
@@ -65,6 +66,29 @@
   let currentIp = $state<string | null>(null);
   let checkingIp = $state(false);
   let ipProxyUsed = $state(false);
+
+  let sliderDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    
+  function debouncedSliderUpdate<K extends keyof typeof $settings>(
+    key: K,
+    value: (typeof $settings)[K],
+    delay: number = 150
+  ) {
+    settings.update((s) => ({ ...s, [key]: value }));
+
+    const existingTimer = sliderDebounceTimers.get(key);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+
+    sliderDebounceTimers.set(
+      key,
+      setTimeout(() => {
+        updateSetting(key, value);
+        sliderDebounceTimers.delete(key);
+      }, delay)
+    );
+  }
 
   // Track toast IDs for each dependency being installed
   let depToastIds = $state<Map<DependencyName, number>>(new Map());
@@ -110,6 +134,20 @@
   onMount(() => {
     onAndroid = isAndroid();
     onDesktop = isDesktop();
+
+    // Detect platform from navigator
+    if (onDesktop && typeof navigator !== 'undefined') {
+      const userAgent = navigator.userAgent.toLowerCase();
+      if (userAgent.includes('mac')) {
+        platform = 'macos';
+      } else if (userAgent.includes('linux') && !userAgent.includes('android')) {
+        platform = 'linux';
+      } else {
+        platform = 'windows';
+      }
+    } else {
+      platform = 'android';
+    }
 
     backgroundVideoInput = $settings.backgroundVideo || '';
     backgroundImageInput = $settings.backgroundImage || '';
@@ -425,11 +463,29 @@
   }
 
   function handleBackgroundBlurChange(value: number) {
-    updateSetting('backgroundBlur', value);
+    debouncedSliderUpdate('backgroundBlur', value);
   }
 
   function handleBackgroundOpacityChange(value: number) {
-    updateSetting('backgroundOpacity', value);
+    debouncedSliderUpdate('backgroundOpacity', value);
+  }
+
+  function handleWindowTintChange(value: number) {
+    debouncedSliderUpdate('windowTint', value);
+  }
+
+  function isWindowEffect(type: string): boolean {
+    return (
+      type === 'acrylic' ||
+      type === 'blur' ||
+      type === 'mica' ||
+      type === 'mica-dark' ||
+      type === 'mica-light' ||
+      type === 'tabbed' ||
+      type === 'tabbed-dark' ||
+      type === 'tabbed-light' ||
+      type.startsWith('vibrancy-')
+    );
   }
 
   function handleAccentColorChange(value: string) {
@@ -579,12 +635,43 @@
     updateSetting('toastPosition', value as ToastPosition);
   }
 
-  let backgroundTypeOptions = $derived([
-    ...(onDesktop ? [{ value: 'acrylic', label: $t('settings.app.backgroundAcrylic') }] : []),
-    { value: 'animated', label: $t('settings.app.backgroundAnimated') },
-    { value: 'solid', label: $t('settings.app.backgroundSolid') },
-    { value: 'image', label: $t('settings.app.backgroundImage') },
-  ]);
+  let backgroundTypeOptions = $derived.by(() => {
+    const baseOptions = [
+      { value: 'animated', label: $t('settings.app.backgroundAnimated') },
+      { value: 'solid', label: $t('settings.app.backgroundSolid') },
+      { value: 'oled', label: $t('settings.app.backgroundOled') },
+      { value: 'image', label: $t('settings.app.backgroundImage') },
+    ];
+
+    if (!onDesktop) return baseOptions;
+
+    if (platform === 'windows') {
+      return [
+        { value: 'mica', label: $t('settings.app.backgroundMica') },
+        { value: 'mica-dark', label: $t('settings.app.backgroundMicaDark') },
+        { value: 'mica-light', label: $t('settings.app.backgroundMicaLight') },
+        { value: 'acrylic', label: $t('settings.app.backgroundAcrylic') },
+        { value: 'blur', label: $t('settings.app.backgroundBlur') },
+        { value: 'tabbed', label: $t('settings.app.backgroundTabbed') },
+        { value: 'tabbed-dark', label: $t('settings.app.backgroundTabbedDark') },
+        { value: 'tabbed-light', label: $t('settings.app.backgroundTabbedLight') },
+        ...baseOptions,
+      ];
+    } else if (platform === 'macos') {
+      return [
+        { value: 'vibrancy-sidebar', label: $t('settings.app.backgroundVibrancySidebar') },
+        { value: 'vibrancy-hud', label: $t('settings.app.backgroundVibrancyHud') },
+        { value: 'vibrancy-window', label: $t('settings.app.backgroundVibrancyWindow') },
+        { value: 'vibrancy-popover', label: $t('settings.app.backgroundVibrancyPopover') },
+        { value: 'vibrancy-menu', label: $t('settings.app.backgroundVibrancyMenu') },
+        { value: 'vibrancy-content', label: $t('settings.app.backgroundVibrancyContent') },
+        { value: 'vibrancy-under-window', label: $t('settings.app.backgroundVibrancyUnderWindow') },
+        ...baseOptions,
+      ];
+    }
+
+    return baseOptions;
+  });
 
   let sizeUnitOptions = $derived([
     { value: 'binary', label: $t('settings.app.sizeUnitBinary') },
@@ -1126,7 +1213,7 @@
                   step="4"
                   value={$settings.notificationOffset}
                   oninput={(e) =>
-                    updateSetting(
+                    debouncedSliderUpdate(
                       'notificationOffset',
                       parseInt((e.target as HTMLInputElement).value)
                     )}
@@ -1155,7 +1242,7 @@
                   step="1"
                   value={$settings.notificationDuration}
                   oninput={(e) =>
-                    updateSetting(
+                    debouncedSliderUpdate(
                       'notificationDuration',
                       parseInt((e.target as HTMLInputElement).value)
                     )}
@@ -1441,7 +1528,7 @@
                   step="1"
                   value={$settings.concurrentDownloads}
                   oninput={(e) =>
-                    updateSetting(
+                    debouncedSliderUpdate(
                       'concurrentDownloads',
                       parseInt((e.target as HTMLInputElement).value)
                     )}
@@ -1509,7 +1596,7 @@
                   step="1"
                   value={$settings.aria2Connections}
                   oninput={(e) =>
-                    updateSetting(
+                    debouncedSliderUpdate(
                       'aria2Connections',
                       parseInt((e.target as HTMLInputElement).value)
                     )}
@@ -1538,7 +1625,7 @@
                   step="1"
                   value={$settings.aria2Splits}
                   oninput={(e) =>
-                    updateSetting('aria2Splits', parseInt((e.target as HTMLInputElement).value))}
+                    debouncedSliderUpdate('aria2Splits', parseInt((e.target as HTMLInputElement).value))}
                 />
                 <span class="slider-value">{$settings.aria2Splits}</span>
               </div>
@@ -1565,7 +1652,7 @@
                   step="1"
                   value={$settings.downloadSpeedLimit}
                   oninput={(e) =>
-                    updateSetting(
+                    debouncedSliderUpdate(
                       'downloadSpeedLimit',
                       parseInt((e.target as HTMLInputElement).value)
                     )}
@@ -2003,9 +2090,9 @@
             {#if $settings.backgroundType === 'animated' || $settings.backgroundType === 'image'}
               <div class="setting-sub-row">
                 <div class="setting-label-group">
-                  <span class="setting-label">{$t('settings.app.backgroundBlur')}</span>
+                  <span class="setting-label">{$t('settings.app.backgroundBlurAmount')}</span>
                   <span class="setting-description"
-                    >{$t('settings.app.backgroundBlurDescription')}</span
+                    >{$t('settings.app.backgroundBlurAmountDescription')}</span
                   >
                 </div>
                 <div class="slider-with-value">
@@ -2024,7 +2111,7 @@
               </div>
             {/if}
 
-            {#if !isAndroid()}
+            {#if !isAndroid() && !isWindowEffect($settings.backgroundType)}
               <div class="setting-sub-row">
                 <div class="setting-label-group">
                   <span class="setting-label">{$t('settings.app.backgroundOpacity')}</span>
@@ -2044,6 +2131,39 @@
                       handleBackgroundOpacityChange(parseInt((e.target as HTMLInputElement).value))}
                   />
                   <span class="slider-value">{$settings.backgroundOpacity}%</span>
+                </div>
+              </div>
+            {/if}
+
+            {#if !isAndroid() && $settings.backgroundType !== 'solid' && $settings.backgroundType !== 'oled'}
+              <div class="setting-sub-row">
+                <div class="setting-label-group">
+                  <span class="setting-label">{$t('settings.app.windowTint')}</span>
+                  <span class="setting-description"
+                    >{$t('settings.app.windowTintDescription')}</span
+                  >
+                </div>
+                <div class="slider-with-value">
+                  {#if $settings.windowTint !== defaultSettings.windowTint}
+                    <button
+                      class="slider-reset-btn"
+                      onclick={() => updateSetting('windowTint', defaultSettings.windowTint)}
+                      use:tooltip={'Reset to default'}
+                    >
+                      <Icon name="undo" size={14} />
+                    </button>
+                  {/if}
+                  <input
+                    type="range"
+                    class="blur-slider"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={$settings.windowTint}
+                    oninput={(e) =>
+                      handleWindowTintChange(parseInt((e.target as HTMLInputElement).value))}
+                  />
+                  <span class="slider-value">{$settings.windowTint}%</span>
                 </div>
               </div>
             {/if}
@@ -3143,6 +3263,26 @@
     align-items: center;
     gap: 12px;
     min-width: 180px;
+  }
+
+  .slider-reset-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 5px;
+    background: transparent;
+    border: 1px solid transparent;
+    color: rgba(255, 255, 255, 0.4);
+    cursor: pointer;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+
+  .slider-reset-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.9);
   }
 
   .blur-slider {

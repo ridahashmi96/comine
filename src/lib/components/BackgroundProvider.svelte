@@ -5,12 +5,49 @@
   import { invoke } from '@tauri-apps/api/core';
 
   let onDesktop = $state(false);
+  let platform = $state<'windows' | 'macos' | 'linux' | 'android'>('windows');
+  let currentEffect = $state<string | null>(null);
+
+  function isWindowEffect(type: BackgroundType): boolean {
+    return (
+      type === 'acrylic' ||
+      type === 'blur' ||
+      type === 'mica' ||
+      type === 'mica-dark' ||
+      type === 'mica-light' ||
+      type === 'tabbed' ||
+      type === 'tabbed-dark' ||
+      type === 'tabbed-light' ||
+      type.startsWith('vibrancy-')
+    );
+  }
+
+  function isEffectSupportedOnPlatform(type: BackgroundType): boolean {
+    if (platform === 'windows') {
+      return !type.startsWith('vibrancy-');
+    } else if (platform === 'macos') {
+      return type.startsWith('vibrancy-');
+    }
+    return false;
+  }
 
   let effectiveBackgroundType = $derived.by(() => {
     const type = $settings.backgroundType;
-    if (type === 'acrylic' && !onDesktop) {
-      return $settings.backgroundVideo ? 'animated' : 'solid';
+
+    if (!onDesktop) {
+      if (isWindowEffect(type)) {
+        return $settings.backgroundVideo ? 'animated' : 'solid';
+      }
+      return type;
     }
+
+    if (isWindowEffect(type)) {
+      if (!isEffectSupportedOnPlatform(type)) {
+        return $settings.backgroundVideo ? 'animated' : 'solid';
+      }
+      return type;
+    }
+
     return type;
   });
 
@@ -36,26 +73,38 @@
 
   let videoEl: HTMLVideoElement | null = $state(null);
 
-  onMount(() => {
+  onMount(async () => {
     onDesktop = !isAndroid();
 
-    if (onDesktop) {
-      updateAcrylicEffect();
+    if (onDesktop && typeof navigator !== 'undefined') {
+      const userAgent = navigator.userAgent.toLowerCase();
+      if (userAgent.includes('mac')) {
+        platform = 'macos';
+      } else if (userAgent.includes('linux') && !userAgent.includes('android')) {
+        platform = 'linux';
+      } else {
+        platform = 'windows';
+      }
     }
   });
 
   $effect(() => {
-    if (onDesktop) {
-      updateAcrylicEffect();
+    if (!onDesktop) return;
+
+    const type = $settings.backgroundType;
+    const targetEffect = isWindowEffect(type) && isEffectSupportedOnPlatform(type) ? type : 'none';
+
+    if (targetEffect !== currentEffect) {
+      applyWindowEffect(targetEffect);
     }
   });
 
-  async function updateAcrylicEffect() {
+  async function applyWindowEffect(effectType: string) {
     try {
-      const shouldEnableAcrylic = $settings.backgroundType === 'acrylic';
-      await invoke('set_acrylic', { enable: shouldEnableAcrylic });
+      await invoke('set_window_effect', { effectType });
+      currentEffect = effectType;
     } catch (e) {
-      console.error('Failed to set acrylic effect:', e);
+      console.error('Failed to set window effect:', e);
     }
   }
 </script>
@@ -88,6 +137,8 @@
       style="background-image: url('{imageSrc}'); filter: blur({$settings.backgroundBlur}px) brightness(0.4) saturate(1.2); opacity: {opacity};"
     ></div>
     <div class="image-overlay"></div>
+  {:else if effectiveBackgroundType === 'oled'}
+    <div class="background-solid" style="background-color: #000000;"></div>
   {:else if effectiveBackgroundType === 'solid'}
     {@const opacity = onDesktop ? $settings.backgroundOpacity / 100 : 1}
     {@const bgColor = $settings.backgroundColor || '#1a1a2e'}
