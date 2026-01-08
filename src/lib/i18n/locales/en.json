@@ -359,7 +359,11 @@
       "defaultProcessor": "Default processor",
       "defaultProcessorDescription": "Choose which tool processes your downloads. Auto mode picks the best one for each URL.",
       "auto": "Auto (recommended)",
-      "autoDescription": "Automatically selects the best processor for each URL. Uses cobalt for supported sites (faster), falls back to yt-dlp for everything else."
+      "autoDescription": "Automatically selects the best processor for each URL. Uses cobalt for supported sites (faster), falls back to yt-dlp for everything else.",
+      "youtubePlayerClient": "YouTube player clients",
+      "youtubePlayerClientDescription": "Client chain used by yt-dlp to extract YouTube videos. Change this if downloads stop working.",
+      "usePlayerClientForExtraction": "Apply to video info extraction",
+      "usePlayerClientForExtractionDescription": "Use the same player clients when fetching video metadata and available formats. Enable this if video previews fail to load."
     },
     "downloads": {
       "title": "Downloads",

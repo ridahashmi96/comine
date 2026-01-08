@@ -928,11 +928,11 @@
       url.length > 50 ? url.substring(0, 50) + '...' : url
     );
 
+    const currentSettings = getSettings();
     const isChannel = isLikelyChannel(url);
-    const isPlaylist = !isChannel && isLikelyPlaylist(url);
+    const isPlaylist = !isChannel && isLikelyPlaylist(url, { ignoreMixes: currentSettings.ignoreMixes });
 
     try {
-      const currentSettings = getSettings();
 
       if (isChannel && !isAndroid()) {
         interface ChannelInfo {
@@ -953,6 +953,7 @@
           cookiesFromBrowser: currentSettings.cookiesFromBrowser || null,
           customCookies: currentSettings.customCookies || null,
           proxyConfig: getProxyConfig(),
+          youtubePlayerClient: currentSettings.usePlayerClientForExtraction ? currentSettings.youtubePlayerClient : null,
         });
 
         const channelName =
@@ -1009,6 +1010,7 @@
           cookiesFromBrowser: currentSettings.cookiesFromBrowser || null,
           customCookies: currentSettings.customCookies || null,
           proxyConfig: getProxyConfig(),
+          youtubePlayerClient: currentSettings.usePlayerClientForExtraction ? currentSettings.youtubePlayerClient : null,
         });
         logs.info(
           'layout',
@@ -1054,6 +1056,7 @@
       const videoInfo: VideoInfo = await invoke(command, {
         url,
         proxyConfig: getProxyConfig(),
+        youtubePlayerClient: currentSettings.usePlayerClientForExtraction ? currentSettings.youtubePlayerClient : null,
       });
 
       const originalThumbnailUrl = videoInfo.thumbnail || getQuickThumbnail(url);

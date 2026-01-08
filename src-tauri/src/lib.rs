@@ -80,6 +80,7 @@ async fn download_video(
     embed_subtitles: Option<bool>,
     subtitle_languages: Option<String>,
     download_speed_limit: Option<u64>,
+    youtube_player_client: Option<String>,
     window: tauri::Window,
 ) -> Result<String, String> {
     info!("Starting download for URL: {}", url);
@@ -350,11 +351,15 @@ async fn download_video(
 
         let is_youtube = url.contains("youtube.com") || url.contains("youtu.be");
         if is_youtube {
+            let player_client = youtube_player_client
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .unwrap_or("tv,android_sdkless");
             args.extend([
                 "--extractor-args".to_string(),
-                "youtube:player_client=tv,mweb,android_sdkless,web".to_string(),
+                format!("youtube:player_client={}", player_client),
             ]);
-            info!("Using optimized player client chain for YouTube (tv,mweb,android_sdkless,web)");
+            info!("Using player client chain for YouTube: {}", player_client);
         }
 
         if sponsor_block.unwrap_or(false) {
@@ -836,6 +841,7 @@ async fn get_playlist_info(
     cookies_from_browser: Option<String>,
     custom_cookies: Option<String>,
     proxy_config: Option<proxy::ProxyConfig>,
+    youtube_player_client: Option<String>,
 ) -> Result<PlaylistInfo, String> {
     let offset = offset.unwrap_or(0);
     let limit = limit.unwrap_or(50);
@@ -865,6 +871,7 @@ async fn get_playlist_info(
                     cookies_from_browser,
                     custom_cookies,
                     proxy_config,
+                    youtube_player_client,
                 },
             )
             .await
@@ -879,6 +886,7 @@ async fn get_video_info(
     cookies_from_browser: Option<String>,
     custom_cookies: Option<String>,
     proxy_config: Option<proxy::ProxyConfig>,
+    youtube_player_client: Option<String>,
 ) -> Result<VideoInfo, String> {
     info!("Getting video info for URL: {}", url);
 
@@ -900,6 +908,7 @@ async fn get_video_info(
                     cookies_from_browser,
                     custom_cookies,
                     proxy_config,
+                    youtube_player_client,
                 },
             )
             .await
@@ -914,6 +923,7 @@ async fn get_video_formats(
     cookies_from_browser: Option<String>,
     custom_cookies: Option<String>,
     proxy_config: Option<proxy::ProxyConfig>,
+    youtube_player_client: Option<String>,
 ) -> Result<VideoFormats, String> {
     info!("Getting video formats for URL: {}", url);
 
@@ -933,6 +943,7 @@ async fn get_video_formats(
                     cookies_from_browser,
                     custom_cookies,
                     proxy_config,
+                    youtube_player_client,
                 },
             )
             .await
@@ -968,6 +979,7 @@ async fn lux_get_video_info(
                     cookies_from_browser: None,
                     custom_cookies,
                     proxy_config,
+                    youtube_player_client: None,
                 },
             )
             .await
@@ -1001,6 +1013,7 @@ async fn lux_get_video_formats(
                     cookies_from_browser: None,
                     custom_cookies,
                     proxy_config,
+                    youtube_player_client: None,
                 },
             )
             .await
@@ -1044,6 +1057,7 @@ async fn lux_get_playlist_info(
                     cookies_from_browser: None,
                     custom_cookies,
                     proxy_config,
+                    youtube_player_client: None,
                 },
             )
             .await

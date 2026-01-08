@@ -1,7 +1,7 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { t } from '$lib/i18n';
-  import { getProxyConfig } from '$lib/stores/settings';
+  import { getProxyConfig, getSettings } from '$lib/stores/settings';
   import { queue } from '$lib/stores/queue';
   import { logs } from '$lib/stores/logs';
   import { toast } from './Toast.svelte';
@@ -114,7 +114,11 @@
 
       if (isAndroid()) {
         await waitForAndroidYtDlp();
-        const info = await getVideoInfoOnAndroid(url);
+        const currentSettings = getSettings();
+        const playerClient = currentSettings.usePlayerClientForExtraction
+          ? currentSettings.youtubePlayerClient
+          : null;
+        const info = await getVideoInfoOnAndroid(url, playerClient);
 
         if (!info) {
           throw new Error('Failed to get video info from Android');
@@ -151,11 +155,13 @@
         };
       } else {
         // Use Tauri command for desktop
+        const currentSettings = getSettings();
         formats = await invoke<VideoFormats>('get_video_formats', {
           url,
           cookiesFromBrowser: cookiesFromBrowser || null,
           customCookies: customCookies || null,
           proxyConfig: getProxyConfig(),
+          youtubePlayerClient: currentSettings.usePlayerClientForExtraction ? currentSettings.youtubePlayerClient : null,
         });
       }
 

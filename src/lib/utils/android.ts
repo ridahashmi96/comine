@@ -7,7 +7,9 @@ interface AndroidYtDlp {
   isReady(): boolean;
   getVersion(): string;
   getVideoInfo(url: string, callbackName: string): void;
+  getVideoInfoWithClient(url: string, youtubePlayerClient: string | null, callbackName: string): void;
   getPlaylistInfo(url: string, callbackName: string): void;
+  getPlaylistInfoWithClient(url: string, youtubePlayerClient: string | null, callbackName: string): void;
   download(
     url: string,
     format: string | null,
@@ -33,6 +35,19 @@ interface AndroidYtDlp {
     aria2MinSplitSize: string | null,
     speedLimit: number,
     downloadPath: string | null,
+    callbackName: string
+  ): void;
+  downloadWithSettingsV2(
+    url: string,
+    format: string | null,
+    playlistFolder: string | null,
+    isAudioOnly: boolean,
+    aria2Connections: number,
+    aria2Splits: number,
+    aria2MinSplitSize: string | null,
+    speedLimit: number,
+    downloadPath: string | null,
+    youtubePlayerClient: string | null,
     callbackName: string
   ): void;
   openFile(filePath: string): boolean;
@@ -161,6 +176,7 @@ export interface AndroidDownloadSettings {
   aria2MinSplitSize?: string;
   speedLimit?: number;
   downloadPath?: string | null;
+  youtubePlayerClient?: string | null;
 }
 
 /**
@@ -273,24 +289,42 @@ export function downloadOnAndroid(
       const speedLimit = settings?.speedLimit ?? 0;
       const aria2MinSplitSize = settings?.aria2MinSplitSize ?? '1M';
       const downloadPath = settings?.downloadPath ?? null;
+      const youtubePlayerClient = settings?.youtubePlayerClient ?? null;
 
       logHandler?.(
         'info',
         'Android',
-        `Starting download via bridge: ${url}${playlistFolder ? ` (folder: ${playlistFolder})` : ''}, isAudioOnly: ${isAudioOnly}, aria2: ${aria2Connections}x${aria2Splits} (min-split: ${aria2MinSplitSize}), speedLimit: ${speedLimit}M, downloadPath: ${downloadPath}`
+        `Starting download via bridge: ${url}${playlistFolder ? ` (folder: ${playlistFolder})` : ''}, isAudioOnly: ${isAudioOnly}, aria2: ${aria2Connections}x${aria2Splits} (min-split: ${aria2MinSplitSize}), speedLimit: ${speedLimit}M, downloadPath: ${downloadPath}, playerClient: ${youtubePlayerClient || 'default'}`
       );
-      window.AndroidYtDlp.downloadWithSettings(
-        url,
-        format || null,
-        playlistFolder || null,
-        isAudioOnly,
-        aria2Connections,
-        aria2Splits,
-        aria2MinSplitSize,
-        speedLimit,
-        downloadPath,
-        callbackName
-      );
+
+      if (window.AndroidYtDlp.downloadWithSettingsV2) {
+        window.AndroidYtDlp.downloadWithSettingsV2(
+          url,
+          format || null,
+          playlistFolder || null,
+          isAudioOnly,
+          aria2Connections,
+          aria2Splits,
+          aria2MinSplitSize,
+          speedLimit,
+          downloadPath,
+          youtubePlayerClient,
+          callbackName
+        );
+      } else {
+        window.AndroidYtDlp.downloadWithSettings(
+          url,
+          format || null,
+          playlistFolder || null,
+          isAudioOnly,
+          aria2Connections,
+          aria2Splits,
+          aria2MinSplitSize,
+          speedLimit,
+          downloadPath,
+          callbackName
+        );
+      }
     } catch (error) {
       hasCompleted = true;
       cleanup();
@@ -300,10 +334,10 @@ export function downloadOnAndroid(
   });
 }
 
-/**
- * Get video info from Android bridge (async)
- */
-export function getVideoInfoOnAndroid(url: string): Promise<Record<string, unknown> | null> {
+export function getVideoInfoOnAndroid(
+  url: string,
+  youtubePlayerClient?: string | null
+): Promise<Record<string, unknown> | null> {
   return new Promise((resolve, reject) => {
     if (!isAndroid() || !window.AndroidYtDlp) {
       resolve(null);
@@ -359,8 +393,16 @@ export function getVideoInfoOnAndroid(url: string): Promise<Record<string, unkno
     };
 
     try {
-      logHandler?.('debug', 'Android', `Fetching video info for: ${url}`);
-      window.AndroidYtDlp.getVideoInfo(url, callbackName);
+      logHandler?.(
+        'debug',
+        'Android',
+        `Fetching video info for: ${url}${youtubePlayerClient ? ` (playerClient: ${youtubePlayerClient})` : ''}`
+      );
+      if (youtubePlayerClient && window.AndroidYtDlp.getVideoInfoWithClient) {
+        window.AndroidYtDlp.getVideoInfoWithClient(url, youtubePlayerClient, callbackName);
+      } else {
+        window.AndroidYtDlp.getVideoInfo(url, callbackName);
+      }
     } catch (error) {
       hasCompleted = true;
       clearTimeout(timeout);
@@ -399,10 +441,10 @@ export interface PlaylistInfo {
   has_more: boolean;
 }
 
-/**
- * Get playlist info from Android bridge (async)
- */
-export function getPlaylistInfoOnAndroid(url: string): Promise<PlaylistInfo> {
+export function getPlaylistInfoOnAndroid(
+  url: string,
+  youtubePlayerClient?: string | null
+): Promise<PlaylistInfo> {
   return new Promise((resolve, reject) => {
     if (!isAndroid() || !window.AndroidYtDlp) {
       reject(new Error('Android yt-dlp bridge not available'));
@@ -462,8 +504,16 @@ export function getPlaylistInfoOnAndroid(url: string): Promise<PlaylistInfo> {
     };
 
     try {
-      logHandler?.('debug', 'Android', `Fetching playlist info for: ${url}`);
-      window.AndroidYtDlp.getPlaylistInfo(url, callbackName);
+      logHandler?.(
+        'debug',
+        'Android',
+        `Fetching playlist info for: ${url}${youtubePlayerClient ? ` (playerClient: ${youtubePlayerClient})` : ''}`
+      );
+      if (youtubePlayerClient && window.AndroidYtDlp.getPlaylistInfoWithClient) {
+        window.AndroidYtDlp.getPlaylistInfoWithClient(url, youtubePlayerClient, callbackName);
+      } else {
+        window.AndroidYtDlp.getPlaylistInfo(url, callbackName);
+      }
     } catch (error) {
       hasCompleted = true;
       clearTimeout(timeout);

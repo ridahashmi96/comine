@@ -95,9 +95,9 @@ export type TranslationKeys =
   | 'deps.setupRequired'
 
   // Disk
+  | 'disk.available'
   | 'disk.lowSpace'
   | 'disk.lowSpaceWarning'
-  | 'disk.available'
 
   // Download
   | 'download.audio.best'
@@ -236,7 +236,6 @@ export type TranslationKeys =
   // Downloads
   | 'downloads.active'
   | 'downloads.completed'
-  | 'downloads.started'
   | 'downloads.dateGroups.older'
   | 'downloads.dateGroups.thisMonth'
   | 'downloads.dateGroups.thisWeek'
@@ -278,6 +277,7 @@ export type TranslationKeys =
   | 'downloads.sortedBy.name'
   | 'downloads.sortedBy.size'
   | 'downloads.startHint'
+  | 'downloads.started'
   | 'downloads.stats.byType'
   | 'downloads.stats.mostCommon'
   | 'downloads.stats.toggle'
@@ -678,6 +678,8 @@ export type TranslationKeys =
   | 'settings.notifications.compactTooltip'
   | 'settings.notifications.cornerDismiss'
   | 'settings.notifications.cornerDismissTooltip'
+  | 'settings.notifications.duration'
+  | 'settings.notifications.durationDescription'
   | 'settings.notifications.enabled'
   | 'settings.notifications.enabledTooltip'
   | 'settings.notifications.fancyBackground'
@@ -696,6 +698,8 @@ export type TranslationKeys =
   | 'settings.notifications.positionTopCenter'
   | 'settings.notifications.positionTopLeft'
   | 'settings.notifications.positionTopRight'
+  | 'settings.notifications.showProgress'
+  | 'settings.notifications.showProgressTooltip'
   | 'settings.notifications.thumbnailTheming'
   | 'settings.notifications.thumbnailThemingTooltip'
   | 'settings.notifications.title'
@@ -706,6 +710,10 @@ export type TranslationKeys =
   | 'settings.processing.defaultProcessor'
   | 'settings.processing.defaultProcessorDescription'
   | 'settings.processing.title'
+  | 'settings.processing.usePlayerClientForExtraction'
+  | 'settings.processing.usePlayerClientForExtractionDescription'
+  | 'settings.processing.youtubePlayerClient'
+  | 'settings.processing.youtubePlayerClientDescription'
   | 'settings.resetSection'
   | 'settings.resetSectionTooltip'
   | 'settings.search.placeholder'
@@ -727,5 +735,6 @@ export type TranslationKeys =
 
   // Window
   | 'window.close'
-  | 'window.maximize';
-('window.minimize');
+  | 'window.maximize'
+  'window.minimize'
+;

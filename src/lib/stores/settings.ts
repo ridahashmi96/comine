@@ -124,6 +124,8 @@ export interface AppSettings {
   chapters: boolean;
   embedSubtitles: boolean;
   subtitleLanguages: string;
+  youtubePlayerClient: string;
+  usePlayerClientForExtraction: boolean;
 
   thumbnailTheming: boolean;
 
@@ -252,6 +254,8 @@ export const defaultSettings: AppSettings = {
   chapters: true,
   embedSubtitles: false,
   subtitleLanguages: 'en,ru',
+  youtubePlayerClient: 'tv,android_sdkless',
+  usePlayerClientForExtraction: false,
 
   thumbnailTheming: true,
 

@@ -1128,6 +1128,7 @@ function createQueueStore() {
               currentSettings.subtitleLanguages ??
               'en,ru',
             downloadSpeedLimit: currentSettings.downloadSpeedLimit,
+            youtubePlayerClient: currentSettings.youtubePlayerClient,
           });
         }
 
@@ -1333,6 +1334,7 @@ function createQueueStore() {
     const useLux = isLuxPreferred(url);
     const depsState = get(deps);
     const luxAvailable = depsState.lux?.installed ?? false;
+    const currentSettings = getSettings();
 
     let lastError: unknown;
 
@@ -1342,7 +1344,10 @@ function createQueueStore() {
 
         if (isAndroid()) {
           await waitForAndroidYtDlp();
-          const androidInfo = await getVideoInfoOnAndroid(url);
+          const playerClient = currentSettings.usePlayerClientForExtraction
+            ? currentSettings.youtubePlayerClient
+            : null;
+          const androidInfo = await getVideoInfoOnAndroid(url, playerClient);
           if (!androidInfo) {
             throw new Error('Failed to get video info from Android');
           }
@@ -1366,6 +1371,7 @@ function createQueueStore() {
             url,
             customCookies: customCookies ?? '',
             proxyConfig: proxyConfig,
+            youtubePlayerClient: currentSettings.usePlayerClientForExtraction ? currentSettings.youtubePlayerClient : null,
           });
           logs.debug(
             'queue',
@@ -1378,6 +1384,7 @@ function createQueueStore() {
             cookiesFromBrowser: cookiesFromBrowser ?? '',
             customCookies: customCookies ?? '',
             proxyConfig: proxyConfig,
+            youtubePlayerClient: currentSettings.usePlayerClientForExtraction ? currentSettings.youtubePlayerClient : null,
           });
           logs.debug(
             'queue',

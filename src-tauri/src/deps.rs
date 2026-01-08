@@ -1415,6 +1415,27 @@ pub async fn uninstall_ffmpeg(app: AppHandle) -> Result<(), String> {
 
 // ==================== aria2c ====================
 
+/// Fetch the latest aria2 release version from GitHub
+#[cfg(not(target_os = "android"))]
+async fn get_latest_aria2_version() -> Result<String, String> {
+    let response = fetch_default("https://api.github.com/repos/aria2/aria2/releases/latest")
+        .await
+        .map_err(|e| format!("Failed to fetch aria2 release info: {}", e))?;
+
+    let release: GitHubRelease = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse aria2 release info: {}", e))?;
+
+    let version = release
+        .tag_name
+        .strip_prefix("release-")
+        .unwrap_or(&release.tag_name)
+        .to_string();
+
+    Ok(version)
+}
+
 /// Check if aria2c is installed
 #[tauri::command]
 #[allow(unused_variables)]
@@ -1513,22 +1534,49 @@ pub async fn install_aria2(
         let _ = window.emit(
             "aria2-install-progress",
             InstallProgress {
-                stage: "downloading".to_string(),
+                stage: "fetching".to_string(),
                 progress: 0,
                 downloaded: 0,
                 total: 0,
                 speed: 0.0,
-                message: "Downloading aria2...".to_string(),
+                message: "Fetching latest aria2 version...".to_string(),
+            },
+        );
+
+        let version = get_latest_aria2_version().await.unwrap_or_else(|e| {
+            warn!("Failed to fetch latest aria2 version, using fallback: {}", e);
+            "1.37.0".to_string() // Fallback version
+        });
+        info!("Installing aria2 version: {}", version);
+
+        let _ = window.emit(
+            "aria2-install-progress",
+            InstallProgress {
+                stage: "downloading".to_string(),
+                progress: 5,
+                downloaded: 0,
+                total: 0,
+                speed: 0.0,
+                message: format!("Downloading aria2 {}...", version),
             },
         );
 
         #[cfg(target_os = "windows")]
-        let download_url = "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip";
+        let download_url = format!(
+            "https://github.com/aria2/aria2/releases/download/release-{}/aria2-{}-win-64bit-build1.zip",
+            version, version
+        );
 
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-        let download_url = "https://github.com/abcfy2/aria2-static-build/releases/download/1.37.0/aria2-x86_64-linux-musl_static.zip";
+        let download_url = format!(
+            "https://github.com/abcfy2/aria2-static-build/releases/download/{}/aria2-x86_64-linux-musl_static.zip",
+            version
+        );
         #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-        let download_url = "https://github.com/abcfy2/aria2-static-build/releases/download/1.37.0/aria2-aarch64-linux-musl_static.zip";
+        let download_url = format!(
+            "https://github.com/abcfy2/aria2-static-build/releases/download/{}/aria2-aarch64-linux-musl_static.zip",
+            version
+        );
 
         let temp_archive = bin_dir.join("aria2_temp.zip");
 
@@ -1538,12 +1586,12 @@ pub async fn install_aria2(
             retry_without_proxy: true,
         });
         download_with_progress(
-            download_url,
+            &download_url,
             &temp_archive,
             &window,
             "aria2-install-progress",
             "aria2",
-            "1.37.0",
+            &version,
             &config,
         )
         .await?;

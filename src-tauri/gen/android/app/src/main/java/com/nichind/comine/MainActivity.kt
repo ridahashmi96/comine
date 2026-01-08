@@ -910,7 +910,62 @@ class MainActivity : TauriActivity() {
           request.addOption("--no-playlist")
           
           if (url.contains("youtube.com") || url.contains("youtu.be")) {
-            request.addOption("--extractor-args", "youtube:player_client=android_sdkless")
+            request.addOption("--extractor-args", "youtube:player_client=tv,android_sdkless")
+          }
+          
+          val response = YoutubeDL.getInstance().execute(request, null)
+          
+          if (response.exitCode != 0) {
+            sendLog("error", "Failed to get video info: ${response.err}")
+            sendCallback(callbackName, JSONObject().apply {
+              put("error", response.err ?: "Unknown error")
+            }.toString())
+            return@execute
+          }
+          
+          val output = response.out ?: ""
+          if (output.isBlank()) {
+            sendLog("error", "Empty response from yt-dlp")
+            sendCallback(callbackName, JSONObject().apply {
+              put("error", "Empty response from yt-dlp")
+            }.toString())
+            return@execute
+          }
+          
+          val json = JSONObject(output)
+          sendLog("info", "Video info fetched: ${json.optString("title")}, formats: ${json.optJSONArray("formats")?.length() ?: 0}")
+          sendCallback(callbackName, output)
+          
+        } catch (e: Exception) {
+          Log.e(TAG, "Failed to get video info", e)
+          sendLog("error", "Failed to get video info: ${e.message}")
+          val errorJson = JSONObject().apply {
+            put("error", e.message ?: "Unknown error")
+          }.toString()
+          sendCallback(callbackName, errorJson)
+        }
+      }
+    }
+    
+    @JavascriptInterface
+    fun getVideoInfoWithClient(url: String, playerClient: String, callbackName: String) {
+      infoExecutor.execute {
+        try {
+          if (!ytdlInitialized) {
+            sendLog("warn", "yt-dlp not initialized yet")
+            sendCallback(callbackName, "{\"error\": \"not_initialized\"}")
+            return@execute
+          }
+          
+          sendLog("info", "Fetching video info with formats for: $url (playerClient: $playerClient)")
+          
+          val request = YoutubeDLRequest(url)
+          request.addOption("--dump-json")
+          request.addOption("--no-download")
+          request.addOption("--no-playlist")
+          
+          if ((url.contains("youtube.com") || url.contains("youtu.be")) && playerClient.isNotBlank()) {
+            request.addOption("--extractor-args", "youtube:player_client=$playerClient")
           }
           
           val response = YoutubeDL.getInstance().execute(request, null)
@@ -994,6 +1049,143 @@ class MainActivity : TauriActivity() {
               if (index == 0) {
                 sendLog("debug", "First entry JSON keys: ${json.keys().asSequence().toList()}")
                 
+                playlistTitle = json.optString("playlist_title", "")
+                if (playlistTitle.isEmpty() || playlistTitle == "null") {
+                  playlistTitle = json.optString("playlist", "")
+                }
+                playlistId = json.optString("playlist_id", null)
+                uploader = json.optString("playlist_uploader", json.optString("playlist_channel", null))
+                if (uploader == null || uploader == "null") {
+                  uploader = json.optString("uploader", json.optString("channel", null))
+                }
+              }
+              
+              var entryUrl = json.optString("url", "")
+              val entryId = json.optString("id", "")
+              val entryTitle = json.optString("title", "")
+              val entryUploader = json.optString("uploader", json.optString("channel", null))
+              
+              if (entryUrl.isEmpty() || !entryUrl.startsWith("http")) {
+                if (entryId.isNotEmpty()) {
+                  entryUrl = if (isMusic) {
+                    "https://music.youtube.com/watch?v=$entryId"
+                  } else {
+                    "https://www.youtube.com/watch?v=$entryId"
+                  }
+                } else {
+                  entryUrl = json.optString("webpage_url", "")
+                }
+              }
+              
+              var entryThumbnail = json.optString("thumbnail", null)
+              if (entryThumbnail == null || entryThumbnail == "null" || entryThumbnail.isEmpty()) {
+                entryThumbnail = json.optJSONArray("thumbnails")?.optJSONObject(0)?.optString("url", null)
+              }
+              if (entryThumbnail == "null") {
+                entryThumbnail = null
+              }
+              
+              if (thumbnail == null && entryThumbnail != null && entryThumbnail.isNotEmpty()) {
+                thumbnail = entryThumbnail
+              }
+              
+              val entry = JSONObject().apply {
+                put("id", entryId)
+                put("url", entryUrl)
+                put("title", entryTitle)
+                put("duration", json.optDouble("duration", 0.0))
+                put("thumbnail", entryThumbnail)
+                put("uploader", entryUploader)
+                put("is_music", isMusic)
+              }
+              entries.put(entry)
+            } catch (e: Exception) {
+              sendLog("debug", "Skipping invalid JSON line: ${e.message}")
+            }
+          }
+          
+          if (playlistTitle.isEmpty() || playlistTitle == "null") {
+            val listParam = url.substringAfter("list=").substringBefore("&")
+            playlistTitle = "Playlist ($listParam)"
+          }
+          
+          sendLog("debug", "Extracted playlist: title=$playlistTitle, id=$playlistId, uploader=$uploader, entries=${entries.length()}")
+          
+          val result = JSONObject().apply {
+            put("is_playlist", entries.length() > 0)
+            put("id", playlistId)
+            put("title", playlistTitle)
+            put("uploader", uploader)
+            put("thumbnail", thumbnail)
+            put("total_count", entries.length())
+            put("entries", entries)
+            put("has_more", false)
+          }.toString()
+          
+          sendLog("info", "Playlist info fetched: $playlistTitle with ${entries.length()} entries")
+          sendCallback(callbackName, result)
+          
+        } catch (e: Exception) {
+          Log.e(TAG, "Failed to get playlist info", e)
+          sendLog("error", "Failed to get playlist info: ${e.message}")
+          val errorJson = JSONObject().apply {
+            put("error", e.message ?: "Unknown error")
+          }.toString()
+          sendCallback(callbackName, errorJson)
+        }
+      }
+    }
+    
+    @JavascriptInterface
+    fun getPlaylistInfoWithClient(url: String, playerClient: String, callbackName: String) {
+      infoExecutor.execute {
+        try {
+          if (!ytdlInitialized) {
+            sendLog("warn", "yt-dlp not initialized yet")
+            sendCallback(callbackName, "{\"error\": \"not_initialized\"}")
+            return@execute
+          }
+          
+          sendLog("info", "Fetching playlist info for: $url (playerClient: $playerClient)")
+          
+          val isMusic = url.contains("music.youtube.com")
+          val isYouTube = url.contains("youtube.com") || url.contains("youtu.be")
+          
+          val request = YoutubeDLRequest(url)
+          request.addOption("--dump-json")
+          request.addOption("--flat-playlist")
+          request.addOption("--no-download")
+          
+          if (isYouTube && playerClient.isNotBlank()) {
+            request.addOption("--extractor-args", "youtube:player_client=$playerClient")
+          }
+          
+          val response = YoutubeDL.getInstance().execute(request, null)
+          
+          if (response.exitCode != 0) {
+            sendLog("error", "Failed to get playlist info: ${response.err}")
+            sendCallback(callbackName, JSONObject().apply {
+              put("error", response.err ?: "Unknown error")
+            }.toString())
+            return@execute
+          }
+          
+          val output = response.out ?: ""
+          val lines = output.trim().split("\n").filter { it.isNotBlank() }
+          
+          sendLog("debug", "Got ${lines.size} lines from flat-playlist")
+          
+          val entries = org.json.JSONArray()
+          var playlistTitle = ""
+          var playlistId: String? = null
+          var uploader: String? = null
+          var thumbnail: String? = null
+          
+          for ((index, line) in lines.withIndex()) {
+            try {
+              val json = JSONObject(line)
+              
+              if (index == 0) {
                 playlistTitle = json.optString("playlist_title", "")
                 if (playlistTitle.isEmpty() || playlistTitle == "null") {
                   playlistTitle = json.optString("playlist", "")
@@ -1321,6 +1513,227 @@ class MainActivity : TauriActivity() {
           if (alreadyMatch != null) {
             sendLog("debug", "Found already downloaded match: ${alreadyMatch.groupValues[1]}")
           }
+          
+          var parsedPath = videoRemuxMatch?.groupValues?.get(1)?.trim()
+            ?: ffmpegDestMatch?.groupValues?.get(1)?.trim()
+            ?: mergerMatch?.groupValues?.get(1)?.trim()
+            ?: extractAudioMatch?.groupValues?.get(1)?.trim()
+            ?: destMatch?.groupValues?.get(1)?.trim()
+            ?: alreadyMatch?.groupValues?.get(1)?.trim()
+          
+          sendLog("info", "Parsed file path from output: $parsedPath")
+          
+          if (parsedPath != null) {
+            val parsedFile = File(parsedPath)
+            if (parsedFile.exists()) {
+              filePath = parsedPath
+              sendLog("info", "Verified parsed file exists: $filePath")
+            } else {
+              sendLog("warn", "Parsed file path doesn't exist: $parsedPath")
+              parsedPath = null
+            }
+          }
+          
+          if (parsedPath == null) {
+            sendLog("debug", "Scanning download directory for newest file: ${downloadDir.absolutePath}")
+            val files = downloadDir.listFiles()?.filter { it.isFile }
+            if (!files.isNullOrEmpty()) {
+              val recentFiles = files.filter { 
+                System.currentTimeMillis() - it.lastModified() < 60000 
+              }
+              val newestFile = (recentFiles.ifEmpty { files }).maxByOrNull { it.lastModified() }
+              filePath = newestFile?.absolutePath
+              sendLog("info", "Found newest file in download dir: $filePath")
+            } else {
+              sendLog("warn", "No files found in download directory")
+            }
+          }
+          
+          if (filePath != null) {
+            val file = File(filePath)
+            if (file.exists()) {
+              fileSize = file.length()
+              sendLog("info", "Downloaded file: $filePath (${fileSize} bytes)")
+            } else {
+              sendLog("warn", "File doesn't exist: $filePath")
+              filePath = null
+            }
+          } else {
+            sendLog("warn", "No file path found for completed download")
+          }
+          
+          if (response.exitCode == 0) {
+            sendLog("info", "Download completed successfully")
+            if (filePath != null) {
+              val fileName = File(filePath).nameWithoutExtension
+              mainHandler.post { showCompletedNotification(notificationId, fileName, filePath) }
+            }
+          } else {
+            sendLog("error", "Download failed with exit code: ${response.exitCode}")
+            sendLog("error", "Output: ${response.out}")
+            mainHandler.post { showFailedNotification(notificationId, currentTitle, "Exit code: ${response.exitCode}") }
+          }
+          
+          val resultJson = JSONObject().apply {
+            put("success", response.exitCode == 0)
+            put("output", response.out ?: "")
+            put("exitCode", response.exitCode)
+            put("filePath", filePath ?: "")
+            put("fileSize", fileSize)
+          }.toString()
+          sendCallback(callbackName, resultJson)
+          
+        } catch (e: Exception) {
+          Log.e(TAG, "Download failed", e)
+          sendLog("error", "Download exception: ${e.message}")
+          mainHandler.post { 
+            hideDownloadNotification(notificationId)
+            showFailedNotification(notificationId, currentTitle, e.message ?: "Unknown error")
+          }
+          val errorJson = JSONObject().apply {
+            put("error", e.message ?: "Unknown error")
+          }.toString()
+          sendCallback(callbackName, errorJson)
+        }
+      }
+    }
+    
+    @JavascriptInterface
+    fun downloadWithSettingsV2(url: String, format: String?, playlistFolder: String?, isAudioOnly: Boolean, aria2Connections: Int, aria2Splits: Int, aria2MinSplitSize: String?, speedLimit: Int, downloadPath: String?, youtubePlayerClient: String?, callbackName: String) {
+      downloadExecutor.execute {
+        val notificationId = getNotificationIdForUrl(url)
+        
+        var currentTitle = "Downloading..."
+        
+        try {
+          if (!ytdlInitialized) {
+            sendLog("error", "Cannot download: yt-dlp not initialized")
+            sendCallback(callbackName, "{\"error\": \"not_initialized\"}")
+            return@execute
+          }
+          
+          sendLog("info", "Starting download: $url")
+          sendLog("debug", "Format: ${format ?: "best"}, PlaylistFolder: ${playlistFolder ?: "none"}, isAudioOnly: $isAudioOnly, downloadPath: ${downloadPath ?: "default"}, playerClient: ${youtubePlayerClient ?: "default"}")
+          
+          val baseDir = if (!downloadPath.isNullOrBlank()) {
+            val customDir = File(downloadPath)
+            if (customDir.exists() || customDir.mkdirs()) {
+              sendLog("info", "Using custom download path: $downloadPath")
+              customDir
+            } else {
+              sendLog("warn", "Custom path not accessible, using default")
+              File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Comine")
+            }
+          } else {
+            File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Comine")
+          }
+          
+          val downloadDir = if (!playlistFolder.isNullOrBlank()) {
+            val safeFolderName = playlistFolder
+              .replace(Regex("[<>:\"/\\\\|?*]"), "_")
+              .replace(Regex("\\s+"), " ")
+              .trim()
+              .take(100)
+            File(baseDir, safeFolderName)
+          } else {
+            baseDir
+          }
+          
+          if (!downloadDir.exists()) {
+            downloadDir.mkdirs()
+            sendLog("debug", "Created download directory: ${downloadDir.absolutePath}")
+          }
+          
+          val request = YoutubeDLRequest(url)
+          request.addOption("-o", downloadDir.absolutePath + "/%(title)s.%(ext)s")
+          
+          val isYouTube = url.contains("youtube.com") || url.contains("youtu.be")
+          if (isYouTube && !youtubePlayerClient.isNullOrBlank()) {
+            request.addOption("--extractor-args", "youtube:player_client=$youtubePlayerClient")
+            sendLog("info", "Using YouTube player client: $youtubePlayerClient")
+          }
+          
+          if (ffmpegAvailable && !isAudioOnly) {
+            request.addOption("--merge-output-format", "mp4")
+            request.addOption("--remux-video", "mp4")
+          } else if (isAudioOnly) {
+            request.addOption("-x")
+            request.addOption("--audio-format", "m4a")
+            if (ffmpegAvailable) {
+              request.addOption("--embed-thumbnail")
+              request.addOption("--convert-thumbnails", "jpg")
+              sendLog("info", "Embedding thumbnail as cover art (yt-dlp)")
+            } else {
+              sendLog("warn", "FFmpeg not available, cannot embed thumbnail")
+            }
+            sendLog("info", "Audio-only download, extracting to m4a")
+          } else if (!ffmpegAvailable) {
+            sendLog("warn", "FFmpeg not available, using single-stream format")
+          }
+          
+          if (aria2Available) {
+            request.addOption("--downloader", "libaria2c.so")
+            val connections = aria2Connections.coerceIn(1, 16)
+            val splits = aria2Splits.coerceIn(1, 16)
+            val minSplit = if (aria2MinSplitSize.isNullOrBlank()) "1M" else aria2MinSplitSize
+            request.addOption("--external-downloader-args", "aria2c:'-x $connections -s $splits -k $minSplit'")
+            sendLog("info", "Using aria2 for accelerated download (connections: $connections, splits: $splits, min-split: $minSplit)")
+          }
+          
+          if (speedLimit > 0) {
+            request.addOption("--limit-rate", "${speedLimit}M")
+            sendLog("info", "Speed limit set to ${speedLimit}M")
+          }
+          
+          if (!format.isNullOrEmpty() && format != "best") {
+            request.addOption("-f", format)
+          }
+          
+          activeNotifications[notificationId] = url
+          mainHandler.post { showDownloadNotification(notificationId, currentTitle, -1) }
+          
+          sendLog("debug", "Executing yt-dlp request...")
+          
+          val response = YoutubeDL.getInstance().execute(request) { progress, etaInSeconds, line ->
+            val progressInt = if (progress >= 0) progress.toInt() else -1
+            mainHandler.post { showDownloadNotification(notificationId, currentTitle, progressInt) }
+            
+            if (!line.isNullOrBlank()) {
+              sendLog("debug", line)
+              if (line.contains("Destination:")) {
+                val destMatch = line.substringAfter("Destination:").trim()
+                if (destMatch.isNotEmpty()) {
+                  currentTitle = File(destMatch).nameWithoutExtension
+                }
+              }
+            }
+            
+            val progressJson = JSONObject().apply {
+              put("progress", progress)
+              put("eta", etaInSeconds)
+              put("line", line ?: "")
+            }.toString()
+            sendCallback("${callbackName}_progress", progressJson)
+          }
+          
+          mainHandler.post { hideDownloadNotification(notificationId) }
+          
+          var filePath: String? = null
+          var fileSize: Long = 0
+          
+          val output = response.out ?: ""
+          sendLog("debug", "yt-dlp output length: ${output.length}")
+          
+          val outputLines = output.lines().takeLast(20)
+          sendLog("debug", "Last 20 output lines:")
+          outputLines.forEach { sendLog("debug", "  $it") }
+          
+          val videoRemuxMatch = Regex("""\[VideoRemuxer\].*Destination:\s*(.+)""").findAll(output).lastOrNull()
+          val mergerMatch = Regex("""\[Merger\] Merging formats into "(.+?)"""").find(output)
+          val ffmpegDestMatch = Regex("""\[ffmpeg\] Destination: (.+)""").findAll(output).lastOrNull()
+          val extractAudioMatch = Regex("""\[ExtractAudio\] Destination: (.+)""").findAll(output).lastOrNull()
+          val destMatch = Regex("""\[download\] Destination: (.+)""").findAll(output).lastOrNull()
+          val alreadyMatch = Regex("""\[download\] (.+?) has already been downloaded""").find(output)
           
           var parsedPath = videoRemuxMatch?.groupValues?.get(1)?.trim()
             ?: ffmpegDestMatch?.groupValues?.get(1)?.trim()

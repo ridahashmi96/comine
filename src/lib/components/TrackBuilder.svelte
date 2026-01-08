@@ -2,7 +2,7 @@
   import { untrack } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { t } from '$lib/i18n';
-  import { getProxyConfig, settings } from '$lib/stores/settings';
+  import { getProxyConfig, getSettings, settings } from '$lib/stores/settings';
   import { logs } from '$lib/stores/logs';
   import { deps } from '$lib/stores/deps';
   import { portal } from '$lib/actions/portal';
@@ -809,7 +809,11 @@
       if (isAndroid()) {
         await waitForAndroidYtDlp();
         if (destroyed) return; // Check after await
-        const raw = await getVideoInfoOnAndroid(url);
+        const currentSettings = getSettings();
+        const playerClient = currentSettings.usePlayerClientForExtraction
+          ? currentSettings.youtubePlayerClient
+          : null;
+        const raw = await getVideoInfoOnAndroid(url, playerClient);
         if (destroyed) return; // Check after await
         if (!raw) throw new Error('Failed to get video info');
 
@@ -847,12 +851,14 @@
         const backend = detectBackendForUrl(url);
         const luxInstalled = backend === 'lux' && $deps.lux?.installed;
         const command = luxInstalled ? 'lux_get_video_formats' : 'get_video_formats';
+        const currentSettings = getSettings();
 
         loadedInfo = await invoke<VideoInfo>(command, {
           url,
           cookiesFromBrowser: cookiesFromBrowser || null,
           customCookies: customCookies || null,
           proxyConfig: getProxyConfig(),
+          youtubePlayerClient: currentSettings.usePlayerClientForExtraction ? currentSettings.youtubePlayerClient : null,
         });
         if (destroyed) return;
       }

@@ -89,17 +89,50 @@ export function calculateETA(downloaded: number, total: number, speed: number): 
 }
 
 /**
+ * Check if a YouTube URL is a mix/radio playlist (auto-generated)
+ * Mix playlists start with RD, RDMM, RDAMVM, RDGMEM prefixes
+ */
+export function isYouTubeMix(urlStr: string): boolean {
+  try {
+    const urlObj = new URL(urlStr);
+    const hostname = urlObj.hostname.toLowerCase();
+    
+    if (!hostname.includes('youtube.com') && !hostname.includes('youtu.be')) {
+      return false;
+    }
+    
+    const list = urlObj.searchParams.get('list');
+    if (!list) return false;
+    
+    return (
+      list.startsWith('RD') ||
+      list.startsWith('RDMM') ||
+      list.startsWith('RDAMVM') ||
+      list.startsWith('RDGMEM')
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Check if a URL is likely a playlist or multi-video collection
  * Works across all major platforms supported by yt-dlp
+ * @param urlStr - The URL to check
+ * @param options - Optional settings
+ * @param options.ignoreMixes - If true, YouTube mixes won't be considered playlists
  */
-export function isLikelyPlaylist(urlStr: string): boolean {
+export function isLikelyPlaylist(urlStr: string, options?: { ignoreMixes?: boolean }): boolean {
   try {
     const urlObj = new URL(urlStr);
     const hostname = urlObj.hostname.toLowerCase();
     const pathname = urlObj.pathname.toLowerCase();
 
     if (hostname.includes('youtube.com') || hostname.includes('youtu.be')) {
-      return urlObj.searchParams.has('list');
+      if (!urlObj.searchParams.has('list')) return false;
+      // If ignoreMixes is enabled, don't treat mixes as playlists
+      if (options?.ignoreMixes && isYouTubeMix(urlStr)) return false;
+      return true;
     }
 
     if (hostname.includes('tiktok.com')) {

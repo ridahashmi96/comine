@@ -3,7 +3,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { t } from '$lib/i18n';
   import { tooltip } from '$lib/actions/tooltip';
-  import { settings, type DownloadMode, getProxyConfig } from '$lib/stores/settings';
+  import { settings, type DownloadMode, getProxyConfig, getSettings } from '$lib/stores/settings';
   import { deps } from '$lib/stores/deps';
   import { isAndroid, getPlaylistInfoOnAndroid } from '$lib/utils/android';
   import { formatDuration, formatSize, getDisplayThumbnailUrl } from '$lib/utils/format';
@@ -487,12 +487,17 @@
       let info: BackendPlaylistInfo;
 
       if (isAndroid()) {
-        info = (await getPlaylistInfoOnAndroid(url)) as BackendPlaylistInfo;
+        const currentSettings = getSettings();
+        const playerClient = currentSettings.usePlayerClientForExtraction
+          ? currentSettings.youtubePlayerClient
+          : null;
+        info = (await getPlaylistInfoOnAndroid(url, playerClient)) as BackendPlaylistInfo;
         if (destroyed) return;
       } else {
         const backend = detectBackendForUrl(url);
         const luxInstalled = backend === 'lux' && $deps.lux?.installed;
         const command = luxInstalled ? 'lux_get_playlist_info' : 'get_playlist_info';
+        const currentSettings = getSettings();
         info = await invoke<BackendPlaylistInfo>(command, {
           url,
           offset: 0,
@@ -500,6 +505,7 @@
           cookiesFromBrowser: cookiesFromBrowser || null,
           customCookies: customCookies || null,
           proxyConfig: getProxyConfig(),
+          youtubePlayerClient: currentSettings.usePlayerClientForExtraction ? currentSettings.youtubePlayerClient : null,
         });
         if (destroyed) return;
 
@@ -516,6 +522,7 @@
             cookiesFromBrowser: cookiesFromBrowser || null,
             customCookies: customCookies || null,
             proxyConfig: getProxyConfig(),
+            youtubePlayerClient: currentSettings.usePlayerClientForExtraction ? currentSettings.youtubePlayerClient : null,
           });
           if (destroyed) return;
 

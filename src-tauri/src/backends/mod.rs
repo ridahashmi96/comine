@@ -34,6 +34,7 @@ pub struct InfoRequest {
     pub cookies_from_browser: Option<String>,
     pub custom_cookies: Option<String>,
     pub proxy_config: Option<ProxyConfig>,
+    pub youtube_player_client: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -44,6 +45,7 @@ pub struct PlaylistRequest {
     pub cookies_from_browser: Option<String>,
     pub custom_cookies: Option<String>,
     pub proxy_config: Option<ProxyConfig>,
+    pub youtube_player_client: Option<String>,
 }
 
 #[async_trait]
