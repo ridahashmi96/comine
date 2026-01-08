@@ -1751,7 +1751,15 @@ async fn detect_system_proxy() -> Result<proxy::ResolvedProxy, String> {
 #[tauri::command]
 #[cfg(not(target_os = "android"))]
 async fn get_disk_space(path: String) -> Result<utils::DiskSpaceInfo, String> {
-    utils::get_disk_space_for_path(&path).ok_or_else(|| "Could not determine disk space".to_string())
+    let actual_path = if path.is_empty() {
+        dirs::download_dir()
+            .ok_or("Could not find Downloads folder")?
+            .to_string_lossy()
+            .to_string()
+    } else {
+        path
+    };
+    utils::get_disk_space_for_path(&actual_path).ok_or_else(|| "Could not determine disk space".to_string())
 }
 
 #[tauri::command]

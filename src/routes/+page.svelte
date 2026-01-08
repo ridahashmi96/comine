@@ -249,7 +249,7 @@
   });
 
   $effect(() => {
-    if (settingsInitialized) {
+    if (settingsInitialized && $deps.hasCheckedAll) {
       if (!aria2Installed && useAria2) {
         useAria2 = false;
         saveSettings();
@@ -614,11 +614,11 @@
     if (queueId) {
       logs.info('download', `Added to queue with ID: ${queueId}`);
     }
+    navigation.pop();
     const displayTitle = selection.title && selection.title.length > 40 
       ? selection.title.slice(0, 40) + '…' 
       : (selection.title || 'Download');
     toast.info($t('downloads.started').replace('{title}', displayTitle));
-    navigation.pop();
     url = '';
   }
 

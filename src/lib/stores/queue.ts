@@ -945,12 +945,19 @@ function createQueueStore() {
         );
 
         const currentSettings = getSettings();
+
+        let androidDownloadPath = currentSettings.downloadPath;
+        if (isAudioOnly && currentSettings.useAudioPath && currentSettings.audioPath) {
+          androidDownloadPath = currentSettings.audioPath;
+          logs.info('queue', `[Android] Using separate audio path: ${androidDownloadPath}`);
+        }
+        
         const androidSettings: AndroidDownloadSettings = {
           aria2Connections: currentSettings.aria2Connections,
           aria2Splits: currentSettings.aria2Splits,
           aria2MinSplitSize: currentSettings.aria2MinSplitSize,
           speedLimit: currentSettings.downloadSpeedLimit,
-          downloadPath: currentSettings.downloadPath,
+          downloadPath: androidDownloadPath,
         };
 
         const result = await downloadOnAndroid(
@@ -1029,7 +1036,10 @@ function createQueueStore() {
 
         if (isAudioDownload && currentSettings.useAudioPath && currentSettings.audioPath) {
           downloadPath = currentSettings.audioPath;
+          logs.info('queue', `Using separate audio path: ${downloadPath}`);
         }
+
+        logs.debug('queue', `Download path decision: isAudio=${isAudioDownload}, useAudioPath=${currentSettings.useAudioPath}, audioPath=${currentSettings.audioPath}, final=${downloadPath}`);
 
         const playlistTitle =
           pendingItem.playlistTitle && pendingItem.usePlaylistFolder !== false
