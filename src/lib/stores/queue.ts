@@ -335,8 +335,10 @@ function createQueueStore() {
 
       // Detect disk space errors early (aria2 specific)
       const lowerMessage = message.toLowerCase();
-      if (lowerMessage.includes('not enough space on the disk') || 
-          (lowerMessage.includes('errnum=112') && lowerMessage.includes('failed to write'))) {
+      if (
+        lowerMessage.includes('not enough space on the disk') ||
+        (lowerMessage.includes('errnum=112') && lowerMessage.includes('failed to write'))
+      ) {
         logs.error('queue', `Disk space error detected for ${url}`);
         const state = get({ subscribe });
         const item = state.items.find((i) => i.url === url);
@@ -345,9 +347,7 @@ function createQueueStore() {
           update((state) => ({
             ...state,
             items: state.items.map((i) =>
-              i.url === url
-                ? { ...i, status: 'failed' as DownloadStatus, error: errorMsg }
-                : i
+              i.url === url ? { ...i, status: 'failed' as DownloadStatus, error: errorMsg } : i
             ),
           }));
           emit('download-status-changed', {
@@ -951,7 +951,7 @@ function createQueueStore() {
           androidDownloadPath = currentSettings.audioPath;
           logs.info('queue', `[Android] Using separate audio path: ${androidDownloadPath}`);
         }
-        
+
         const androidSettings: AndroidDownloadSettings = {
           aria2Connections: currentSettings.aria2Connections,
           aria2Splits: currentSettings.aria2Splits,
@@ -1039,7 +1039,10 @@ function createQueueStore() {
           logs.info('queue', `Using separate audio path: ${downloadPath}`);
         }
 
-        logs.debug('queue', `Download path decision: isAudio=${isAudioDownload}, useAudioPath=${currentSettings.useAudioPath}, audioPath=${currentSettings.audioPath}, final=${downloadPath}`);
+        logs.debug(
+          'queue',
+          `Download path decision: isAudio=${isAudioDownload}, useAudioPath=${currentSettings.useAudioPath}, audioPath=${currentSettings.audioPath}, final=${downloadPath}`
+        );
 
         const playlistTitle =
           pendingItem.playlistTitle && pendingItem.usePlaylistFolder !== false

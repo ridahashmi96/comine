@@ -52,10 +52,7 @@
   };
   toast.loading = (msg: string, subMessage?: string) => {
     const id = ++idCounter;
-    toasts.update((t) => [
-      ...t,
-      { id, message: msg, type: 'loading', duration: 0, subMessage },
-    ]);
+    toasts.update((t) => [...t, { id, message: msg, type: 'loading', duration: 0, subMessage }]);
     return id;
   };
 </script>
@@ -195,19 +192,33 @@
     margin-top: 1px;
   }
 
-  .toast.success .toast-icon { color: #4ade80; }
-  .toast.error .toast-icon { color: #f87171; }
-  .toast.warning .toast-icon { color: #fbbf24; }
-  .toast.info .toast-icon { color: var(--accent, #818cf8); }
-  .toast.progress .toast-icon { color: var(--accent, #818cf8); }
-  .toast.loading .toast-icon { color: var(--accent, #818cf8); }
+  .toast.success .toast-icon {
+    color: #4ade80;
+  }
+  .toast.error .toast-icon {
+    color: #f87171;
+  }
+  .toast.warning .toast-icon {
+    color: #fbbf24;
+  }
+  .toast.info .toast-icon {
+    color: var(--accent, #818cf8);
+  }
+  .toast.progress .toast-icon {
+    color: var(--accent, #818cf8);
+  }
+  .toast.loading .toast-icon {
+    color: var(--accent, #818cf8);
+  }
 
   .spinning {
     animation: spin 0.8s linear infinite;
   }
 
   @keyframes spin {
-    to { transform: rotate(360deg); }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .toast-text {

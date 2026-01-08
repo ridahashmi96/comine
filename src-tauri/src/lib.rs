@@ -1759,7 +1759,8 @@ async fn get_disk_space(path: String) -> Result<utils::DiskSpaceInfo, String> {
     } else {
         path
     };
-    utils::get_disk_space_for_path(&actual_path).ok_or_else(|| "Could not determine disk space".to_string())
+    utils::get_disk_space_for_path(&actual_path)
+        .ok_or_else(|| "Could not determine disk space".to_string())
 }
 
 #[tauri::command]

@@ -367,7 +367,9 @@
       // Check disk space
       if (downloadPath) {
         try {
-          const diskInfo = await invoke<{ available_gb: number }>('get_disk_space', { path: downloadPath });
+          const diskInfo = await invoke<{ available_gb: number }>('get_disk_space', {
+            path: downloadPath,
+          });
           if (diskInfo && diskInfo.available_gb < 2) {
             lowDiskSpace = true;
             availableSpaceGb = Math.round(diskInfo.available_gb * 10) / 10;

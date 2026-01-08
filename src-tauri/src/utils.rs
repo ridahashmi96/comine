@@ -1,5 +1,5 @@
-use std::sync::{Mutex, MutexGuard};
 use std::path::Path;
+use std::sync::{Mutex, MutexGuard};
 
 pub fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     match mutex.lock() {
@@ -23,14 +23,14 @@ pub struct DiskSpaceInfo {
 #[cfg(not(target_os = "android"))]
 pub fn get_disk_space_for_path(path: &str) -> Option<DiskSpaceInfo> {
     use sysinfo::Disks;
-    
+
     let path = Path::new(path);
     let disks = Disks::new_with_refreshed_list();
-    
+
     // Find the disk that contains this path
     let mut best_match: Option<&sysinfo::Disk> = None;
     let mut best_mount_len = 0;
-    
+
     for disk in disks.list() {
         let mount = disk.mount_point();
         if path.starts_with(mount) {
@@ -41,7 +41,7 @@ pub fn get_disk_space_for_path(path: &str) -> Option<DiskSpaceInfo> {
             }
         }
     }
-    
+
     best_match.map(|disk| {
         let available = disk.available_space();
         let total = disk.total_space();
@@ -51,7 +51,11 @@ pub fn get_disk_space_for_path(path: &str) -> Option<DiskSpaceInfo> {
             total_bytes: total,
             available_gb: available as f64 / 1_073_741_824.0,
             total_gb: total as f64 / 1_073_741_824.0,
-            used_percent: if total > 0 { (used as f64 / total as f64) * 100.0 } else { 0.0 },
+            used_percent: if total > 0 {
+                (used as f64 / total as f64) * 100.0
+            } else {
+                0.0
+            },
         }
     })
 }

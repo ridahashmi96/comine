@@ -689,7 +689,7 @@ dependencies = [
 
 [[package]]
 name = "comine"
-version = "1.1.0-2"
+version = "1.1.0-3"
 dependencies = [
  "async-trait",
  "chrono",

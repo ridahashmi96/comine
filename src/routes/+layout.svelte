@@ -329,7 +329,7 @@
     if (diskSpaceWarningShown) {
       return;
     }
-    
+
     if (!$settingsReady) {
       await new Promise<void>((resolve) => {
         const unsub = settingsReady.subscribe((ready) => {
@@ -340,15 +340,20 @@
         });
       });
     }
-    
+
     try {
       const downloadPath = $settings.downloadPath || '';
-      const diskInfo = await invoke<{ available_gb: number; available_bytes: number }>('get_disk_space', { path: downloadPath });
-      
+      const diskInfo = await invoke<{ available_gb: number; available_bytes: number }>(
+        'get_disk_space',
+        { path: downloadPath }
+      );
+
       if (diskInfo && diskInfo.available_gb < 2) {
         diskSpaceWarningShown = true;
         const available = Math.round(diskInfo.available_gb * 10) / 10;
-        const warningMsg = ($t('disk.lowSpaceWarning') || 'Only {available} GB free on your download drive').replace('{available}', String(available));
+        const warningMsg = (
+          $t('disk.lowSpaceWarning') || 'Only {available} GB free on your download drive'
+        ).replace('{available}', String(available));
         toast.warning(warningMsg, 0);
         logs.warn('system', `Low disk space: ${available} GB available`);
       }
