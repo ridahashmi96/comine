@@ -11,15 +11,15 @@ function injectStyles() {
     .tooltip {
       position: fixed;
       z-index: 9999;
-      padding: 8px 14px;
-      background: rgba(25, 25, 30, 0.95);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
+      padding: 7px 10px;
+      background: rgba(25, 25, 30, 0.8);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
       border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: 10px;
       color: rgba(255, 255, 255, 0.9);
       font-size: 12px;
-      font-weight: 500;
+      font-weight: 400;
       font-family: 'Jost', sans-serif;
       pointer-events: none;
       opacity: 0;
@@ -29,7 +29,7 @@ function injectStyles() {
       word-wrap: break-word;
       max-width: min(280px, calc(100vw - 32px));
       text-align: center;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.2);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2), 0 2px 8px rgba(0, 0, 0, 0.12);
       will-change: opacity, transform;
     }
     .tooltip.visible {
@@ -127,7 +127,7 @@ export function tooltip(node: HTMLElement, text?: string) {
       if (isElementInDOM(node)) {
         showTooltip(node, tooltipText);
       }
-    }, 400);
+    }, 200);
   }
 
   function onLeave() {

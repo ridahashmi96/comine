@@ -1000,7 +1000,7 @@
             <SettingItem
               title={$t('settings.notifications.compact')}
               description={$t('settings.notifications.compactTooltip')}
-              icon="minimize"
+              icon="minimize_square"
               value={$settings.compactNotifications}
               defaultValue={defaultSettings.compactNotifications}
               onReset={() => updateSetting('compactNotifications', defaultSettings.compactNotifications)}
@@ -1531,7 +1531,7 @@
                   onclick={detectSystemProxy}
                   use:tooltip={$t('settings.network.recheckProxy')}
                 >
-                  <Icon name="undo" size={14} />
+                  <Icon name="refresh" size={16} />
                 </button>
               </div>
             {/if}
@@ -1672,7 +1672,7 @@
             <SettingItem
               title={$t('settings.app.autoUpdate')}
               description={$t('settings.app.autoUpdateDescription')}
-              icon="restart"
+              icon="refreshg"
               value={$settings.autoUpdate}
               defaultValue={defaultSettings.autoUpdate}
               onReset={() => updateSetting('autoUpdate', defaultSettings.autoUpdate)}

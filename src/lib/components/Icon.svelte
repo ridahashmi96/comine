@@ -144,7 +144,10 @@
     | 'platform_weibo'
     | 'platform_generic'
     | 'arrow_outward'
-    | 'refresh';
+    | 'refresh'
+    | 'monitor'
+    | 'minimize_square'
+    | 'ruler';
 
   interface Props {
     name: IconName;
