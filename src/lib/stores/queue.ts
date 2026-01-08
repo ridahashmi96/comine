@@ -105,14 +105,30 @@ interface QueueState {
 let queueStore: Store | null = null;
 let saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 const SAVE_DEBOUNCE_MS = 500;
+const MAX_PERSISTED_FAILED_ITEMS = 50;
 
 function serializeQueueItems(items: QueueItem[]): QueueItem[] {
-  return items
-    .filter(
-      (item) => item.status === 'pending' || item.status === 'paused' || item.status === 'failed'
-    )
-    .map((item) => ({
+  const pending = items.filter((item) => item.status === 'pending' || item.status === 'paused');
+  const failed = items.filter((item) => item.status === 'failed');
+  
+  const limitedFailed = failed.slice(0, MAX_PERSISTED_FAILED_ITEMS);
+  
+  return [...pending, ...limitedFailed].map((item) => {
+    const cleanOptions = item.options ? {
+      ...item.options,
+      prefetchedInfo: item.options.prefetchedInfo ? {
+        title: item.options.prefetchedInfo.title,
+        author: item.options.prefetchedInfo.author,
+        duration: item.options.prefetchedInfo.duration,
+        thumbnail: item.options.prefetchedInfo.thumbnail?.startsWith('data:') 
+          ? undefined 
+          : item.options.prefetchedInfo.thumbnail,
+      } : undefined,
+    } : undefined;
+    
+    return {
       ...item,
+      thumbnail: item.thumbnail?.startsWith('data:') ? '' : item.thumbnail,
       status:
         item.status === 'downloading' || item.status === 'processing'
           ? ('pending' as DownloadStatus)
@@ -122,7 +138,9 @@ function serializeQueueItems(items: QueueItem[]): QueueItem[] {
       progress: 0,
       speed: '',
       eta: '',
-    }));
+      options: cleanOptions,
+    };
+  });
 }
 
 async function loadQueue(): Promise<QueueItem[]> {
