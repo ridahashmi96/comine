@@ -1672,7 +1672,7 @@
             <SettingItem
               title={$t('settings.app.autoUpdate')}
               description={$t('settings.app.autoUpdateDescription')}
-              icon="refreshg"
+              icon="refresh"
               value={$settings.autoUpdate}
               defaultValue={defaultSettings.autoUpdate}
               onReset={() => updateSetting('autoUpdate', defaultSettings.autoUpdate)}
