@@ -1015,11 +1015,16 @@ class MainActivity : TauriActivity() {
           sendLog("info", "Fetching playlist info for: $url")
           
           val isMusic = url.contains("music.youtube.com")
+          val isYouTube = url.contains("youtube.com") || url.contains("youtu.be")
           
           val request = YoutubeDLRequest(url)
           request.addOption("--dump-json")
           request.addOption("--flat-playlist")
           request.addOption("--no-download")
+          
+          if (isYouTube) {
+            request.addOption("--extractor-args", "youtube:player_client=tv,android_sdkless")
+          }
           
           val response = YoutubeDL.getInstance().execute(request, null)
           

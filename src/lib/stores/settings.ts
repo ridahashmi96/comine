@@ -160,6 +160,7 @@ export interface AppSettings {
   subtitleLanguages: string;
   youtubePlayerClient: string;
   usePlayerClientForExtraction: boolean;
+  extractionPlayerClient: string;
 
   thumbnailTheming: boolean;
   builderThumbnailGlow: boolean;
@@ -292,6 +293,7 @@ export const defaultSettings: AppSettings = {
   subtitleLanguages: 'en,ru',
   youtubePlayerClient: 'tv,android_sdkless',
   usePlayerClientForExtraction: false,
+  extractionPlayerClient: 'android_sdkless,web_safari',
 
   thumbnailTheming: true,
   builderThumbnailGlow: true,

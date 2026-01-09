@@ -49,18 +49,6 @@ pub fn get_command(app: &AppHandle, proxy_url: Option<&str>) -> Result<CommandCo
         env_vars.push(("PATH".to_string(), new_path));
     }
 
-    if let Some(p) = proxy_url {
-        if !p.is_empty() {
-            info!("Setting proxy environment variables for yt-dlp: {}", p);
-            env_vars.push(("HTTP_PROXY".to_string(), p.to_string()));
-            env_vars.push(("HTTPS_PROXY".to_string(), p.to_string()));
-            env_vars.push(("http_proxy".to_string(), p.to_string()));
-            env_vars.push(("https_proxy".to_string(), p.to_string()));
-            env_vars.push(("ALL_PROXY".to_string(), p.to_string()));
-            env_vars.push(("all_proxy".to_string(), p.to_string()));
-        }
-    }
-
     Ok(CommandConfig {
         ytdlp_path: ytdlp_path.to_string_lossy().to_string(),
         prefix_args: vec![],
@@ -196,6 +184,7 @@ impl Backend for YtDlpBackend {
 
         let mut cmd = tokio::process::Command::new(&config.ytdlp_path);
         cmd.args(&args)
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -338,6 +327,7 @@ impl Backend for YtDlpBackend {
 
         let mut cmd = tokio::process::Command::new(&config.ytdlp_path);
         cmd.args(&args)
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -599,6 +589,7 @@ impl Backend for YtDlpBackend {
                 .as_deref()
                 .filter(|s| !s.is_empty())
                 .unwrap_or("android_sdkless");
+            info!("Using YouTube player client for formats: {}", player_client);
             args.extend([
                 "--extractor-args".to_string(),
                 format!("youtube:player_client={}", player_client),
@@ -607,8 +598,11 @@ impl Backend for YtDlpBackend {
 
         args.push(request.url.clone());
 
+        info!("Running yt-dlp with args: {:?}", args);
+
         let mut cmd = tokio::process::Command::new(&config.ytdlp_path);
         cmd.args(&args)
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 

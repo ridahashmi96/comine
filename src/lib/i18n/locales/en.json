@@ -369,9 +369,11 @@
       "auto": "Auto (recommended)",
       "autoDescription": "Automatically selects the best processor for each URL. Uses cobalt for supported sites (faster), falls back to yt-dlp for everything else.",
       "youtubePlayerClient": "YouTube player clients",
-      "youtubePlayerClientDescription": "Client chain used by yt-dlp to extract YouTube videos. Change this if downloads stop working.",
-      "usePlayerClientForExtraction": "Apply to video info extraction",
-      "usePlayerClientForExtractionDescription": "Use the same player clients when fetching video metadata and available formats. Enable this if video previews fail to load."
+      "youtubePlayerClientDescription": "Client chain for downloads. Default 'tv,android_sdkless' provides best quality. Clients are tried in order as fallbacks.",
+      "usePlayerClientForExtraction": "Use download clients for extraction",
+      "usePlayerClientForExtractionDescription": "Use the same player clients for fetching video info. When disabled, uses the faster extraction client below.",
+      "extractionPlayerClient": "Extraction player client",
+      "extractionPlayerClientDescription": "Client chain for fetching video info. 'android_sdkless' is fastest (no JS/token). Comma-separated for fallbacks (e.g. android_sdkless,web_safari)."
     },
     "downloads": {
       "title": "Downloads",

@@ -1338,7 +1338,7 @@
           {/if}
 
           <!-- YouTube Player Client -->
-          {#if matchesSearch('youtubePlayerClient') && !onAndroid}
+          {#if matchesSearch('youtubePlayerClient')}
             <SettingItem
               title={$t('settings.processing.youtubePlayerClient')}
               description={$t('settings.processing.youtubePlayerClientDescription')}
@@ -1360,7 +1360,7 @@
           {/if}
 
           <!-- Use Player Client For Extraction -->
-          {#if matchesSearch('usePlayerClientForExtraction') && !onAndroid}
+          {#if matchesSearch('usePlayerClientForExtraction')}
             <SettingItem
               title={$t('settings.processing.usePlayerClientForExtraction')}
               description={$t('settings.processing.usePlayerClientForExtractionDescription')}
@@ -1377,6 +1377,28 @@
                 checked={$settings.usePlayerClientForExtraction}
                 onchange={(checked) => updateSetting('usePlayerClientForExtraction', checked)}
               />
+            </SettingItem>
+          {/if}
+
+          <!-- Extraction Player Client -->
+          {#if matchesSearch('extractionPlayerClient') && !$settings.usePlayerClientForExtraction}
+            <SettingItem
+              title={$t('settings.processing.extractionPlayerClient')}
+              description={$t('settings.processing.extractionPlayerClientDescription')}
+              icon="tuning"
+              value={$settings.extractionPlayerClient}
+              defaultValue={defaultSettings.extractionPlayerClient}
+              onReset={() =>
+                updateSetting('extractionPlayerClient', defaultSettings.extractionPlayerClient)}
+            >
+              <div style="width: 220px;">
+                <Input
+                  value={$settings.extractionPlayerClient}
+                  placeholder="android_sdkless,web_safari"
+                  oninput={(e) =>
+                    updateSetting('extractionPlayerClient', (e.target as HTMLInputElement).value)}
+                />
+              </div>
             </SettingItem>
           {/if}
         </SettingsBlock>

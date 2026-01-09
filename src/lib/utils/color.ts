@@ -108,21 +108,15 @@ export async function extractDominantColor(imageUrl: string): Promise<RGB | null
     /* continue with JS extraction */
   }
 
-  try {
-    const response = await fetch(imageUrl, { mode: 'cors' });
-    if (response.ok) {
-      const blob = await response.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const result = await extractFromBlobUrl(blobUrl);
-      URL.revokeObjectURL(blobUrl);
-      if (result) {
-        setCacheEntry(imageUrl, result);
-        return result;
-      }
-    }
-  } catch {
-    /* try direct image load */
+  const isYouTubeThumbnail =
+    imageUrl.includes('ytimg.com') ||
+    imageUrl.includes('ggpht.com') ||
+    imageUrl.includes('googleusercontent.com');
+
+  if (isYouTubeThumbnail) {
+    return null;
   }
+
 
   return new Promise((resolve) => {
     const img = new Image();

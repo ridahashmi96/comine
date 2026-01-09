@@ -10,7 +10,6 @@ mod types;
 mod utils;
 
 use types::{PlaylistInfo, VideoFormats, VideoInfo};
-#[cfg(not(target_os = "android"))]
 use utils::lock_or_recover;
 
 #[cfg(not(target_os = "android"))]
@@ -22,7 +21,6 @@ use image::{DynamicImage, GenericImageView};
 use std::collections::HashMap;
 #[cfg(not(target_os = "android"))]
 use std::process::Stdio;
-#[cfg(not(target_os = "android"))]
 use std::sync::Mutex;
 use tauri::AppHandle;
 #[cfg(not(target_os = "android"))]
@@ -34,16 +32,14 @@ use tauri::Manager;
 static ACTIVE_DOWNLOADS: std::sync::LazyLock<Mutex<HashMap<String, u32>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
-#[cfg(not(target_os = "android"))]
 const THUMBNAIL_COLOR_CACHE_SIZE: std::num::NonZeroUsize =
     unsafe { std::num::NonZeroUsize::new_unchecked(50) };
 
-#[cfg(not(target_os = "android"))]
 static THUMBNAIL_COLOR_CACHE: std::sync::LazyLock<Mutex<lru::LruCache<String, [u8; 3]>>> =
     std::sync::LazyLock::new(|| Mutex::new(lru::LruCache::new(THUMBNAIL_COLOR_CACHE_SIZE)));
 
 #[cfg(target_os = "android")]
-use log::info;
+use log::{debug, info};
 #[cfg(not(target_os = "android"))]
 use log::{debug, error, info, warn};
 #[cfg(not(target_os = "android"))]
@@ -1280,7 +1276,6 @@ async fn extract_video_thumbnail(app: AppHandle, file_path: String) -> Result<St
 }
 
 /// Extract YouTube video ID from thumbnail URL (e.g., i.ytimg.com/vi/VIDEO_ID/...)
-#[cfg(not(target_os = "android"))]
 fn extract_yt_video_id(url: &str) -> Option<&str> {
     // Match patterns like: i.ytimg.com/vi/VIDEO_ID/ or i.ytimg.com/vi_webp/VIDEO_ID/
     let markers = ["i.ytimg.com/vi/", "i.ytimg.com/vi_webp/"];
@@ -1301,172 +1296,156 @@ fn extract_yt_video_id(url: &str) -> Option<&str> {
 #[tauri::command]
 #[allow(unused_variables)]
 async fn extract_thumbnail_color(url: String) -> Result<[u8; 3], String> {
-    #[cfg(target_os = "android")]
+    use image::GenericImageView;
+
+    // Extract YouTube video ID from thumbnail URL without regex
+    let cache_key = extract_yt_video_id(&url)
+        .map(|id| format!("yt:{}", id))
+        .unwrap_or_else(|| url.clone());
+
     {
-        return Err("Not supported on Android".to_string());
+        let mut cache = lock_or_recover(&THUMBNAIL_COLOR_CACHE);
+        if let Some(&color) = cache.get(&cache_key) {
+            debug!("Thumbnail color cache hit for: {}", cache_key);
+            return Ok(color);
+        }
     }
 
-    #[cfg(not(target_os = "android"))]
-    {
-        use image::GenericImageView;
+    debug!("Thumbnail color cache miss for: {}, fetching...", cache_key);
 
-        // Extract YouTube video ID from thumbnail URL without regex
-        let cache_key = extract_yt_video_id(&url)
-            .map(|id| format!("yt:{}", id))
-            .unwrap_or_else(|| url.clone());
+    let response = reqwest::get(&url)
+        .await
+        .map_err(|e| format!("Failed to fetch image: {}", e))?;
 
-        {
-            let mut cache = lock_or_recover(&THUMBNAIL_COLOR_CACHE);
-            if let Some(&color) = cache.get(&cache_key) {
-                debug!("Thumbnail color cache hit for: {}", cache_key);
-                return Ok(color);
-            }
-        }
-
-        debug!("Thumbnail color cache miss for: {}, fetching...", cache_key);
-
-        let response = reqwest::get(&url)
-            .await
-            .map_err(|e| format!("Failed to fetch image: {}", e))?;
-
-        if !response.status().is_success() {
-            return Err(format!("HTTP error: {}", response.status()));
-        }
-
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|e| format!("Failed to read image bytes: {}", e))?;
-
-        let img = image::load_from_memory(&bytes)
-            .map_err(|e| format!("Failed to decode image: {}", e))?;
-
-        let small = img.resize(50, 50, image::imageops::FilterType::Triangle);
-        let (width, height) = small.dimensions();
-
-        let mut best_color = [99u8, 102u8, 241u8]; // Default accent color
-        let mut best_score: f32 = 0.0;
-
-        for y in 0..height {
-            for x in 0..width {
-                if (x + y) % 4 != 0 {
-                    continue; // Sample every 4th pixel
-                }
-
-                let pixel = small.get_pixel(x, y);
-                let [r, g, b, a] = pixel.0;
-
-                if a < 128 {
-                    continue;
-                }
-
-                let max_c = r.max(g).max(b) as f32;
-                let min_c = r.min(g).min(b) as f32;
-                let lightness = (max_c + min_c) / 2.0 / 255.0;
-                let saturation = if max_c == min_c {
-                    0.0
-                } else {
-                    (max_c - min_c) / (1.0 - (2.0 * lightness - 1.0).abs()) / 255.0
-                };
-
-                let lightness_score = 1.0 - (lightness - 0.5).abs() * 2.0;
-                let score = saturation * lightness_score * (1.0 - (lightness - 0.4).abs());
-
-                if score > best_score && saturation > 0.2 {
-                    best_score = score;
-                    best_color = [r, g, b];
-                }
-            }
-        }
-
-        // Boost saturation slightly
-        let boost_factor = 1.2f32;
-        let r = best_color[0] as f32 / 255.0;
-        let g = best_color[1] as f32 / 255.0;
-        let b = best_color[2] as f32 / 255.0;
-
-        let max_c = r.max(g).max(b);
-        let min_c = r.min(g).min(b);
-        let l = (max_c + min_c) / 2.0;
-
-        if max_c != min_c {
-            let d = max_c - min_c;
-            let mut s = if l > 0.5 {
-                d / (2.0 - max_c - min_c)
-            } else {
-                d / (max_c + min_c)
-            };
-
-            let h = if max_c == r {
-                ((g - b) / d + if g < b { 6.0 } else { 0.0 }) / 6.0
-            } else if max_c == g {
-                ((b - r) / d + 2.0) / 6.0
-            } else {
-                ((r - g) / d + 4.0) / 6.0
-            };
-
-            s = (s * boost_factor).min(1.0);
-
-            let q = if l < 0.5 {
-                l * (1.0 + s)
-            } else {
-                l + s - l * s
-            };
-            let p = 2.0 * l - q;
-
-            fn hue2rgb(p: f32, q: f32, mut t: f32) -> f32 {
-                if t < 0.0 {
-                    t += 1.0;
-                }
-                if t > 1.0 {
-                    t -= 1.0;
-                }
-                if t < 1.0 / 6.0 {
-                    return p + (q - p) * 6.0 * t;
-                }
-                if t < 0.5 {
-                    return q;
-                }
-                if t < 2.0 / 3.0 {
-                    return p + (q - p) * (2.0 / 3.0 - t) * 6.0;
-                }
-                p
-            }
-
-            best_color = [
-                (hue2rgb(p, q, h + 1.0 / 3.0) * 255.0) as u8,
-                (hue2rgb(p, q, h) * 255.0) as u8,
-                (hue2rgb(p, q, h - 1.0 / 3.0) * 255.0) as u8,
-            ];
-        }
-
-        {
-            let mut cache = lock_or_recover(&THUMBNAIL_COLOR_CACHE);
-            cache.put(cache_key, best_color);
-        }
-
-        Ok(best_color)
+    if !response.status().is_success() {
+        return Err(format!("HTTP error: {}", response.status()));
     }
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read image bytes: {}", e))?;
+
+    let img = image::load_from_memory(&bytes)
+        .map_err(|e| format!("Failed to decode image: {}", e))?;
+
+    let small = img.resize(50, 50, image::imageops::FilterType::Triangle);
+    let (width, height) = small.dimensions();
+
+    let mut best_color = [99u8, 102u8, 241u8]; // Default accent color
+    let mut best_score: f32 = 0.0;
+
+    for y in 0..height {
+        for x in 0..width {
+            if (x + y) % 4 != 0 {
+                continue; // Sample every 4th pixel
+            }
+
+            let pixel = small.get_pixel(x, y);
+            let [r, g, b, a] = pixel.0;
+
+            if a < 128 {
+                continue;
+            }
+
+            let max_c = r.max(g).max(b) as f32;
+            let min_c = r.min(g).min(b) as f32;
+            let lightness = (max_c + min_c) / 2.0 / 255.0;
+            let saturation = if max_c == min_c {
+                0.0
+            } else {
+                (max_c - min_c) / (1.0 - (2.0 * lightness - 1.0).abs()) / 255.0
+            };
+
+            let lightness_score = 1.0 - (lightness - 0.5).abs() * 2.0;
+            let score = saturation * lightness_score * (1.0 - (lightness - 0.4).abs());
+
+            if score > best_score && saturation > 0.2 {
+                best_score = score;
+                best_color = [r, g, b];
+            }
+        }
+    }
+
+    // Boost saturation slightly
+    let boost_factor = 1.2f32;
+    let r = best_color[0] as f32 / 255.0;
+    let g = best_color[1] as f32 / 255.0;
+    let b = best_color[2] as f32 / 255.0;
+
+    let max_c = r.max(g).max(b);
+    let min_c = r.min(g).min(b);
+    let l = (max_c + min_c) / 2.0;
+
+    if max_c != min_c {
+        let d = max_c - min_c;
+        let mut s = if l > 0.5 {
+            d / (2.0 - max_c - min_c)
+        } else {
+            d / (max_c + min_c)
+        };
+
+        let h = if max_c == r {
+            ((g - b) / d + if g < b { 6.0 } else { 0.0 }) / 6.0
+        } else if max_c == g {
+            ((b - r) / d + 2.0) / 6.0
+        } else {
+            ((r - g) / d + 4.0) / 6.0
+        };
+
+        s = (s * boost_factor).min(1.0);
+
+        let q = if l < 0.5 {
+            l * (1.0 + s)
+        } else {
+            l + s - l * s
+        };
+        let p = 2.0 * l - q;
+
+        fn hue2rgb(p: f32, q: f32, mut t: f32) -> f32 {
+            if t < 0.0 {
+                t += 1.0;
+            }
+            if t > 1.0 {
+                t -= 1.0;
+            }
+            if t < 1.0 / 6.0 {
+                return p + (q - p) * 6.0 * t;
+            }
+            if t < 0.5 {
+                return q;
+            }
+            if t < 2.0 / 3.0 {
+                return p + (q - p) * (2.0 / 3.0 - t) * 6.0;
+            }
+            p
+        }
+
+        best_color = [
+            (hue2rgb(p, q, h + 1.0 / 3.0) * 255.0) as u8,
+            (hue2rgb(p, q, h) * 255.0) as u8,
+            (hue2rgb(p, q, h - 1.0 / 3.0) * 255.0) as u8,
+        ];
+    }
+
+    {
+        let mut cache = lock_or_recover(&THUMBNAIL_COLOR_CACHE);
+        cache.put(cache_key, best_color);
+    }
+
+    Ok(best_color)
 }
 
 #[tauri::command]
 #[allow(unused_variables)]
 async fn get_cached_thumbnail_color(url: String) -> Result<Option<[u8; 3]>, String> {
-    #[cfg(target_os = "android")]
-    {
-        return Ok(None);
-    }
+    // Extract YouTube video ID from thumbnail URL without regex
+    let cache_key = extract_yt_video_id(&url)
+        .map(|id| format!("yt:{}", id))
+        .unwrap_or_else(|| url.clone());
 
-    #[cfg(not(target_os = "android"))]
-    {
-        // Extract YouTube video ID from thumbnail URL without regex
-        let cache_key = extract_yt_video_id(&url)
-            .map(|id| format!("yt:{}", id))
-            .unwrap_or_else(|| url.clone());
-
-        let mut cache = lock_or_recover(&THUMBNAIL_COLOR_CACHE);
-        Ok(cache.get(&cache_key).copied())
-    }
+    let mut cache = lock_or_recover(&THUMBNAIL_COLOR_CACHE);
+    Ok(cache.get(&cache_key).copied())
 }
 
 // ==================== YouTube Music Thumbnail Cropping ====================

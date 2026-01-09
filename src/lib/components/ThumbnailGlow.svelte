@@ -82,7 +82,7 @@
 
   async function extractColor(url: string) {
     if (!url || destroyed || extractionInProgress) return;
-    if (currentUrl === url && glowColor) return;
+    if (currentUrl === url) return; // Already processed this URL (success or failure)
 
     extractionInProgress = true;
 
@@ -113,11 +113,14 @@
         const color = await extractDominantColor(url);
         if (color && !destroyed) {
           glowColor = color;
-          currentUrl = url;
         }
+        // Always mark as processed to prevent retry loops
+        currentUrl = url;
       }
     } catch (e) {
       console.warn('[ThumbnailGlow] Color extraction failed:', e);
+      // Mark as processed even on error to prevent retry loops
+      currentUrl = url;
     } finally {
       if (!destroyed) {
         extractionInProgress = false;

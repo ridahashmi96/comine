@@ -1,3 +1,4 @@
+#[cfg(not(target_os = "android"))]
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 

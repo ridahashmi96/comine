@@ -725,6 +725,8 @@ export type TranslationKeys =
   | 'settings.processing.autoDescription'
   | 'settings.processing.defaultProcessor'
   | 'settings.processing.defaultProcessorDescription'
+  | 'settings.processing.extractionPlayerClient'
+  | 'settings.processing.extractionPlayerClientDescription'
   | 'settings.processing.title'
   | 'settings.processing.usePlayerClientForExtraction'
   | 'settings.processing.usePlayerClientForExtractionDescription'

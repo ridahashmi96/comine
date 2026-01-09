@@ -813,7 +813,7 @@
         const currentSettings = getSettings();
         const playerClient = currentSettings.usePlayerClientForExtraction
           ? currentSettings.youtubePlayerClient
-          : null;
+          : currentSettings.extractionPlayerClient || null;
         const raw = await getVideoInfoOnAndroid(url, playerClient);
         if (destroyed) return; // Check after await
         if (!raw) throw new Error('Failed to get video info');
@@ -861,7 +861,7 @@
           proxyConfig: getProxyConfig(),
           youtubePlayerClient: currentSettings.usePlayerClientForExtraction
             ? currentSettings.youtubePlayerClient
-            : null,
+            : currentSettings.extractionPlayerClient || null,
         });
         if (destroyed) return;
       }
