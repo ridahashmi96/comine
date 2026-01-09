@@ -909,10 +909,6 @@ class MainActivity : TauriActivity() {
           request.addOption("--no-download")
           request.addOption("--no-playlist")
           
-          if (url.contains("youtube.com") || url.contains("youtu.be")) {
-            request.addOption("--extractor-args", "youtube:player_client=tv,android_sdkless")
-          }
-          
           val response = YoutubeDL.getInstance().execute(request, null)
           
           if (response.exitCode != 0) {
@@ -1021,10 +1017,6 @@ class MainActivity : TauriActivity() {
           request.addOption("--dump-json")
           request.addOption("--flat-playlist")
           request.addOption("--no-download")
-          
-          if (isYouTube) {
-            request.addOption("--extractor-args", "youtube:player_client=tv,android_sdkless")
-          }
           
           val response = YoutubeDL.getInstance().execute(request, null)
           

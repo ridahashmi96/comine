@@ -413,7 +413,7 @@
         const currentSettings = getSettings();
         const playerClient = currentSettings.usePlayerClientForExtraction
           ? currentSettings.youtubePlayerClient
-          : null;
+          : currentSettings.extractionPlayerClient || null;
         rawInfo = await getPlaylistInfoOnAndroid(url, playerClient);
         if (destroyed) return;
       } else {

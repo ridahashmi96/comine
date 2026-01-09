@@ -374,7 +374,9 @@
       "youtubePlayerClient": "Клиенты плеера YouTube",
       "youtubePlayerClientDescription": "Цепочка клиентов, используемых yt-dlp для извлечения видео с YouTube. Измените, если загрузки перестали работать.",
       "usePlayerClientForExtraction": "Применять при получении информации",
-      "usePlayerClientForExtractionDescription": "Использовать те же клиенты при получении метаданных видео и доступных форматов. Включите, если превью видео не загружаются."
+      "usePlayerClientForExtractionDescription": "Использовать те же клиенты при получении метаданных видео и доступных форматов. Включите, если превью видео не загружаются.",
+      "extractionPlayerClient": "Клиенты для метаданных",
+      "extractionPlayerClientDescription": "Клиенты YouTube для получения информации о видео. Через запятую для резерва (например, android_sdkless,web_safari)."
     },
     "downloads": {
       "title": "Загрузки",

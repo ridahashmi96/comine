@@ -117,7 +117,7 @@
         const currentSettings = getSettings();
         const playerClient = currentSettings.usePlayerClientForExtraction
           ? currentSettings.youtubePlayerClient
-          : null;
+          : currentSettings.extractionPlayerClient || null;
         const info = await getVideoInfoOnAndroid(url, playerClient);
 
         if (!info) {

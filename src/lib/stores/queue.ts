@@ -1357,7 +1357,7 @@ function createQueueStore() {
           await waitForAndroidYtDlp();
           const playerClient = currentSettings.usePlayerClientForExtraction
             ? currentSettings.youtubePlayerClient
-            : null;
+            : currentSettings.extractionPlayerClient || null;
           const androidInfo = await getVideoInfoOnAndroid(url, playerClient);
           if (!androidInfo) {
             throw new Error('Failed to get video info from Android');

@@ -491,7 +491,7 @@
         const currentSettings = getSettings();
         const playerClient = currentSettings.usePlayerClientForExtraction
           ? currentSettings.youtubePlayerClient
-          : null;
+          : currentSettings.extractionPlayerClient || null;
         info = (await getPlaylistInfoOnAndroid(url, playerClient)) as BackendPlaylistInfo;
         if (destroyed) return;
       } else {
