@@ -247,7 +247,7 @@ export const defaultSettings: AppSettings = {
 
   autoUpdate: true,
   allowPreReleases: false,
-  sendStats: false,
+  sendStats: true,
   acrylicBackground: true,
   disableAnimations: false,
 

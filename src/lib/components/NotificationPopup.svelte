@@ -84,10 +84,6 @@
       <div class="notification-content">
         {#if notif.thumbnail}
           <img src={notif.thumbnail} alt="" class="thumbnail" />
-        {:else}
-          <div class="icon-placeholder">
-            <Icon name="download" size={24} />
-          </div>
         {/if}
 
         <div class="text-content">
@@ -169,18 +165,6 @@
     height: 48px;
     border-radius: 8px;
     object-fit: cover;
-    flex-shrink: 0;
-  }
-
-  .icon-placeholder {
-    width: 48px;
-    height: 48px;
-    border-radius: 8px;
-    background: rgba(99, 102, 241, 0.2);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: rgba(99, 102, 241, 0.9);
     flex-shrink: 0;
   }
 

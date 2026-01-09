@@ -12,6 +12,7 @@ import { history } from './history';
 import { logs } from './logs';
 import { deps } from './deps';
 import { settings, getSettings, getProxyConfig } from './settings';
+import { appStats } from './stats';
 import { toast } from '$lib/components/Toast.svelte';
 import { translate } from '$lib/i18n';
 import {
@@ -772,6 +773,9 @@ function createQueueStore() {
         };
       });
 
+      const sizeMb = filesize ? filesize / (1024 * 1024) : 0;
+      appStats.trackDownload(sizeMb, true);
+
       await history.add({
         url: url,
         title: pendingItem.title || 'Downloaded file',
@@ -812,6 +816,8 @@ function createQueueStore() {
       }
 
       logs.error('queue', `File download failed: ${error}`);
+
+      appStats.trackDownload(0, false);
 
       update((state) => ({
         ...state,
@@ -1216,6 +1222,9 @@ function createQueueStore() {
 
       const completedItem = get({ subscribe }).items.find((i) => i.id === itemId);
       if (completedItem) {
+        const sizeMb = completedItem.filesize ? completedItem.filesize / (1024 * 1024) : 0;
+        appStats.trackDownload(sizeMb, true);
+
         logs.debug(
           'queue',
           `Saving to history: title=${completedItem.title}, duration=${completedItem.duration}, size=${completedItem.filesize}, playlist=${completedItem.playlistTitle || 'none'}`
@@ -1266,6 +1275,8 @@ function createQueueStore() {
 
       console.error('Download failed:', error);
       logs.error('queue', `Download failed for ${url}: ${error}`);
+
+      appStats.trackDownload(0, false);
 
       const failedItem = get({ subscribe }).items.find((i) => i.id === itemId);
       if (failedItem) {

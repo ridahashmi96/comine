@@ -3,6 +3,14 @@
     "name": "Comine",
     "description": "Cross-platform media downloader"
   },
+  "broadcast": {
+    "dismiss": "Dismiss",
+    "learnMore": "Learn more",
+    "warning": "Warning",
+    "important": "Important",
+    "success": "Good news",
+    "announcement": "Announcement"
+  },
   "nav": {
     "download": "Download",
     "downloads": "Downloads",
@@ -412,8 +420,9 @@
       "autoUpdateDescription": "Check for updates automatically when the app starts",
       "allowPreReleases": "Allow pre-release updates",
       "allowPreReleasesTooltip": "Receive beta and development versions before stable release. May contain bugs.",
-      "sendStats": "Send anonymous statistic",
-      "sendStatsTooltip": "Help improve the app by sending anonymous usage data",
+      "sendStats": "Anonymous statistics",
+      "sendStatsTooltip": "Help improve Comine by sharing anonymous usage data. No personal information, URLs, or filenames are collected.",
+      "telemetryNotice": "Sharing anonymous stats to help improve Comine",
       "acrylicBackground": "Acrylic background",
       "disableAnimations": "Disable all animations & effects",
       "sizeUnit": "Size units",

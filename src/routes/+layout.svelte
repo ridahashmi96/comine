@@ -53,6 +53,7 @@
     stopUpdateChecker,
     clearDismissedVersionIfUpdated,
   } from '$lib/stores/updates';
+  import { appStats } from '$lib/stores/stats';
   import { navigation } from '$lib/stores/navigation';
   import NotificationPopup from '$lib/components/NotificationPopup.svelte';
 
@@ -405,6 +406,7 @@
 
     startUpdateChecker();
     clearDismissedVersionIfUpdated();
+    initStats();
 
     if (isAndroid()) {
       cleanupShareIntent = onShareIntent(handleAndroidShareIntent);
@@ -717,6 +719,172 @@
     }
     queue.cleanup();
   });
+
+  async function initStats() {
+    logs.info('stats', 'initStats() called');
+    
+    if (!$settingsReady) {
+      logs.debug('stats', 'Waiting for settings to load...');
+      await new Promise<void>((resolve) => {
+        const unsub = settingsReady.subscribe((ready) => {
+          if (ready) {
+            unsub();
+            resolve();
+          }
+        });
+      });
+    }
+    
+    logs.debug('stats', `Settings loaded. sendStats=${$settings.sendStats}`);
+
+    fetchBroadcasts();
+
+    if (!$settings.sendStats) {
+      logs.info('stats', 'Stats disabled in settings, skipping');
+      return;
+    }
+
+    const lastSyncKey = 'comine_last_stats_sync';
+    const lastSyncTime = localStorage.getItem(lastSyncKey);
+    const now = Date.now();
+    if (lastSyncTime && now - parseInt(lastSyncTime) < 21600000) {
+      logs.debug('stats', `Rate limited - last sync was ${Math.round((now - parseInt(lastSyncTime)) / 60000)}min ago`);
+      return;
+    }
+
+    const payload = appStats.getPayload();
+    logs.info('stats', `Sending stats: ${JSON.stringify(payload)}`);
+    fetch('https://stats.comine.app/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then((res) => {
+      logs.info('stats', `Stats sent! Response: ${res.status}`);
+    }).catch((e) => {
+      logs.warn('stats', `Failed to send stats: ${e}`);
+    });
+
+    localStorage.setItem(lastSyncKey, now.toString());
+  }
+
+  interface Broadcast {
+    id: number;
+    message: string;
+    type: 'info' | 'warning' | 'error' | 'success';
+    title?: string;
+    icon?: string;
+    url?: string;
+    button_text?: string;
+    platforms?: string;
+    min_version?: string;
+    max_version?: string;
+  }
+
+  async function fetchBroadcasts() {
+    const dismissedKey = 'comine_dismissed_broadcasts';
+    const dismissedRaw = localStorage.getItem(dismissedKey);
+    const dismissed: number[] = dismissedRaw ? JSON.parse(dismissedRaw) : [];
+
+    try {
+      const res = await fetch('https://stats.comine.app/broadcast');
+      if (!res.ok) {
+        logs.debug('stats', `No active broadcasts (${res.status})`);
+        return;
+      }
+
+      const broadcasts: Broadcast[] = await res.json();
+      if (!Array.isArray(broadcasts) || broadcasts.length === 0) {
+        logs.debug('stats', 'No broadcasts returned');
+        return;
+      }
+
+      const platform = getPlatformForBroadcast();
+      const version = getAppVersionForBroadcast();
+
+      for (const bc of broadcasts) {
+        if (dismissed.includes(bc.id)) {
+          logs.debug('stats', `Broadcast ${bc.id} already dismissed`);
+          continue;
+        }
+
+        if (bc.platforms) {
+          const platforms = bc.platforms.split(',').map(p => p.trim().toLowerCase());
+          if (!platforms.includes('all') && !platforms.includes(platform)) {
+            logs.debug('stats', `Broadcast ${bc.id} not for platform ${platform}`);
+            continue;
+          }
+        }
+
+        if (bc.min_version && compareVersions(version, bc.min_version) < 0) {
+          logs.debug('stats', `Broadcast ${bc.id} requires min version ${bc.min_version}`);
+          continue;
+        }
+        if (bc.max_version && compareVersions(version, bc.max_version) > 0) {
+          logs.debug('stats', `Broadcast ${bc.id} requires max version ${bc.max_version}`);
+          continue;
+        }
+
+        logs.info('stats', `Showing broadcast ${bc.id}: ${bc.message}`);
+        
+        const notifPopup = await import('$lib/components/NotificationPopup.svelte');
+        notifPopup.show({
+          title: bc.title || getBroadcastTitle(bc.type),
+          body: bc.message,
+          thumbnail: bc.icon,
+          duration: 0,
+          url: bc.url,
+          actionLabel: bc.button_text || (bc.url ? $t('broadcast.learnMore') : undefined),
+          onAction: bc.url ? () => {
+            window.open(bc.url, '_blank');
+            dismissed.push(bc.id);
+            localStorage.setItem(dismissedKey, JSON.stringify(dismissed));
+          } : undefined
+        });
+
+        dismissed.push(bc.id);
+        localStorage.setItem(dismissedKey, JSON.stringify(dismissed));
+      }
+    } catch (e) {
+      logs.debug('stats', `Failed to fetch broadcasts: ${e}`);
+    }
+  }
+
+  function getBroadcastTitle(type: string): string {
+    switch (type) {
+      case 'warning': return $t('broadcast.warning') || 'Warning';
+      case 'error': return $t('broadcast.important') || 'Important';
+      case 'success': return $t('broadcast.success') || 'Good news';
+      default: return $t('broadcast.announcement') || 'Announcement';
+    }
+  }
+
+  function getPlatformForBroadcast(): string {
+    if (!browser) return 'unknown';
+    const ua = navigator.userAgent.toLowerCase();
+    if (ua.includes('android')) return 'android';
+    if (ua.includes('win')) return 'windows';
+    if (ua.includes('linux')) return 'linux';
+    if (ua.includes('mac')) return 'macos';
+    return 'unknown';
+  }
+
+  function getAppVersionForBroadcast(): string {
+    if (!browser) return '0.0.0';
+    // @ts-ignore - injected by vite
+    return typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0';
+  }
+
+  function compareVersions(a: string, b: string): number {
+    const partsA = a.split('.').map(n => parseInt(n) || 0);
+    const partsB = b.split('.').map(n => parseInt(n) || 0);
+    for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+      const numA = partsA[i] || 0;
+      const numB = partsB[i] || 0;
+      if (numA > numB) return 1;
+      if (numA < numB) return -1;
+    }
+    return 0;
+  }
 
   function handleAndroidShareIntent(rawUrl: string) {
     const url = cleanUrl(rawUrl);
