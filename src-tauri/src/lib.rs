@@ -4,7 +4,7 @@ mod deps;
 mod logs;
 mod notifications;
 mod proxy;
-// Relay module disabled - local server only
+// RELAY WIP - DISABLED
 // #[cfg(not(target_os = "android"))]
 // mod relay;
 #[cfg(not(target_os = "android"))]
@@ -23,23 +23,21 @@ use backends::{Backend, InfoRequest, PlaylistRequest};
 #[cfg(not(target_os = "android"))]
 use image::{DynamicImage, GenericImageView};
 use std::collections::HashMap;
-use std::path::PathBuf;
 #[cfg(not(target_os = "android"))]
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::AppHandle;
 #[cfg(not(target_os = "android"))]
 use tauri::Emitter;
 use tauri::Manager;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::{broadcast, Mutex as AsyncMutex};
 
 #[cfg(not(target_os = "android"))]
 static ACTIVE_DOWNLOADS: std::sync::LazyLock<Mutex<HashMap<String, u32>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
-// Color extraction can be called for many items at once (queue/history grids).
-// Keep this reasonably large to avoid thrashing and repeated fetches.
 const THUMBNAIL_COLOR_CACHE_SIZE: std::num::NonZeroUsize =
     unsafe { std::num::NonZeroUsize::new_unchecked(500) };
 
@@ -58,10 +56,8 @@ struct ThumbnailColorDiskCache {
 static THUMBNAIL_COLOR_DISK_CACHE: std::sync::LazyLock<Mutex<ThumbnailColorDiskCache>> =
     std::sync::LazyLock::new(|| Mutex::new(ThumbnailColorDiskCache::default()));
 
-// Coalesce concurrent requests for the same thumbnail key so we don't fetch/process it N times.
-static THUMBNAIL_COLOR_INFLIGHT: std::sync::LazyLock<
-    AsyncMutex<HashMap<String, broadcast::Sender<Result<[u8; 3], String>>>>,
-> = std::sync::LazyLock::new(|| AsyncMutex::new(HashMap::new()));
+static THUMBNAIL_COLOR_INFLIGHT: std::sync::LazyLock<AsyncMutex<HashMap<String, broadcast::Sender<Result<[u8; 3], String>>>>> =
+    std::sync::LazyLock::new(|| AsyncMutex::new(HashMap::new()));
 
 static THUMBNAIL_COLOR_FLUSH_SCHEDULED: AtomicBool = AtomicBool::new(false);
 
@@ -155,10 +151,10 @@ fn schedule_thumbnail_color_disk_flush(app: AppHandle) {
     });
 }
 
+#[cfg(target_os = "android")]
+use log::{debug, info, warn};
 #[cfg(not(target_os = "android"))]
 use log::{debug, error, info, warn};
-#[cfg(target_os = "android")]
-use log::{debug, info};
 #[cfg(not(target_os = "android"))]
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
@@ -476,22 +472,18 @@ async fn download_video(
                     .map(|s| !s.is_empty() && s != "custom")
                     .unwrap_or(false);
 
-            let default_client = if has_cookies {
-                "tv,web"
-            } else {
-                "tv,android_sdkless"
-            };
+            let default_client = if has_cookies { "tv,web" } else { "tv,android_sdkless" };
             let player_client = youtube_player_client
                 .as_deref()
                 .filter(|s| !s.is_empty())
                 .unwrap_or(default_client);
-
+            
             let final_client = if has_cookies && player_client.contains("android_sdkless") {
                 player_client.replace("android_sdkless", "tv")
             } else {
                 player_client.to_string()
             };
-
+            
             args.extend([
                 "--extractor-args".to_string(),
                 format!("youtube:player_client={}", final_client),
@@ -647,8 +639,6 @@ async fn download_video(
                 result = stderr_reader.next_line(), if !stderr_done => {
                     match result {
                         Ok(Some(line)) => {
-                            // Use appropriate log level based on content
-                            // yt-dlp uses stderr for all output, not just errors
                             if line.contains("ERROR:") || line.contains("error:") {
                                 warn!("yt-dlp stderr: {}", line);
                             } else if line.starts_with("[debug]") || line.starts_with("  File \"") || line.starts_with("Traceback") {
@@ -1511,8 +1501,8 @@ async fn extract_thumbnail_color(app: AppHandle, url: String) -> Result<[u8; 3],
         .await
         .map_err(|e| format!("Failed to read image bytes: {}", e))?;
 
-    let img =
-        image::load_from_memory(&bytes).map_err(|e| format!("Failed to decode image: {}", e))?;
+    let img = image::load_from_memory(&bytes)
+        .map_err(|e| format!("Failed to decode image: {}", e))?;
 
     let small = img.resize(50, 50, image::imageops::FilterType::Triangle);
     let (width, height) = small.dimensions();
@@ -1620,7 +1610,6 @@ async fn extract_thumbnail_color(app: AppHandle, url: String) -> Result<[u8; 3],
 
     {
         let mut disk = lock_or_recover(&THUMBNAIL_COLOR_DISK_CACHE);
-        // Soft-cap disk map size to avoid unbounded growth
         if disk.map.len() > 3000 {
             let keys: Vec<String> = disk.map.keys().take(1000).cloned().collect();
             for k in keys {
@@ -1632,7 +1621,6 @@ async fn extract_thumbnail_color(app: AppHandle, url: String) -> Result<[u8; 3],
     }
     schedule_thumbnail_color_disk_flush(app.clone());
 
-    // Wake up any waiters
     {
         let mut inflight = THUMBNAIL_COLOR_INFLIGHT.lock().await;
         if let Some(sender) = inflight.remove(&cache_key) {
@@ -1645,10 +1633,7 @@ async fn extract_thumbnail_color(app: AppHandle, url: String) -> Result<[u8; 3],
 
 #[tauri::command]
 #[allow(unused_variables)]
-async fn get_cached_thumbnail_color(
-    app: AppHandle,
-    url: String,
-) -> Result<Option<[u8; 3]>, String> {
+async fn get_cached_thumbnail_color(app: AppHandle, url: String) -> Result<Option<[u8; 3]>, String> {
     ensure_thumbnail_color_disk_cache_loaded(&app).await?;
 
     // Extract YouTube video ID from thumbnail URL without regex
@@ -2015,15 +2000,7 @@ async fn set_window_effect(app: AppHandle, effect_type: String) -> Result<(), St
 #[tauri::command]
 #[allow(unused_variables)]
 async fn set_acrylic(app: AppHandle, enable: bool) -> Result<(), String> {
-    set_window_effect(
-        app,
-        if enable {
-            "acrylic".to_string()
-        } else {
-            "none".to_string()
-        },
-    )
-    .await
+    set_window_effect(app, if enable { "acrylic".to_string() } else { "none".to_string() }).await
 }
 
 // ==================== Proxy Commands ====================
@@ -2546,7 +2523,7 @@ async fn clear_cookies(app: AppHandle) -> Result<(), String> {
         .map_err(|e| format!("Failed to get cache dir: {}", e))?;
 
     let cookie_files = ["custom_cookies.txt", "lux_cookies.txt"];
-
+    
     for file in &cookie_files {
         let path = cache_dir.join(file);
         if path.exists() {
@@ -2961,14 +2938,12 @@ fn server_is_running() -> bool {
     server::is_running()
 }
 
-/// Push queue status to the server's shared state so the HTTP server can return it
 #[cfg(not(target_os = "android"))]
 #[tauri::command]
 fn push_queue_status(items: Vec<server::QueueItem>) {
     server::update_queue(items);
 }
 
-/// Push history status to the server's shared state so the HTTP server can return it
 #[cfg(not(target_os = "android"))]
 #[tauri::command]
 fn push_history_status(items: Vec<server::HistoryItem>) {
