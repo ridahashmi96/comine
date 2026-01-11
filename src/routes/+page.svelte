@@ -27,7 +27,7 @@
   } from '$lib/components/PlaylistBuilder.svelte';
   import TrackBuilder, { type TrackSelection } from '$lib/components/TrackBuilder.svelte';
   import ChannelBuilder, { type ChannelSelection } from '$lib/components/ChannelBuilder.svelte';
-  import { type ChannelEntry } from '$lib/stores/mediaCache';
+  import { type ChannelEntry, mediaCache } from '$lib/stores/mediaCache';
   import ViewStack, { type ViewInstance } from '$lib/components/ViewStack.svelte';
   import type { IconName } from '$lib/components/Icon.svelte';
 
@@ -805,6 +805,19 @@
       }
     }
 
+    // Check mediaCache for any prefetched info (from extension, clipboard, etc)
+    const cachedPreview = mediaCache.getPreview(downloadUrl);
+    const prefetchedInfo = cachedPreview ? {
+      title: cachedPreview.title,
+      author: cachedPreview.author,
+      thumbnail: cachedPreview.thumbnail,
+      duration: cachedPreview.duration,
+    } : undefined;
+
+    if (prefetchedInfo?.title) {
+      logs.debug('download', `Using cached preview info: ${prefetchedInfo.title}`);
+    }
+
     // Add to queue with current settings
     const queueId = queue.add(downloadUrl, {
       videoQuality,
@@ -823,16 +836,23 @@
       embedSubtitles,
       subtitleLanguages,
       embedThumbnail,
+      prefetchedInfo,
     });
 
     if (queueId) {
       logs.info('download', `Added to queue with ID: ${queueId}`);
-      try {
-        const urlObj = new URL(downloadUrl);
-        toast.info($t('downloads.started').replace('{title}', urlObj.hostname));
-      } catch {
-        toast.info($t('downloads.started').replace('{title}', 'Download'));
+      // Use prefetched title if available, otherwise use hostname
+      let displayTitle = prefetchedInfo?.title;
+      if (!displayTitle) {
+        try {
+          displayTitle = new URL(downloadUrl).hostname;
+        } catch {
+          displayTitle = 'Download';
+        }
+      } else if (displayTitle.length > 40) {
+        displayTitle = displayTitle.slice(0, 40) + '…';
       }
+      toast.info($t('downloads.started').replace('{title}', displayTitle));
     }
     url = '';
   }
@@ -1318,12 +1338,21 @@
   options={browserOptions}
   bind:value={cookiesFromBrowser}
   columns={3}
-  onselect={(val) => {
+  onselect={async (val) => {
     cookiesFromBrowser = val;
     saveSettings();
     if (val === 'custom') {
       customCookiesInput = customCookies;
       customCookiesModalOpen = true;
+    } else if (val === '') {
+      // When set to "None", clear the custom cookies content and delete cookie files
+      customCookies = '';
+      saveSettings();
+      try {
+        await invoke('clear_cookies');
+      } catch (e) {
+        console.warn('Failed to clear cookies:', e);
+      }
     }
   }}
 />

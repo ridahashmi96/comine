@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy, type Snippet } from 'svelte';
+  import { get } from 'svelte/store';
   import { browser } from '$app/environment';
   import { getCurrentWindow, type Window as TauriWindow } from '@tauri-apps/api/window';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
@@ -7,6 +8,7 @@
   import { attachLogger } from '@tauri-apps/plugin-log';
   import { invoke } from '@tauri-apps/api/core';
   import { isPermissionGranted, sendNotification } from '@tauri-apps/plugin-notification';
+  import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import Icon, { type IconName } from '$lib/components/Icon.svelte';
@@ -24,6 +26,7 @@
     type CloseBehavior,
     getSettings,
     getProxyConfig,
+    updateSettings,
   } from '$lib/stores/settings';
   import { initHistory } from '$lib/stores/history';
   import { queue, activeDownloadsCount } from '$lib/stores/queue';
@@ -55,6 +58,7 @@
   } from '$lib/stores/updates';
   import { appStats } from '$lib/stores/stats';
   import { navigation } from '$lib/stores/navigation';
+  import { setupServerSync } from '$lib/stores/serverSync';
   import NotificationPopup from '$lib/components/NotificationPopup.svelte';
 
   let { children }: { children: Snippet } = $props();
@@ -114,8 +118,21 @@
   let unlistenNotificationDownload: UnlistenFn | null = null;
   let unlistenNotificationStartDownload: UnlistenFn | null = null;
   let unlistenWindowShown: UnlistenFn | null = null;
+  let unlistenDeepLink: UnlistenFn | null = null;
+  let unlistenExtensionDownload: UnlistenFn | null = null;
+  let unlistenExtensionCancel: UnlistenFn | null = null;
+  let unlistenServerOpen: UnlistenFn | null = null;
+  let unlistenServerReveal: UnlistenFn | null = null;
+  let unlistenExtensionCookies: UnlistenFn | null = null;
+  let extensionProgressUnsub: (() => void) | null = null;
   let detachLogger: (() => void) | null = null;
   let cleanupShareIntent: (() => void) | null = null;
+
+  // Track extension downloads by URL -> { id, lastState, lastProgress }
+  const extensionDownloads = new Map<
+    string,
+    { id: string; lastState: string; lastProgress: number }
+  >();
 
   interface VideoInfo {
     title: string;
@@ -325,6 +342,34 @@
 
   let diskSpaceWarningShown = false;
 
+  async function autoStartExtensionServer() {
+    // Wait for settings to load
+    if (!$settingsReady) {
+      await new Promise<void>((resolve) => {
+        const unsub = settingsReady.subscribe((ready) => {
+          if (ready) {
+            unsub();
+            resolve();
+          }
+        });
+      });
+    }
+
+    // Only auto-start if it was previously enabled
+    if ($settings.extensionServerEnabled) {
+      const port = $settings.extensionLocalPort || 9549;
+      try {
+        const isRunning = await invoke<boolean>('server_is_running');
+        if (!isRunning) {
+          await invoke('server_start', { port });
+          logs.info('server', `Extension server auto-started on port ${port}`);
+        }
+      } catch (e) {
+        logs.warn('server', `Failed to auto-start extension server: ${e}`);
+      }
+    }
+  }
+
   async function checkDiskSpace() {
     logs.info('system', 'checkDiskSpace() called');
     if (diskSpaceWarningShown) {
@@ -372,6 +417,13 @@
 
     initSettings();
     queue.init();
+
+    // Initialize server sync for browser extension communication
+    if (!isAndroid()) {
+      setupServerSync();
+      // Auto-start extension server if it was enabled before
+      autoStartExtensionServer();
+    }
 
     setTimeout(async () => {
       await deps.checkAll();
@@ -680,6 +732,354 @@
     unlistenWindowShown = await listen('window-shown', () => {
       onWindowShown();
     });
+
+    // Listen for deep links from browser extension (comine:// protocol)
+    unlistenDeepLink = await listen<string>('deep-link-url', async (event) => {
+      logs.info('layout', `Deep link received: ${event.payload}`);
+
+      // Extract the actual URL from formats like:
+      // - "download?url=https://..." or "download/?url=https://..."
+      // - "url=https://..."
+      // - Direct URL
+      let videoUrl = event.payload;
+
+      // Handle download?url= or download/?url= format
+      if (videoUrl.startsWith('download?url=') || videoUrl.startsWith('download/?url=')) {
+        videoUrl = videoUrl.replace(/^download\/??\?url=/, '');
+      } else if (videoUrl.startsWith('url=')) {
+        videoUrl = videoUrl.replace(/^url=/, '');
+      }
+
+      // URL decode if needed
+      try {
+        videoUrl = decodeURIComponent(videoUrl);
+      } catch (e) {
+        // Already decoded or invalid encoding
+      }
+
+      const url = cleanUrl(videoUrl);
+      logs.info('layout', `Extracted video URL: ${url}`);
+
+      if (url && isValidMediaUrl(url, $settings.clipboardPatterns || [])) {
+        goto(`/?url=${encodeURIComponent(url)}`);
+        toast.info(`🔗 ${$t('deeplink.received') || 'URL received from browser'}`);
+
+        // Focus the window
+        if (appWindow) {
+          try {
+            await appWindow.show();
+            await appWindow.unminimize();
+            await appWindow.setFocus();
+          } catch (e) {
+            logs.warn('layout', `Failed to focus window: ${e}`);
+          }
+        }
+      }
+    });
+
+    // Listen for extension downloads (from browser extension via localhost API)
+    unlistenExtensionDownload = await listen<{
+      url: string;
+      title?: string | null;
+      thumbnail?: string | null;
+      id: string;
+      openApp?: boolean;
+      deviceId?: string;
+      fromRelay?: boolean;
+      options?: {
+        videoQuality?: string;
+        downloadMode?: string;
+        audioQuality?: string;
+        remux?: boolean;
+        convertToMp4?: boolean;
+        embedThumbnail?: boolean;
+        clearMetadata?: boolean;
+      };
+    }>('extension-download', async (event) => {
+      const {
+        url: rawUrl,
+        title,
+        thumbnail,
+        id,
+        openApp = true,
+        deviceId,
+        fromRelay,
+        options: extOptions,
+      } = event.payload;
+      logs.info(
+        'layout',
+        `Extension download received: ${rawUrl} (id: ${id}, openApp: ${openApp}, fromRelay: ${fromRelay})`
+      );
+
+      // v2-only relay: trust is based on knowing the shared secret.
+      // No per-device permission gate (for now).
+
+      const url = cleanUrl(rawUrl);
+      if (!url) {
+        logs.warn('layout', 'Invalid URL from extension');
+        return;
+      }
+
+      // Prefetch media info cache if we have metadata
+      if (title || thumbnail) {
+        mediaCache.setPreview(url, {
+          title: title || undefined,
+          thumbnail: thumbnail || undefined,
+        });
+      }
+
+      if (openApp) {
+        // Ensure the window is visible and focused FIRST
+        if (appWindow) {
+          try {
+            // Show the window first (if hidden to tray)
+            await appWindow.show();
+            // Unminimize if minimized
+            await appWindow.unminimize();
+            // Request user attention (flash taskbar on Windows)
+            await appWindow.requestUserAttention(1); // 1 = Critical
+            // Set focus
+            await appWindow.setFocus();
+            // Restore internal state
+            await onWindowShown();
+          } catch (e) {
+            logs.warn('layout', `Failed to focus window: ${e}`);
+          }
+        }
+
+        // Navigate to home with the URL
+        goto(`/?url=${encodeURIComponent(url)}`);
+        toast.info(`🔗 ${$t('extension.received') || 'URL received from browser extension'}`);
+      } else {
+        // Quick download mode - start download in background without UI interaction
+        const currentSettings = getSettings();
+
+        // Track this extension download
+        extensionDownloads.set(url, { id, lastState: 'queued', lastProgress: 0 });
+
+        // Use extension options if provided, otherwise fall back to app settings
+        const videoQuality = extOptions?.videoQuality ?? currentSettings.defaultVideoQuality ?? 'max';
+        const downloadMode = (extOptions?.downloadMode as 'auto' | 'audio' | 'mute' | undefined) ?? undefined; // Use auto mode if not specified
+        const audioQuality = extOptions?.audioQuality ?? currentSettings.defaultAudioQuality ?? 'best';
+        const convertToMp4 = extOptions?.convertToMp4 ?? currentSettings.convertToMp4 ?? false;
+        const remux = extOptions?.remux ?? currentSettings.remux ?? true;
+        const clearMetadata = extOptions?.clearMetadata ?? currentSettings.clearMetadata ?? false;
+        const embedThumbnail = extOptions?.embedThumbnail ?? currentSettings.embedThumbnail ?? true;
+
+        const queueId = queue.add(url, {
+          ignoreMixes: currentSettings.ignoreMixes ?? true,
+          videoQuality,
+          downloadMode,
+          audioQuality,
+          convertToMp4,
+          remux,
+          clearMetadata,
+          embedThumbnail,
+          dontShowInHistory: currentSettings.dontShowInHistory ?? false,
+          useAria2: currentSettings.useAria2 ?? true,
+          cookiesFromBrowser: currentSettings.cookiesFromBrowser ?? '',
+          customCookies: currentSettings.customCookies ?? '',
+          prefetchedInfo:
+            title || thumbnail
+              ? {
+                  title: title || undefined,
+                  thumbnail: thumbnail || undefined,
+                }
+              : undefined,
+        });
+
+        if (queueId) {
+          toast.info(`⬇️ ${$t('extension.quickDownload') || 'Quick download started'}`);
+          logs.info('layout', `Quick download queued: ${queueId}`);
+        } else {
+          toast.info($t('queue.alreadyInQueue') || 'Already in queue');
+          // Remove from tracking since it wasn't added
+          extensionDownloads.delete(url);
+        }
+      }
+    });
+
+    // Listen for extension cancel requests
+    unlistenExtensionCancel = await listen<{
+      url: string;
+      id: string;
+      deviceId?: string;
+      fromRelay?: boolean;
+    }>('extension-cancel', async (event) => {
+      const { url, id, deviceId, fromRelay } = event.payload;
+      logs.info('layout', `Extension cancel received: ${url} (id: ${id}, fromRelay: ${fromRelay})`);
+
+      // v2-only relay: trust is based on knowing the shared secret.
+      // No per-device permission gate (for now).
+
+      const state = get(queue);
+      const item = state.items.find((i) => i.url === url);
+      if (item) {
+        queue.cancel(item.id);
+        extensionDownloads.delete(url);
+      }
+    });
+
+    // Listen for server open file requests (from browser extension)
+    unlistenServerOpen = await listen<string>('server-open', async (event) => {
+      const filePath = event.payload;
+      logs.info('layout', `Server open request: ${filePath}`);
+      try {
+        await openPath(filePath);
+      } catch (e) {
+        logs.error('layout', `Failed to open file: ${e}`);
+        toast.error($t('downloads.openError') || 'Failed to open file');
+      }
+    });
+
+    // Listen for server reveal file requests (from browser extension)
+    unlistenServerReveal = await listen<string>('server-reveal', async (event) => {
+      const filePath = event.payload;
+      logs.info('layout', `Server reveal request: ${filePath}`);
+      try {
+        await revealItemInDir(filePath);
+      } catch (e) {
+        logs.error('layout', `Failed to reveal file: ${e}`);
+        toast.error($t('downloads.revealError') || 'Failed to show in folder');
+      }
+    });
+
+    // Listen for extension cookies (from browser extension)
+    unlistenExtensionCookies = await listen<{
+      domain: string;
+      count: number;
+      cookies: string;
+    }>('extension-cookies', async (event) => {
+      const { domain, count, cookies } = event.payload;
+      logs.info('layout', `Extension cookies received: ${count} cookies from ${domain}`);
+      
+      // Update the customCookies setting with the received cookies
+      // Merge with existing cookies if any
+      const currentCookies = getSettings().customCookies || '';
+      let newCookies = cookies;
+      
+      // If there are existing cookies, merge them (extension cookies take priority)
+      if (currentCookies && currentCookies.includes('# Netscape HTTP Cookie File')) {
+        // Parse existing cookies into a map
+        const existingMap = new Map<string, string>();
+        for (const line of currentCookies.split('\n')) {
+          if (line.startsWith('#') || !line.trim()) continue;
+          const parts = line.split('\t');
+          if (parts.length >= 7) {
+            const key = `${parts[0]}|${parts[5]}`; // domain|name
+            existingMap.set(key, line);
+          }
+        }
+        
+        // Add new cookies (overwriting existing)
+        for (const line of cookies.split('\n')) {
+          if (line.startsWith('#') || !line.trim()) continue;
+          const parts = line.split('\t');
+          if (parts.length >= 7) {
+            const key = `${parts[0]}|${parts[5]}`;
+            existingMap.set(key, line);
+          }
+        }
+        
+        // Reconstruct cookies
+        newCookies = '# Netscape HTTP Cookie File\n' + 
+          Array.from(existingMap.values()).join('\n');
+      }
+      
+      await updateSettings({ 
+        customCookies: newCookies,
+        cookiesFromBrowser: 'custom'  // Switch to custom mode
+      });
+      
+      toast.success($t('extension.cookiesReceived') || `${count} cookies received from extension`);
+    });
+
+    // Subscribe to queue changes to report extension download progress
+    extensionProgressUnsub = queue.subscribe((state) => {
+      for (const [url, tracking] of extensionDownloads) {
+        const item = state.items.find((i) => i.url === url);
+        if (!item) continue;
+
+        // Map queue status to extension state
+        let extState: string;
+        switch (item.status) {
+          case 'pending':
+          case 'paused':
+          case 'fetching-info':
+            extState = 'queued';
+            break;
+          case 'downloading':
+          case 'processing':
+            extState = 'downloading';
+            break;
+          case 'completed':
+            extState = 'completed';
+            break;
+          case 'failed':
+            extState = 'error';
+            break;
+          default:
+            extState = 'queued';
+        }
+
+        // Only update if state or progress changed significantly
+        const progressChanged = Math.abs(item.progress - tracking.lastProgress) >= 1;
+        const stateChanged = extState !== tracking.lastState;
+
+        if (stateChanged || progressChanged) {
+          tracking.lastState = extState;
+          tracking.lastProgress = item.progress;
+
+          // Report to backend
+          invoke('extension_update_status', {
+            id: tracking.id,
+            state: extState,
+            progress: Math.round(item.progress) || null,
+            speed: item.speed || null,
+            eta: item.eta || null,
+            error: item.error || null,
+            filePath: extState === 'completed' ? item.filePath || null : null,
+            duration: item.duration || null,
+          }).catch((err) => {
+            logs.debug('layout', `Failed to update extension status: ${err}`);
+          });
+
+          // Remove from tracking on terminal states
+          if (extState === 'completed' || extState === 'error') {
+            extensionDownloads.delete(url);
+          }
+        }
+      }
+    });
+
+    // Check for deep links that launched the app (startup URLs)
+    try {
+      const { getCurrent } = await import('@tauri-apps/plugin-deep-link');
+      const startupUrls = await getCurrent();
+      if (startupUrls && startupUrls.length > 0) {
+        logs.info('layout', `App launched with deep link URLs: ${startupUrls.join(', ')}`);
+        for (const rawUrl of startupUrls) {
+          // Extract the actual URL from comine://download?url=...
+          let videoUrl = rawUrl;
+          if (rawUrl.startsWith('comine://download?url=')) {
+            videoUrl = decodeURIComponent(rawUrl.replace('comine://download?url=', ''));
+          } else if (rawUrl.startsWith('comine://download?')) {
+            videoUrl = decodeURIComponent(rawUrl.replace('comine://download?', ''));
+          } else if (rawUrl.startsWith('comine://')) {
+            videoUrl = decodeURIComponent(rawUrl.replace('comine://', ''));
+          }
+
+          const cleanedUrl = cleanUrl(videoUrl);
+          if (cleanedUrl && isValidMediaUrl(cleanedUrl, $settings.clipboardPatterns || [])) {
+            goto(`/?url=${encodeURIComponent(cleanedUrl)}`);
+            toast.info(`🔗 ${$t('deeplink.received') || 'URL received from browser'}`);
+            break; // Only handle the first valid URL
+          }
+        }
+      }
+    } catch (e) {
+      logs.debug('layout', `Could not check startup deep links: ${e}`);
+    }
   }
 
   onDestroy(() => {
@@ -708,6 +1108,27 @@
     if (unlistenWindowShown) {
       unlistenWindowShown();
     }
+    if (unlistenDeepLink) {
+      unlistenDeepLink();
+    }
+    if (unlistenExtensionDownload) {
+      unlistenExtensionDownload();
+    }
+    if (unlistenExtensionCancel) {
+      unlistenExtensionCancel();
+    }
+    if (unlistenServerOpen) {
+      unlistenServerOpen();
+    }
+    if (unlistenServerReveal) {
+      unlistenServerReveal();
+    }
+    if (unlistenExtensionCookies) {
+      unlistenExtensionCookies();
+    }
+    if (extensionProgressUnsub) {
+      extensionProgressUnsub();
+    }
     if (detachLogger) {
       detachLogger();
     }
@@ -722,7 +1143,7 @@
 
   async function initStats() {
     logs.info('stats', 'initStats() called');
-    
+
     if (!$settingsReady) {
       logs.debug('stats', 'Waiting for settings to load...');
       await new Promise<void>((resolve) => {
@@ -734,7 +1155,7 @@
         });
       });
     }
-    
+
     logs.debug('stats', `Settings loaded. sendStats=${$settings.sendStats}`);
 
     fetchBroadcasts();
@@ -748,7 +1169,10 @@
     const lastSyncTime = localStorage.getItem(lastSyncKey);
     const now = Date.now();
     if (lastSyncTime && now - parseInt(lastSyncTime) < 21600000) {
-      logs.debug('stats', `Rate limited - last sync was ${Math.round((now - parseInt(lastSyncTime)) / 60000)}min ago`);
+      logs.debug(
+        'stats',
+        `Rate limited - last sync was ${Math.round((now - parseInt(lastSyncTime)) / 60000)}min ago`
+      );
       return;
     }
 
@@ -757,12 +1181,14 @@
     fetch('https://stats.comine.app/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    }).then((res) => {
-      logs.info('stats', `Stats sent! Response: ${res.status}`);
-    }).catch((e) => {
-      logs.warn('stats', `Failed to send stats: ${e}`);
-    });
+      body: JSON.stringify(payload),
+    })
+      .then((res) => {
+        logs.info('stats', `Stats sent! Response: ${res.status}`);
+      })
+      .catch((e) => {
+        logs.warn('stats', `Failed to send stats: ${e}`);
+      });
 
     localStorage.setItem(lastSyncKey, now.toString());
   }
@@ -808,7 +1234,7 @@
         }
 
         if (bc.platforms) {
-          const platforms = bc.platforms.split(',').map(p => p.trim().toLowerCase());
+          const platforms = bc.platforms.split(',').map((p) => p.trim().toLowerCase());
           if (!platforms.includes('all') && !platforms.includes(platform)) {
             logs.debug('stats', `Broadcast ${bc.id} not for platform ${platform}`);
             continue;
@@ -825,7 +1251,7 @@
         }
 
         logs.info('stats', `Showing broadcast ${bc.id}: ${bc.message}`);
-        
+
         const notifPopup = await import('$lib/components/NotificationPopup.svelte');
         notifPopup.show({
           title: bc.title || getBroadcastTitle(bc.type),
@@ -834,11 +1260,13 @@
           duration: 0,
           url: bc.url,
           actionLabel: bc.button_text || (bc.url ? $t('broadcast.learnMore') : undefined),
-          onAction: bc.url ? () => {
-            window.open(bc.url, '_blank');
-            dismissed.push(bc.id);
-            localStorage.setItem(dismissedKey, JSON.stringify(dismissed));
-          } : undefined
+          onAction: bc.url
+            ? () => {
+                window.open(bc.url, '_blank');
+                dismissed.push(bc.id);
+                localStorage.setItem(dismissedKey, JSON.stringify(dismissed));
+              }
+            : undefined,
         });
 
         dismissed.push(bc.id);
@@ -851,10 +1279,14 @@
 
   function getBroadcastTitle(type: string): string {
     switch (type) {
-      case 'warning': return $t('broadcast.warning') || 'Warning';
-      case 'error': return $t('broadcast.important') || 'Important';
-      case 'success': return $t('broadcast.success') || 'Good news';
-      default: return $t('broadcast.announcement') || 'Announcement';
+      case 'warning':
+        return $t('broadcast.warning') || 'Warning';
+      case 'error':
+        return $t('broadcast.important') || 'Important';
+      case 'success':
+        return $t('broadcast.success') || 'Good news';
+      default:
+        return $t('broadcast.announcement') || 'Announcement';
     }
   }
 
@@ -875,8 +1307,8 @@
   }
 
   function compareVersions(a: string, b: string): number {
-    const partsA = a.split('.').map(n => parseInt(n) || 0);
-    const partsB = b.split('.').map(n => parseInt(n) || 0);
+    const partsA = a.split('.').map((n) => parseInt(n) || 0);
+    const partsB = b.split('.').map((n) => parseInt(n) || 0);
     for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
       const numA = partsA[i] || 0;
       const numB = partsB[i] || 0;
@@ -1227,6 +1659,8 @@
 
       const videoInfo: VideoInfo = await invoke(command, {
         url,
+        cookiesFromBrowser: currentSettings.cookiesFromBrowser || null,
+        customCookies: currentSettings.customCookies || null,
         proxyConfig: getProxyConfig(),
         youtubePlayerClient: currentSettings.usePlayerClientForExtraction
           ? currentSettings.youtubePlayerClient
@@ -1356,7 +1790,11 @@
 {:else}
   <AccentProvider />
   <BackgroundProvider />
-  <div class="app" class:mobile={isMobile} style="--window-tint: {$settings.backgroundType === 'oled' ? 0 : $settings.windowTint / 100};">
+  <div
+    class="app"
+    class:mobile={isMobile}
+    style="--window-tint: {$settings.backgroundType === 'oled' ? 0 : $settings.windowTint / 100};"
+  >
     <!-- Desktop titlebar (hidden on mobile) -->
     {#if !isMobile}
       <div class="titlebar" data-tauri-drag-region>

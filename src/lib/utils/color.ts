@@ -113,7 +113,21 @@ export async function extractDominantColor(imageUrl: string): Promise<RGB | null
     imageUrl.includes('ggpht.com') ||
     imageUrl.includes('googleusercontent.com');
 
+  // For YouTube thumbnails, use Rust backend to fetch and extract color
+  // (cross-origin restrictions prevent JS canvas extraction)
   if (isYouTubeThumbnail) {
+    try {
+      const rustColor = await invoke<[number, number, number]>('extract_thumbnail_color', {
+        url: imageUrl,
+      });
+      if (rustColor) {
+        const color: RGB = { r: rustColor[0], g: rustColor[1], b: rustColor[2] };
+        setCacheEntry(imageUrl, color);
+        return color;
+      }
+    } catch {
+      /* extraction failed */
+    }
     return null;
   }
 

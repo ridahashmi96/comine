@@ -20,7 +20,7 @@ pub struct CommandConfig {
     pub quickjs_path: Option<String>,
 }
 
-pub fn get_command(app: &AppHandle, proxy_url: Option<&str>) -> Result<CommandConfig, String> {
+pub fn get_command(app: &AppHandle, _proxy_url: Option<&str>) -> Result<CommandConfig, String> {
     let ytdlp_path = deps::get_ytdlp_path(app)?;
     if !ytdlp_path.exists() {
         return Err("yt-dlp is not installed. Please install it first.".to_string());
@@ -63,10 +63,15 @@ pub async fn setup_cookies(
     cookies_from_browser: &Option<String>,
     custom_cookies: &Option<String>,
 ) -> Result<bool, String> {
-    let use_custom_cookies = custom_cookies
+    // Only use custom cookies if cookiesFromBrowser is explicitly set to "custom"
+    let use_custom_cookies = cookies_from_browser
         .as_ref()
-        .map(|s| !s.is_empty())
-        .unwrap_or(false);
+        .map(|s| s == "custom")
+        .unwrap_or(false)
+        && custom_cookies
+            .as_ref()
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
 
     if use_custom_cookies {
         if let Some(cookies_text) = custom_cookies.as_deref() {
@@ -169,14 +174,31 @@ impl Backend for YtDlpBackend {
 
         let is_youtube = request.url.contains("youtube.com") || request.url.contains("youtu.be");
         if is_youtube {
+            // When using cookies, avoid android_sdkless as it doesn't support cookies
+            let has_cookies = use_custom_cookies
+                || request
+                    .cookies_from_browser
+                    .as_ref()
+                    .map(|s| !s.is_empty() && s != "custom")
+                    .unwrap_or(false);
+
+            let default_client = if has_cookies { "tv,web" } else { "android_sdkless" };
             let player_client = request
                 .youtube_player_client
                 .as_deref()
                 .filter(|s| !s.is_empty())
-                .unwrap_or("android_sdkless");
+                .unwrap_or(default_client);
+            
+            // If user specified android_sdkless but has cookies, replace it
+            let final_client = if has_cookies && player_client.contains("android_sdkless") {
+                player_client.replace("android_sdkless", "tv")
+            } else {
+                player_client.to_string()
+            };
+            
             args.extend([
                 "--extractor-args".to_string(),
-                format!("youtube:player_client={}", player_client),
+                format!("youtube:player_client={}", final_client),
             ]);
         }
 
@@ -312,14 +334,30 @@ impl Backend for YtDlpBackend {
 
         let is_youtube = request.url.contains("youtube.com") || request.url.contains("youtu.be");
         if is_youtube {
+            // When using cookies, avoid android_sdkless as it doesn't support cookies
+            let has_cookies = use_custom_cookies
+                || request
+                    .cookies_from_browser
+                    .as_ref()
+                    .map(|s| !s.is_empty() && s != "custom")
+                    .unwrap_or(false);
+
+            let default_client = if has_cookies { "tv,web" } else { "android_sdkless" };
             let player_client = request
                 .youtube_player_client
                 .as_deref()
                 .filter(|s| !s.is_empty())
-                .unwrap_or("android_sdkless");
+                .unwrap_or(default_client);
+            
+            let final_client = if has_cookies && player_client.contains("android_sdkless") {
+                player_client.replace("android_sdkless", "tv")
+            } else {
+                player_client.to_string()
+            };
+            
             args.extend([
                 "--extractor-args".to_string(),
-                format!("youtube:player_client={}", player_client),
+                format!("youtube:player_client={}", final_client),
             ]);
         }
 
@@ -584,15 +622,31 @@ impl Backend for YtDlpBackend {
 
         let is_youtube = request.url.contains("youtube.com") || request.url.contains("youtu.be");
         if is_youtube {
+            // When using cookies, avoid android_sdkless as it doesn't support cookies
+            let has_cookies = use_custom_cookies
+                || request
+                    .cookies_from_browser
+                    .as_ref()
+                    .map(|s| !s.is_empty() && s != "custom")
+                    .unwrap_or(false);
+
+            let default_client = if has_cookies { "tv,web" } else { "android_sdkless" };
             let player_client = request
                 .youtube_player_client
                 .as_deref()
                 .filter(|s| !s.is_empty())
-                .unwrap_or("android_sdkless");
-            info!("Using YouTube player client for formats: {}", player_client);
+                .unwrap_or(default_client);
+            
+            let final_client = if has_cookies && player_client.contains("android_sdkless") {
+                player_client.replace("android_sdkless", "tv")
+            } else {
+                player_client.to_string()
+            };
+            
+            info!("Using YouTube player client for formats: {}", final_client);
             args.extend([
                 "--extractor-args".to_string(),
-                format!("youtube:player_client={}", player_client),
+                format!("youtube:player_client={}", final_client),
             ]);
         }
 

@@ -5,6 +5,9 @@
     type?: 'text' | 'password' | 'email' | 'search';
     disabled?: boolean;
     oninput?: (e: Event) => void;
+    onfocus?: (e: FocusEvent) => void;
+    onblur?: (e: FocusEvent) => void;
+    onkeydown?: (e: KeyboardEvent) => void;
     iconLeft?: any;
     iconRight?: any;
   }
@@ -15,6 +18,9 @@
     type = 'text',
     disabled = false,
     oninput,
+    onfocus,
+    onblur,
+    onkeydown,
     iconLeft,
     iconRight,
   }: Props = $props();
@@ -35,6 +41,9 @@
     {placeholder}
     {disabled}
     {oninput}
+    {onfocus}
+    {onblur}
+    {onkeydown}
   />
   {#if iconRight}
     <span class="icon-right">

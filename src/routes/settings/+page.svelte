@@ -30,6 +30,7 @@
   import Modal from '$lib/components/Modal.svelte';
   import Button from '$lib/components/Button.svelte';
   import ScrollArea from '$lib/components/ScrollArea.svelte';
+  import ExtensionIntegrationSettings from '$lib/components/ExtensionIntegrationSettings.svelte';
   import { toast, updateToast, dismissToast } from '$lib/components/Toast.svelte';
   import { tooltip } from '$lib/actions/tooltip';
   import { isAndroid, isDesktop } from '$lib/utils/android';
@@ -369,6 +370,14 @@
     proxy: {
       section: 'network',
       keywords: ['proxy', 'network', 'http', 'socks', 'vpn', 'прокси', 'сеть'],
+    },
+    localServer: {
+      section: 'localServer',
+      keywords: ['local', 'server', 'extension', 'browser', 'localhost', 'локальный', 'сервер', 'расширение'],
+    },
+    sync: {
+      section: 'sync',
+      keywords: ['sync', 'remote', 'extension', 'browser', 'pair', 'pairing', 'device', 'chrome', 'firefox', 'relay', 'расширение', 'синхронизация', 'устройство'],
     },
   };
 
@@ -1862,6 +1871,11 @@
             {/if}
           {/if}
         </SettingsBlock>
+      {/if}
+
+      <!-- Browser Extension (local + remote) -->
+      {#if onDesktop && (sectionHasMatches('localServer') || sectionHasMatches('sync'))}
+        <ExtensionIntegrationSettings {searchQuery} />
       {/if}
 
       <!-- App Section -->
@@ -3411,11 +3425,6 @@
   .dep-badge.optional {
     color: rgba(156, 163, 175, 0.9);
     background: rgba(156, 163, 175, 0.15);
-  }
-
-  .dep-badge.recommended {
-    color: rgba(59, 130, 246, 0.9);
-    background: rgba(59, 130, 246, 0.15);
   }
 
   .dep-status {

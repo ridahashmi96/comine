@@ -95,6 +95,9 @@ export interface AppSettings {
   clipboardPatterns: string[];
   statusPopup: boolean;
 
+  extensionServerEnabled: boolean;
+  extensionLocalPort: number;
+
   notificationsEnabled: boolean;
   notificationPosition: NotificationPosition;
   notificationMonitor: NotificationMonitor;
@@ -229,6 +232,9 @@ export const defaultSettings: AppSettings = {
   ],
   statusPopup: false,
 
+  extensionServerEnabled: true,
+  extensionLocalPort: 9549,
+
   notificationsEnabled: true,
   notificationPosition: 'bottom-right',
   notificationMonitor: 'primary',
@@ -305,8 +311,8 @@ export const defaultSettings: AppSettings = {
 
   dismissedUpdateVersion: '',
 
-  aria2Connections: 16,
-  aria2Splits: 16,
+  aria2Connections: 8,
+  aria2Splits: 8,
   aria2MinSplitSize: '1M',
 
   downloadSpeedLimit: 0,

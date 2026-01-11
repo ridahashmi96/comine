@@ -11,6 +11,14 @@
     "success": "Good news",
     "announcement": "Announcement"
   },
+  "deeplink": {
+    "received": "URL received from browser"
+  },
+  "extension": {
+    "received": "URL received from browser extension",
+    "quickDownload": "Quick download started",
+    "cookiesReceived": "{count} cookies received from extension"
+  },
   "nav": {
     "download": "Download",
     "downloads": "Downloads",
@@ -37,7 +45,10 @@
     "noLive": "No live streams found",
     "openVideo": "Open video",
     "viewCount": "{count} views",
-    "uploaded": "Uploaded {date}"
+    "uploaded": "Uploaded {date}",
+    "notification": {
+      "opening": "Opening channel..."
+    }
   },
   "playlist": {
     "title": "Playlist",
@@ -243,6 +254,8 @@
     "play": "Play file",
     "noFilePath": "File path not available for this item",
     "fileMissing": "File no longer exists",
+    "openError": "Failed to open file",
+    "revealError": "Failed to show in folder",
     "filters": {
       "all": "All",
       "video": "Video",
@@ -374,6 +387,21 @@
       "usePlayerClientForExtractionDescription": "Use the same player clients for fetching video info. When disabled, uses the faster extraction client below.",
       "extractionPlayerClient": "Extraction player client",
       "extractionPlayerClientDescription": "Client chain for fetching video info. 'android_sdkless' is fastest (no JS/token). Comma-separated for fallbacks (e.g. android_sdkless,web_safari)."
+    },
+    "integration": {
+      "title": "Browser Extension",
+      "localServer": "Local extension server",
+      "localServerDescription": "Accepts extension requests on 127.0.0.1:{port}",
+      "localEndpoint": "Local endpoint",
+      "hint": "Install the browser extension and set the same port in its popup settings.",
+      "installExtension": "Install Extension",
+      "installDescription": "Download and install the Comine browser extension to send downloads directly from your browser.",
+      "installFromGithub": "Download latest release from GitHub",
+      "installFromWebsite": "Download from official website",
+      "installStepsTitle": "Installation steps:",
+      "installStep1": "Download the extension for your browser (Chrome/Firefox/Edge)",
+      "installStep2": "Unpack the archive and load as unpacked extension (or install from store)",
+      "installStep3": "Make sure the port in extension settings matches the local server port"
     },
     "downloads": {
       "title": "Downloads",
@@ -598,6 +626,47 @@
       "ipCheckFailed": "Failed to check IP",
       "proxyActive": "Via proxy",
       "directConnection": "Direct connection"
+    },
+    "localServer": {
+      "title": "Local Extension Server",
+      "enabled": "Enable local server",
+      "enabledDescription": "Start a local server for browser extensions on the same computer (no pairing required)",
+      "running": "Server is running",
+      "started": "Local server started",
+      "stopped": "Local server stopped",
+      "toggleError": "Failed to toggle local server",
+      "hint": "Install the Comine browser extension and it will automatically detect this server. No pairing needed for local use."
+    },
+    "sync": {
+      "title": "Remote Sync",
+      "enabled": "Enable remote sync",
+      "enabledDescription": "Connect to the relay server to receive downloads from browser extensions on other devices",
+      "toggleError": "Failed to toggle sync",
+      "connected": "Connected to relay",
+      "disconnected": "Not connected",
+      "hostId": "Host ID",
+      "pairing": "Pair a new device",
+      "pairingDescription": "Generate a code to pair a browser extension on another device",
+      "pairingCode": "Pairing code",
+      "pairingHint": "Enter this code in your browser extension to pair. This code expires in 5 minutes.",
+      "pairingError": "Failed to start pairing",
+      "cancelPairing": "Cancel",
+      "addDevice": "Add device",
+      "pairedDevices": "Paired devices",
+      "pairedOn": "Paired on",
+      "removeDevice": "Remove device",
+      "removeDeviceTitle": "Remove Device",
+      "removeDeviceConfirm": "Are you sure you want to unpair \"{name}\"? They will no longer be able to send downloads to this computer.",
+      "remove": "Remove",
+      "noDevices": "No devices paired",
+      "noDevicesHint": "Pair a browser extension to send downloads from your phone or another computer",
+      "pairingRequest": "Pairing Request",
+      "pairingRequestMessage": "A device is trying to pair with this computer. Verify the code matches what you see in the browser extension.",
+      "verifyCode": "Verify code",
+      "devicePaired": "{name} paired successfully",
+      "deviceRemoved": "{name} has been unpaired",
+      "acceptError": "Failed to accept pairing",
+      "removeError": "Failed to remove device"
     }
   },
   "info": {
@@ -613,6 +682,8 @@
     "buildDate": "Build date",
     "links": "Links",
     "website": "Website",
+    "browserExtension": "Browser Extension",
+    "getExtension": "Get extension",
     "joinCommunity": "Join community",
     "developer": "Developer",
     "madeWith": "Made with ❤️",
@@ -669,6 +740,8 @@
     "back": "Back",
     "showMore": "Show more",
     "showLess": "Show less",
+    "accept": "Accept",
+    "reject": "Reject",
     "video": "Video",
     "playlist": "Playlist",
     "channel": "Channel",

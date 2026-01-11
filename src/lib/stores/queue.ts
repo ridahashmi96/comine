@@ -890,19 +890,18 @@ function createQueueStore() {
     );
 
     try {
-      const hasPrefetchedInfo = pendingItem.options?.prefetchedInfo?.title;
-      if (!hasPrefetchedInfo) {
-        logs.debug('queue', `Fetching video info before download for: ${url.slice(0, 50)}...`);
-        try {
-          await fetchVideoInfo(
-            itemId,
-            url,
-            pendingItem.options?.cookiesFromBrowser,
-            pendingItem.options?.customCookies
-          );
-        } catch (infoError) {
-          logs.warn('queue', `Failed to fetch video info (continuing with download): ${infoError}`);
-        }
+      // Always fetch video info to get accurate title/author
+      // The prefetchedInfo is only used for initial display, not for final metadata
+      logs.debug('queue', `Fetching video info before download for: ${url.slice(0, 50)}...`);
+      try {
+        await fetchVideoInfo(
+          itemId,
+          url,
+          pendingItem.options?.cookiesFromBrowser,
+          pendingItem.options?.customCookies
+        );
+      } catch (infoError) {
+        logs.warn('queue', `Failed to fetch video info (continuing with download): ${infoError}`);
       }
 
       let filePath = '';
@@ -1093,11 +1092,16 @@ function createQueueStore() {
             logs.info('queue', `Converted yt-dlp format string to lux auto-select`);
           }
 
+          // Only pass customCookies if cookiesFromBrowser is 'custom'
+          const luxCookies = pendingItem.options?.cookiesFromBrowser === 'custom' 
+            ? (pendingItem.options?.customCookies ?? '') 
+            : '';
+
           downloadPromise = invoke<string>('lux_download_video', {
             url: url,
             formatId: luxFormatId || '',
             downloadPath: downloadPath,
-            customCookies: pendingItem.options?.customCookies ?? '',
+            customCookies: luxCookies,
             proxyConfig: proxyConfig,
             multiThread: true,
             threadCount: currentSettings.aria2Connections ?? 8,

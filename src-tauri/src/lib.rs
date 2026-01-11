@@ -4,6 +4,11 @@ mod deps;
 mod logs;
 mod notifications;
 mod proxy;
+// Relay module disabled - local server only
+// #[cfg(not(target_os = "android"))]
+// mod relay;
+#[cfg(not(target_os = "android"))]
+mod server;
 #[cfg(not(target_os = "android"))]
 mod tray;
 mod types;
@@ -17,7 +22,6 @@ use backends::{Backend, InfoRequest, PlaylistRequest};
 
 #[cfg(not(target_os = "android"))]
 use image::{DynamicImage, GenericImageView};
-#[cfg(not(target_os = "android"))]
 use std::collections::HashMap;
 #[cfg(not(target_os = "android"))]
 use std::process::Stdio;
@@ -25,18 +29,130 @@ use std::sync::Mutex;
 use tauri::AppHandle;
 #[cfg(not(target_os = "android"))]
 use tauri::Emitter;
-#[cfg(not(target_os = "android"))]
 use tauri::Manager;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tokio::sync::{broadcast, Mutex as AsyncMutex};
 
 #[cfg(not(target_os = "android"))]
 static ACTIVE_DOWNLOADS: std::sync::LazyLock<Mutex<HashMap<String, u32>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
+// Color extraction can be called for many items at once (queue/history grids).
+// Keep this reasonably large to avoid thrashing and repeated fetches.
 const THUMBNAIL_COLOR_CACHE_SIZE: std::num::NonZeroUsize =
-    unsafe { std::num::NonZeroUsize::new_unchecked(50) };
+    unsafe { std::num::NonZeroUsize::new_unchecked(500) };
 
 static THUMBNAIL_COLOR_CACHE: std::sync::LazyLock<Mutex<lru::LruCache<String, [u8; 3]>>> =
     std::sync::LazyLock::new(|| Mutex::new(lru::LruCache::new(THUMBNAIL_COLOR_CACHE_SIZE)));
+
+const THUMBNAIL_COLOR_DISK_CACHE_FILE: &str = "thumbnail_colors.json";
+
+#[derive(Default)]
+struct ThumbnailColorDiskCache {
+    loaded: bool,
+    dirty: bool,
+    map: HashMap<String, [u8; 3]>,
+}
+
+static THUMBNAIL_COLOR_DISK_CACHE: std::sync::LazyLock<Mutex<ThumbnailColorDiskCache>> =
+    std::sync::LazyLock::new(|| Mutex::new(ThumbnailColorDiskCache::default()));
+
+// Coalesce concurrent requests for the same thumbnail key so we don't fetch/process it N times.
+static THUMBNAIL_COLOR_INFLIGHT: std::sync::LazyLock<AsyncMutex<HashMap<String, broadcast::Sender<Result<[u8; 3], String>>>>> =
+    std::sync::LazyLock::new(|| AsyncMutex::new(HashMap::new()));
+
+static THUMBNAIL_COLOR_FLUSH_SCHEDULED: AtomicBool = AtomicBool::new(false);
+
+fn thumbnail_color_cache_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let cache_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("Failed to get cache dir: {}", e))?;
+    Ok(cache_dir.join(THUMBNAIL_COLOR_DISK_CACHE_FILE))
+}
+
+async fn ensure_thumbnail_color_disk_cache_loaded(app: &AppHandle) -> Result<(), String> {
+    {
+        let disk = lock_or_recover(&THUMBNAIL_COLOR_DISK_CACHE);
+        if disk.loaded {
+            return Ok(());
+        }
+    }
+
+    let path = thumbnail_color_cache_path(app)?;
+
+    let loaded_map: HashMap<String, [u8; 3]> = match tokio::fs::read(&path).await {
+        Ok(bytes) => match serde_json::from_slice(&bytes) {
+            Ok(map) => map,
+            Err(e) => {
+                warn!(
+                    "Failed to parse thumbnail color disk cache ({}): {}",
+                    path.display(),
+                    e
+                );
+                HashMap::new()
+            }
+        },
+        Err(_) => HashMap::new(),
+    };
+
+    let mut disk = lock_or_recover(&THUMBNAIL_COLOR_DISK_CACHE);
+    disk.map = loaded_map;
+    disk.loaded = true;
+    disk.dirty = false;
+    Ok(())
+}
+
+fn schedule_thumbnail_color_disk_flush(app: AppHandle) {
+    if THUMBNAIL_COLOR_FLUSH_SCHEDULED
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return;
+    }
+
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+
+        let write_result: Result<(), String> = async {
+            // Ensure loaded so we don't overwrite with empty map.
+            ensure_thumbnail_color_disk_cache_loaded(&app).await?;
+
+            let (path, snapshot) = {
+                let disk = lock_or_recover(&THUMBNAIL_COLOR_DISK_CACHE);
+                if !disk.dirty {
+                    return Ok(());
+                }
+                (thumbnail_color_cache_path(&app)?, disk.map.clone())
+            };
+
+            if let Some(parent) = path.parent() {
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .map_err(|e| format!("Failed to create cache dir: {}", e))?;
+            }
+
+            let json = serde_json::to_vec(&snapshot)
+                .map_err(|e| format!("Failed to serialize thumbnail color cache: {}", e))?;
+            tokio::fs::write(&path, json)
+                .await
+                .map_err(|e| format!("Failed to write thumbnail color cache: {}", e))?;
+
+            let mut disk = lock_or_recover(&THUMBNAIL_COLOR_DISK_CACHE);
+            disk.dirty = false;
+
+            Ok(())
+        }
+        .await;
+
+        if let Err(e) = write_result {
+            warn!("Failed to flush thumbnail color disk cache: {}", e);
+        }
+
+        THUMBNAIL_COLOR_FLUSH_SCHEDULED.store(false, Ordering::SeqCst);
+    });
+}
 
 #[cfg(target_os = "android")]
 use log::{debug, info};
@@ -312,10 +428,15 @@ async fn download_video(
             info!("Using --no-playlist (single video only)");
         }
 
-        let use_custom_cookies = custom_cookies
+        // Only use custom cookies if cookiesFromBrowser is explicitly set to "custom"
+        let use_custom_cookies = cookies_from_browser
             .as_ref()
-            .map(|s| !s.is_empty())
-            .unwrap_or(false);
+            .map(|s| s == "custom")
+            .unwrap_or(false)
+            && custom_cookies
+                .as_ref()
+                .map(|s| !s.is_empty())
+                .unwrap_or(false);
 
         if use_custom_cookies {
             if let Some(cookies_text) = custom_cookies.as_deref() {
@@ -347,15 +468,30 @@ async fn download_video(
 
         let is_youtube = url.contains("youtube.com") || url.contains("youtu.be");
         if is_youtube {
+            // When using cookies, avoid android_sdkless as it doesn't support cookies
+            let has_cookies = use_custom_cookies
+                || cookies_from_browser
+                    .as_ref()
+                    .map(|s| !s.is_empty() && s != "custom")
+                    .unwrap_or(false);
+
+            let default_client = if has_cookies { "tv,web" } else { "tv,android_sdkless" };
             let player_client = youtube_player_client
                 .as_deref()
                 .filter(|s| !s.is_empty())
-                .unwrap_or("tv,android_sdkless");
+                .unwrap_or(default_client);
+            
+            let final_client = if has_cookies && player_client.contains("android_sdkless") {
+                player_client.replace("android_sdkless", "tv")
+            } else {
+                player_client.to_string()
+            };
+            
             args.extend([
                 "--extractor-args".to_string(),
-                format!("youtube:player_client={}", player_client),
+                format!("youtube:player_client={}", final_client),
             ]);
-            info!("Using player client chain for YouTube: {}", player_client);
+            info!("Using player client chain for YouTube: {}", final_client);
         }
 
         if sponsor_block.unwrap_or(false) {
@@ -506,7 +642,15 @@ async fn download_video(
                 result = stderr_reader.next_line(), if !stderr_done => {
                     match result {
                         Ok(Some(line)) => {
-                            warn!("yt-dlp output: {}", line);
+                            // Use appropriate log level based on content
+                            // yt-dlp uses stderr for all output, not just errors
+                            if line.contains("ERROR:") || line.contains("error:") {
+                                warn!("yt-dlp stderr: {}", line);
+                            } else if line.starts_with("[debug]") || line.starts_with("  File \"") || line.starts_with("Traceback") {
+                                debug!("yt-dlp output: {}", line);
+                            } else {
+                                debug!("yt-dlp output: {}", line);
+                            }
 
                             if line.contains("[Merger] Merging formats into") {
                                 if let Some(start) = line.find('"') {
@@ -1295,8 +1439,10 @@ fn extract_yt_video_id(url: &str) -> Option<&str> {
 
 #[tauri::command]
 #[allow(unused_variables)]
-async fn extract_thumbnail_color(url: String) -> Result<[u8; 3], String> {
+async fn extract_thumbnail_color(app: AppHandle, url: String) -> Result<[u8; 3], String> {
     use image::GenericImageView;
+
+    ensure_thumbnail_color_disk_cache_loaded(&app).await?;
 
     // Extract YouTube video ID from thumbnail URL without regex
     let cache_key = extract_yt_video_id(&url)
@@ -1308,6 +1454,40 @@ async fn extract_thumbnail_color(url: String) -> Result<[u8; 3], String> {
         if let Some(&color) = cache.get(&cache_key) {
             debug!("Thumbnail color cache hit for: {}", cache_key);
             return Ok(color);
+        }
+    }
+
+    // Disk cache hit (persists across app restarts)
+    {
+        let disk = lock_or_recover(&THUMBNAIL_COLOR_DISK_CACHE);
+        if let Some(&color) = disk.map.get(&cache_key) {
+            debug!("Thumbnail color disk cache hit for: {}", cache_key);
+            let mut cache = lock_or_recover(&THUMBNAIL_COLOR_CACHE);
+            cache.put(cache_key, color);
+            return Ok(color);
+        }
+    }
+
+    // Coalesce inflight extraction
+    let mut receiver = None;
+    {
+        let mut inflight = THUMBNAIL_COLOR_INFLIGHT.lock().await;
+        if let Some(sender) = inflight.get(&cache_key) {
+            debug!("Thumbnail color inflight - awaiting: {}", cache_key);
+            receiver = Some(sender.subscribe());
+        } else {
+            let (sender, _rx) = broadcast::channel(16);
+            inflight.insert(cache_key.clone(), sender);
+        }
+    }
+
+    if let Some(mut rx) = receiver {
+        match rx.recv().await {
+            Ok(result) => return result,
+            Err(e) => {
+                debug!("Thumbnail color inflight recv error ({}): {}", cache_key, e);
+                // Fall through and compute ourselves.
+            }
         }
     }
 
@@ -1430,7 +1610,29 @@ async fn extract_thumbnail_color(url: String) -> Result<[u8; 3], String> {
 
     {
         let mut cache = lock_or_recover(&THUMBNAIL_COLOR_CACHE);
-        cache.put(cache_key, best_color);
+        cache.put(cache_key.clone(), best_color);
+    }
+
+    {
+        let mut disk = lock_or_recover(&THUMBNAIL_COLOR_DISK_CACHE);
+        // Soft-cap disk map size to avoid unbounded growth
+        if disk.map.len() > 3000 {
+            let keys: Vec<String> = disk.map.keys().take(1000).cloned().collect();
+            for k in keys {
+                disk.map.remove(&k);
+            }
+        }
+        disk.map.insert(cache_key.clone(), best_color);
+        disk.dirty = true;
+    }
+    schedule_thumbnail_color_disk_flush(app.clone());
+
+    // Wake up any waiters
+    {
+        let mut inflight = THUMBNAIL_COLOR_INFLIGHT.lock().await;
+        if let Some(sender) = inflight.remove(&cache_key) {
+            let _ = sender.send(Ok(best_color));
+        }
     }
 
     Ok(best_color)
@@ -1438,14 +1640,29 @@ async fn extract_thumbnail_color(url: String) -> Result<[u8; 3], String> {
 
 #[tauri::command]
 #[allow(unused_variables)]
-async fn get_cached_thumbnail_color(url: String) -> Result<Option<[u8; 3]>, String> {
+async fn get_cached_thumbnail_color(app: AppHandle, url: String) -> Result<Option<[u8; 3]>, String> {
+    ensure_thumbnail_color_disk_cache_loaded(&app).await?;
+
     // Extract YouTube video ID from thumbnail URL without regex
     let cache_key = extract_yt_video_id(&url)
         .map(|id| format!("yt:{}", id))
         .unwrap_or_else(|| url.clone());
 
-    let mut cache = lock_or_recover(&THUMBNAIL_COLOR_CACHE);
-    Ok(cache.get(&cache_key).copied())
+    {
+        let mut cache = lock_or_recover(&THUMBNAIL_COLOR_CACHE);
+        if let Some(color) = cache.get(&cache_key).copied() {
+            return Ok(Some(color));
+        }
+    }
+
+    let disk = lock_or_recover(&THUMBNAIL_COLOR_DISK_CACHE);
+    if let Some(&color) = disk.map.get(&cache_key) {
+        let mut cache = lock_or_recover(&THUMBNAIL_COLOR_CACHE);
+        cache.put(cache_key, color);
+        return Ok(Some(color));
+    }
+
+    Ok(None)
 }
 
 // ==================== YouTube Music Thumbnail Cropping ====================
@@ -2306,6 +2523,33 @@ async fn check_file_url(
 
 #[tauri::command]
 #[cfg(not(target_os = "android"))]
+async fn clear_cookies(app: AppHandle) -> Result<(), String> {
+    let cache_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("Failed to get cache dir: {}", e))?;
+
+    let cookie_files = ["custom_cookies.txt", "lux_cookies.txt"];
+    
+    for file in &cookie_files {
+        let path = cache_dir.join(file);
+        if path.exists() {
+            let _ = tokio::fs::remove_file(&path).await;
+            info!("Deleted cookie file: {:?}", path);
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn clear_cookies(_app: AppHandle) -> Result<(), String> {
+    Ok(())
+}
+
+#[tauri::command]
+#[cfg(not(target_os = "android"))]
 async fn clear_cache(app: AppHandle) -> Result<u32, String> {
     let cache_dir = app
         .path()
@@ -2681,6 +2925,40 @@ async fn download_and_install_update(
     Err("Use Android update mechanism".to_string())
 }
 
+// ============ Server Commands ============
+
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+fn server_start(app: AppHandle, port: u16) {
+    server::start_server(app, port);
+}
+
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+fn server_stop() {
+    server::stop_server();
+}
+
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+fn server_is_running() -> bool {
+    server::is_running()
+}
+
+/// Push queue status to the server's shared state so the HTTP server can return it
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+fn push_queue_status(items: Vec<server::QueueItem>) {
+    server::update_queue(items);
+}
+
+/// Push history status to the server's shared state so the HTTP server can return it
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+fn push_history_status(items: Vec<server::HistoryItem>) {
+    server::update_history(items);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
@@ -2766,11 +3044,83 @@ pub fn run() {
         deps::install_lux,
         deps::uninstall_lux,
         clear_cache,
+        clear_cookies,
         get_cache_stats,
         clear_memory_caches,
         autostart_enable,
         autostart_disable,
         autostart_is_enabled
+    ]);
+
+    #[cfg(not(target_os = "android"))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        download_video,
+        cancel_download,
+        get_video_info,
+        get_video_formats,
+        get_playlist_info,
+        get_media_duration,
+        extract_video_thumbnail,
+        extract_thumbnail_color,
+        get_cached_thumbnail_color,
+        lux_get_video_info,
+        lux_get_video_formats,
+        lux_get_playlist_info,
+        lux_download_video,
+        set_window_effect,
+        set_acrylic,
+        notifications::show_notification_window,
+        notifications::reveal_notification_window,
+        notifications::close_notification_window,
+        notifications::close_all_notifications,
+        notifications::notification_action,
+        logs::get_log_file_path,
+        logs::append_log,
+        logs::cleanup_old_logs,
+        logs::open_logs_folder,
+        logs::get_logs_folder_path,
+        logs::read_session_logs,
+        logs::get_session_log_count,
+        resolve_proxy_config,
+        validate_proxy_url,
+        detect_system_proxy,
+        get_disk_space,
+        check_ip,
+        download_file,
+        check_file_url,
+        check_for_update,
+        download_and_install_update,
+        deps::check_ytdlp,
+        deps::install_ytdlp,
+        deps::uninstall_ytdlp,
+        deps::get_ytdlp_releases,
+        deps::check_ffmpeg,
+        deps::install_ffmpeg,
+        deps::uninstall_ffmpeg,
+        deps::check_aria2,
+        deps::install_aria2,
+        deps::uninstall_aria2,
+        deps::check_deno,
+        deps::install_deno,
+        deps::uninstall_deno,
+        deps::check_quickjs,
+        deps::install_quickjs,
+        deps::uninstall_quickjs,
+        deps::check_lux,
+        deps::install_lux,
+        deps::uninstall_lux,
+        clear_cache,
+        clear_cookies,
+        get_cache_stats,
+        clear_memory_caches,
+        autostart_enable,
+        autostart_disable,
+        autostart_is_enabled,
+        server_start,
+        server_stop,
+        server_is_running,
+        push_queue_status,
+        push_history_status
     ]);
 
     #[cfg(not(target_os = "android"))]
