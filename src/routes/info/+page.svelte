@@ -135,7 +135,7 @@
         </button>
         <button
           class="setting-item clickable"
-          onclick={() => openLink('https://github.com/nichind/comine/tree/main/browser-extension')}
+          onclick={() => openLink('https://github.com/nichind/comine-extension')}
         >
           <span class="setting-label">{$t('info.browserExtension')}</span>
           <span class="setting-value link">{$t('info.getExtension')}</span>
