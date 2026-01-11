@@ -807,12 +807,14 @@
 
     // Check mediaCache for any prefetched info (from extension, clipboard, etc)
     const cachedPreview = mediaCache.getPreview(downloadUrl);
-    const prefetchedInfo = cachedPreview ? {
-      title: cachedPreview.title,
-      author: cachedPreview.author,
-      thumbnail: cachedPreview.thumbnail,
-      duration: cachedPreview.duration,
-    } : undefined;
+    const prefetchedInfo = cachedPreview
+      ? {
+          title: cachedPreview.title,
+          author: cachedPreview.author,
+          thumbnail: cachedPreview.thumbnail,
+          duration: cachedPreview.duration,
+        }
+      : undefined;
 
     if (prefetchedInfo?.title) {
       logs.debug('download', `Using cached preview info: ${prefetchedInfo.title}`);

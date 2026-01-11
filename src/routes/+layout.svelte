@@ -858,9 +858,12 @@
         extensionDownloads.set(url, { id, lastState: 'queued', lastProgress: 0 });
 
         // Use extension options if provided, otherwise fall back to app settings
-        const videoQuality = extOptions?.videoQuality ?? currentSettings.defaultVideoQuality ?? 'max';
-        const downloadMode = (extOptions?.downloadMode as 'auto' | 'audio' | 'mute' | undefined) ?? undefined; // Use auto mode if not specified
-        const audioQuality = extOptions?.audioQuality ?? currentSettings.defaultAudioQuality ?? 'best';
+        const videoQuality =
+          extOptions?.videoQuality ?? currentSettings.defaultVideoQuality ?? 'max';
+        const downloadMode =
+          (extOptions?.downloadMode as 'auto' | 'audio' | 'mute' | undefined) ?? undefined; // Use auto mode if not specified
+        const audioQuality =
+          extOptions?.audioQuality ?? currentSettings.defaultAudioQuality ?? 'best';
         const convertToMp4 = extOptions?.convertToMp4 ?? currentSettings.convertToMp4 ?? false;
         const remux = extOptions?.remux ?? currentSettings.remux ?? true;
         const clearMetadata = extOptions?.clearMetadata ?? currentSettings.clearMetadata ?? false;
@@ -952,12 +955,12 @@
     }>('extension-cookies', async (event) => {
       const { domain, count, cookies } = event.payload;
       logs.info('layout', `Extension cookies received: ${count} cookies from ${domain}`);
-      
+
       // Update the customCookies setting with the received cookies
       // Merge with existing cookies if any
       const currentCookies = getSettings().customCookies || '';
       let newCookies = cookies;
-      
+
       // If there are existing cookies, merge them (extension cookies take priority)
       if (currentCookies && currentCookies.includes('# Netscape HTTP Cookie File')) {
         // Parse existing cookies into a map
@@ -970,7 +973,7 @@
             existingMap.set(key, line);
           }
         }
-        
+
         // Add new cookies (overwriting existing)
         for (const line of cookies.split('\n')) {
           if (line.startsWith('#') || !line.trim()) continue;
@@ -980,17 +983,16 @@
             existingMap.set(key, line);
           }
         }
-        
+
         // Reconstruct cookies
-        newCookies = '# Netscape HTTP Cookie File\n' + 
-          Array.from(existingMap.values()).join('\n');
+        newCookies = '# Netscape HTTP Cookie File\n' + Array.from(existingMap.values()).join('\n');
       }
-      
-      await updateSettings({ 
+
+      await updateSettings({
         customCookies: newCookies,
-        cookiesFromBrowser: 'custom'  // Switch to custom mode
+        cookiesFromBrowser: 'custom', // Switch to custom mode
       });
-      
+
       toast.success($t('extension.cookiesReceived') || `${count} cookies received from extension`);
     });
 

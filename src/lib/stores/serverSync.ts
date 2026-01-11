@@ -1,6 +1,6 @@
 /**
  * Server Sync Module
- * 
+ *
  * This module synchronizes the queue and history data with the Rust backend
  * so that the local HTTP server can serve this data to the browser extension.
  */
@@ -11,8 +11,9 @@ import { history, type HistoryItem } from './history';
 import { get } from 'svelte/store';
 
 // Flag to check if we're on desktop (where the server exists)
-const isDesktop = typeof window !== 'undefined' && 
-  !navigator.userAgent.includes('Android') && 
+const isDesktop =
+  typeof window !== 'undefined' &&
+  !navigator.userAgent.includes('Android') &&
   !navigator.userAgent.includes('Mobile');
 
 // Debounce timers
@@ -63,7 +64,7 @@ function serializeHistoryItem(item: HistoryItem) {
  */
 async function pushQueueToServer(items: QueueItem[]) {
   if (!isDesktop) return;
-  
+
   try {
     const serialized = items.map(serializeQueueItem);
     await invoke('push_queue_status', { items: serialized });
@@ -78,7 +79,7 @@ async function pushQueueToServer(items: QueueItem[]) {
  */
 async function pushHistoryToServer(items: HistoryItem[]) {
   if (!isDesktop) return;
-  
+
   try {
     // Only send the most recent 50 items to keep payload small
     const recent = items.slice(0, 50);
@@ -97,7 +98,7 @@ export function setupServerSync() {
   if (!isDesktop) return;
 
   // Subscribe to queue changes
-  queue.subscribe(state => {
+  queue.subscribe((state) => {
     if (queueDebounce) {
       clearTimeout(queueDebounce);
     }
@@ -107,7 +108,7 @@ export function setupServerSync() {
   });
 
   // Subscribe to history changes
-  history.subscribe(state => {
+  history.subscribe((state) => {
     if (historyDebounce) {
       clearTimeout(historyDebounce);
     }
@@ -130,11 +131,8 @@ export function setupServerSync() {
  */
 export async function forceSync() {
   if (!isDesktop) return;
-  
+
   const queueState = get(queue);
   const historyState = get(history);
-  await Promise.all([
-    pushQueueToServer(queueState.items),
-    pushHistoryToServer(historyState.items),
-  ]);
+  await Promise.all([pushQueueToServer(queueState.items), pushHistoryToServer(historyState.items)]);
 }

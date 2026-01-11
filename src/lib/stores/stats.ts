@@ -20,7 +20,7 @@ interface StatsState {
 
 function getInstallationId(): string {
   if (!browser) return '';
-  
+
   let id = localStorage.getItem(INSTALLATION_ID_KEY);
   if (!id) {
     id = crypto.randomUUID();
@@ -36,11 +36,11 @@ function createStatsStore() {
     successfulDownloads: 0,
     failedDownloads: 0,
     firstLaunch: new Date().toISOString(),
-    lastSync: null
+    lastSync: null,
   };
 
   const defaultState: StatsState = {
-    stats: defaultStats
+    stats: defaultStats,
   };
 
   // Load from localStorage
@@ -53,7 +53,7 @@ function createStatsStore() {
         initial = {
           ...defaultState,
           ...parsed,
-          stats: { ...defaultStats, ...parsed.stats }
+          stats: { ...defaultStats, ...parsed.stats },
         };
       }
     } catch {
@@ -84,8 +84,8 @@ function createStatsStore() {
           totalDownloads: state.stats.totalDownloads + 1,
           totalSizeMb: state.stats.totalSizeMb + sizeMb,
           successfulDownloads: state.stats.successfulDownloads + (success ? 1 : 0),
-          failedDownloads: state.stats.failedDownloads + (success ? 0 : 1)
-        }
+          failedDownloads: state.stats.failedDownloads + (success ? 0 : 1),
+        },
       }));
     },
 
@@ -95,8 +95,8 @@ function createStatsStore() {
         ...state,
         stats: {
           ...state.stats,
-          lastSync: new Date().toISOString()
-        }
+          lastSync: new Date().toISOString(),
+        },
       }));
     },
 
@@ -104,7 +104,7 @@ function createStatsStore() {
     getPayload() {
       const state = get({ subscribe });
       const settingsState = get(settings);
-      
+
       return {
         id: getInstallationId(),
         platform: getPlatform(),
@@ -114,12 +114,12 @@ function createStatsStore() {
           total_downloads: state.stats.totalDownloads,
           successful_downloads: state.stats.successfulDownloads,
           total_size_mb: Math.round(state.stats.totalSizeMb),
-          first_launch: state.stats.firstLaunch
-        }
+          first_launch: state.stats.firstLaunch,
+        },
       };
     },
 
-    getInstallationId
+    getInstallationId,
   };
 }
 

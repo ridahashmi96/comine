@@ -1093,9 +1093,10 @@ function createQueueStore() {
           }
 
           // Only pass customCookies if cookiesFromBrowser is 'custom'
-          const luxCookies = pendingItem.options?.cookiesFromBrowser === 'custom' 
-            ? (pendingItem.options?.customCookies ?? '') 
-            : '';
+          const luxCookies =
+            pendingItem.options?.cookiesFromBrowser === 'custom'
+              ? (pendingItem.options?.customCookies ?? '')
+              : '';
 
           downloadPromise = invoke<string>('lux_download_video', {
             url: url,

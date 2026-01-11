@@ -3,8 +3,8 @@ use crate::utils::lock_or_recover;
 use log::info;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri::webview::Color;
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 #[derive(Clone, Debug)]
 struct NotificationInfo {
@@ -300,22 +300,21 @@ pub async fn show_notification_window(
         {
             use windows::Win32::Foundation::HWND;
             use windows::Win32::UI::WindowsAndMessaging::{
-                GetWindowLongW, SetWindowLongW,
-                GWL_EXSTYLE, WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE,
+                GetWindowLongW, SetWindowLongW, GWL_EXSTYLE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
             };
-            
+
             if let Some(window) = app.get_webview_window(&window_label) {
                 if let Ok(raw_hwnd) = window.hwnd() {
                     unsafe {
                         let hwnd = HWND(raw_hwnd.0 as *mut _);
-                        
-                        // Add WS_EX_TOOLWINDOW to hide from taskbar, 
+
+                        // Add WS_EX_TOOLWINDOW to hide from taskbar,
                         // WS_EX_NOACTIVATE to prevent activation on click
                         let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
                         SetWindowLongW(
-                            hwnd, 
-                            GWL_EXSTYLE, 
-                            ex_style | WS_EX_TOOLWINDOW.0 as i32 | WS_EX_NOACTIVATE.0 as i32
+                            hwnd,
+                            GWL_EXSTYLE,
+                            ex_style | WS_EX_TOOLWINDOW.0 as i32 | WS_EX_NOACTIVATE.0 as i32,
                         );
                     }
                 }

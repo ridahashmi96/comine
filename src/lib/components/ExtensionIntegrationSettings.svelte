@@ -107,8 +107,7 @@
   async function refresh() {
     try {
       serverRunning = await invoke<boolean>('server_is_running');
-    } catch {
-    }
+    } catch {}
   }
 
   async function toggleServer(next: boolean) {
@@ -212,11 +211,7 @@
     </div>
 
     <div class="install-extension-row">
-      <Button
-        variant="secondary"
-        size="sm"
-        onclick={() => (showInstallModal = true)}
-      >
+      <Button variant="secondary" size="sm" onclick={() => (showInstallModal = true)}>
         <Icon name="extensions" size={14} />
         {$t('settings.integration.installExtension')}
       </Button>
@@ -234,38 +229,38 @@
   onclose={() => (showInstallModal = false)}
 >
   <div class="install-modal-content">
-      <p class="install-description">{$t('settings.integration.installDescription')}</p>
-      
-      <div class="install-options">
-        <button
-          class="install-option"
-          onclick={async () => {
-            try {
-              await openUrl('https://github.com/nichind/comine-extension/releases');
-            } catch {
-              window.open('https://github.com/nichind/comine-extension/releases', '_blank');
-            }
-          }}
-        >
-          <Icon name="github" size={20} />
-          <div class="install-option-text">
-            <span class="install-option-title">GitHub Releases</span>
-            <span class="install-option-desc">{$t('settings.integration.installFromGithub')}</span>
-          </div>
-          <Icon name="arrow_outward" size={14} />
-        </button>
-      </div>
+    <p class="install-description">{$t('settings.integration.installDescription')}</p>
 
-      <div class="install-steps">
-        <h4>{$t('settings.integration.installStepsTitle')}</h4>
-        <ol>
-          <li>{$t('settings.integration.installStep1')}</li>
-          <li>{$t('settings.integration.installStep2')}</li>
-          <li>{$t('settings.integration.installStep3')}</li>
-        </ol>
-      </div>
+    <div class="install-options">
+      <button
+        class="install-option"
+        onclick={async () => {
+          try {
+            await openUrl('https://github.com/nichind/comine-extension/releases');
+          } catch {
+            window.open('https://github.com/nichind/comine-extension/releases', '_blank');
+          }
+        }}
+      >
+        <Icon name="github" size={20} />
+        <div class="install-option-text">
+          <span class="install-option-title">GitHub Releases</span>
+          <span class="install-option-desc">{$t('settings.integration.installFromGithub')}</span>
+        </div>
+        <Icon name="arrow_outward" size={14} />
+      </button>
     </div>
-  </Modal>
+
+    <div class="install-steps">
+      <h4>{$t('settings.integration.installStepsTitle')}</h4>
+      <ol>
+        <li>{$t('settings.integration.installStep1')}</li>
+        <li>{$t('settings.integration.installStep2')}</li>
+        <li>{$t('settings.integration.installStep3')}</li>
+      </ol>
+    </div>
+  </div>
+</Modal>
 
 <style>
   .setting-sub-row {

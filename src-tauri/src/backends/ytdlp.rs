@@ -182,20 +182,24 @@ impl Backend for YtDlpBackend {
                     .map(|s| !s.is_empty() && s != "custom")
                     .unwrap_or(false);
 
-            let default_client = if has_cookies { "tv,web" } else { "android_sdkless" };
+            let default_client = if has_cookies {
+                "tv,web"
+            } else {
+                "android_sdkless"
+            };
             let player_client = request
                 .youtube_player_client
                 .as_deref()
                 .filter(|s| !s.is_empty())
                 .unwrap_or(default_client);
-            
+
             // If user specified android_sdkless but has cookies, replace it
             let final_client = if has_cookies && player_client.contains("android_sdkless") {
                 player_client.replace("android_sdkless", "tv")
             } else {
                 player_client.to_string()
             };
-            
+
             args.extend([
                 "--extractor-args".to_string(),
                 format!("youtube:player_client={}", final_client),
@@ -342,19 +346,23 @@ impl Backend for YtDlpBackend {
                     .map(|s| !s.is_empty() && s != "custom")
                     .unwrap_or(false);
 
-            let default_client = if has_cookies { "tv,web" } else { "android_sdkless" };
+            let default_client = if has_cookies {
+                "tv,web"
+            } else {
+                "android_sdkless"
+            };
             let player_client = request
                 .youtube_player_client
                 .as_deref()
                 .filter(|s| !s.is_empty())
                 .unwrap_or(default_client);
-            
+
             let final_client = if has_cookies && player_client.contains("android_sdkless") {
                 player_client.replace("android_sdkless", "tv")
             } else {
                 player_client.to_string()
             };
-            
+
             args.extend([
                 "--extractor-args".to_string(),
                 format!("youtube:player_client={}", final_client),
@@ -630,19 +638,23 @@ impl Backend for YtDlpBackend {
                     .map(|s| !s.is_empty() && s != "custom")
                     .unwrap_or(false);
 
-            let default_client = if has_cookies { "tv,web" } else { "android_sdkless" };
+            let default_client = if has_cookies {
+                "tv,web"
+            } else {
+                "android_sdkless"
+            };
             let player_client = request
                 .youtube_player_client
                 .as_deref()
                 .filter(|s| !s.is_empty())
                 .unwrap_or(default_client);
-            
+
             let final_client = if has_cookies && player_client.contains("android_sdkless") {
                 player_client.replace("android_sdkless", "tv")
             } else {
                 player_client.to_string()
             };
-            
+
             info!("Using YouTube player client for formats: {}", final_client);
             args.extend([
                 "--extractor-args".to_string(),

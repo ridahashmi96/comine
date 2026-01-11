@@ -69,7 +69,7 @@
   let ipProxyUsed = $state(false);
 
   let sliderDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
-    
+
   function debouncedSliderUpdate<K extends keyof typeof $settings>(
     key: K,
     value: (typeof $settings)[K],
@@ -373,11 +373,34 @@
     },
     localServer: {
       section: 'localServer',
-      keywords: ['local', 'server', 'extension', 'browser', 'localhost', 'локальный', 'сервер', 'расширение'],
+      keywords: [
+        'local',
+        'server',
+        'extension',
+        'browser',
+        'localhost',
+        'локальный',
+        'сервер',
+        'расширение',
+      ],
     },
     sync: {
       section: 'sync',
-      keywords: ['sync', 'remote', 'extension', 'browser', 'pair', 'pairing', 'device', 'chrome', 'firefox', 'relay', 'расширение', 'синхронизация', 'устройство'],
+      keywords: [
+        'sync',
+        'remote',
+        'extension',
+        'browser',
+        'pair',
+        'pairing',
+        'device',
+        'chrome',
+        'firefox',
+        'relay',
+        'расширение',
+        'синхронизация',
+        'устройство',
+      ],
     },
   };
 
@@ -1656,7 +1679,10 @@
                   step="1"
                   value={$settings.aria2Splits}
                   oninput={(e) =>
-                    debouncedSliderUpdate('aria2Splits', parseInt((e.target as HTMLInputElement).value))}
+                    debouncedSliderUpdate(
+                      'aria2Splits',
+                      parseInt((e.target as HTMLInputElement).value)
+                    )}
                 />
                 <span class="slider-value">{$settings.aria2Splits}</span>
               </div>
@@ -2175,8 +2201,7 @@
               <div class="setting-sub-row">
                 <div class="setting-label-group">
                   <span class="setting-label">{$t('settings.app.windowTint')}</span>
-                  <span class="setting-description"
-                    >{$t('settings.app.windowTintDescription')}</span
+                  <span class="setting-description">{$t('settings.app.windowTintDescription')}</span
                   >
                 </div>
                 <div class="slider-with-value">
