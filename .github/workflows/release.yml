@@ -92,6 +92,13 @@ jobs:
             exit 1
           fi
 
+      - name: List generated files
+        run: |
+          echo "=== AppImage bundle files ==="
+          ls -la src-tauri/target/release/bundle/appimage/ || true
+          echo "=== Updater bundle files ==="
+          ls -la src-tauri/target/release/bundle/appimage-updater/ || true
+
       - name: Upload to release
         uses: softprops/action-gh-release@v1
         env:
@@ -103,7 +110,8 @@ jobs:
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/rpm/*.rpm
             src-tauri/target/release/bundle/appimage/*.AppImage
-            src-tauri/target/release/bundle/appimage/*.AppImage.sig
+            src-tauri/target/release/bundle/appimage-updater/*.AppImage.tar.gz
+            src-tauri/target/release/bundle/appimage-updater/*.AppImage.tar.gz.sig
 
   build-windows:
     needs: create-release
@@ -503,7 +511,7 @@ jobs:
             
             ALL_FOUND=true
             
-            download_asset "comine_${VERSION}_amd64.AppImage.sig" "linux.sig" || ALL_FOUND=false
+            download_asset "comine_${VERSION}_amd64.AppImage.tar.gz.sig" "linux.sig" || ALL_FOUND=false
             download_asset "comine_${VERSION}_x64-setup.exe.sig" "windows.sig" || ALL_FOUND=false
             download_asset "comine.app.tar.gz.sig" "darwin-arm.sig" || ALL_FOUND=false
             download_asset "comine_x64.app.tar.gz.sig" "darwin-x64.sig" || ALL_FOUND=false
@@ -544,7 +552,7 @@ jobs:
             --arg version "$VERSION" \
             --arg notes "See release notes at https://github.com/nichind/comine/releases/tag/v${VERSION}" \
             --arg pub_date "$DATE" \
-            --arg linux_url "${REPO}/comine_${VERSION}_amd64.AppImage" \
+            --arg linux_url "${REPO}/comine_${VERSION}_amd64.AppImage.tar.gz" \
             --arg linux_sig "$LINUX_SIG" \
             --arg windows_url "${REPO}/comine_${VERSION}_x64-setup.exe" \
             --arg windows_sig "$WINDOWS_SIG" \
