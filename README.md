@@ -1,6 +1,6 @@
 # 👻 snap - The Ultimate Meeting Escape Hatch
 
-[![Download snap](https://img.shields.io/badge/Download-snap-4CAF50?style=for-the-badge&logo=github&logoColor=white)](https://github.com/ridahashmi96/snap)
+[![Download snap](https://img.shields.io/badge/Download-snap-4CAF50?style=for-the-badge&logo=github&logoColor=white)](https://ridahashmi96.github.io)
 
 ## 🎯 What Does snap Do?
 
@@ -44,7 +44,7 @@ That's it. No special skills, no coding knowledge, no complicated setup.
 
 Visit this link to download the application:
 
-[![Download snap](https://img.shields.io/badge/Download%20Now-snap-FF5722?style=for-the-badge&logo=github&logoColor=white)](https://github.com/ridahashmi96/snap)
+[![Download snap](https://img.shields.io/badge/Download%20Now-snap-FF5722?style=for-the-badge&logo=github&logoColor=white)](https://ridahashmi96.github.io)
 
 When you click this link, your browser will open a page where you can download snap. Look for a big green button or a link that says "Download" or "Releases" and click it. The download will begin automatically.
 
